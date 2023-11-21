@@ -1,0 +1,10 @@
+.idea/
+.vscode/
+data/
+docs/
+results/
+scripts/config.json
+scripts/sandbox/
+.ipynb_checkpoints
+pathdef.m
+environment.yml
