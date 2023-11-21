@@ -1,0 +1,22 @@
+{
+  "save_results": true,
+  "data_dir": "/fs04/kg98/vbarnes/HeteroModes/data",
+  "emode_dir": "/fs03/kg98/vbarnes/eigenmodes",
+  "surface_dir": "/fs03/kg98/vbarnes/surfaces",
+  "results_dir": "/fs04/kg98/vbarnes/HeteroModes/results",
+  "space": "fsLR",
+  "den": "32k",
+  "surf": "midthickness",
+  "hemi": "L",
+  "atlas": "yeo",
+  "n_modes": 200,
+  "mask_medial": true,
+  "hetero_label": "myelinmap",
+  "scale": "cmean",
+  
+  "hetero_maps": {
+    "myelinmap": "/fs03/kg98/vbarnes/repos/neuromaps/neuromaps-data/resampled/fsLR/source-hcps1200_desc-myelinmap_space-fsLR_den-32k_hemi-L_feature.func.gii",
+    "megalpha": "/fs03/kg98/vbarnes/repos/neuromaps/neuromaps-data/resampled/fsLR/source-hcps1200_desc-megalpha_space-fsLR_den-32k_hemi-L_feature.func.gii",
+    "fcgradient01": "/fs03/kg98/vbarnes/repos/neuromaps/neuromaps-data/resampled/fsLR/source-margulies2016_desc-fcgradient01_space-fsLR_den-32k_hemi-L_feature.func.gii"
+  }
+}
