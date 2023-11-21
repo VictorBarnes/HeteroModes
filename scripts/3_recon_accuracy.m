@@ -1,11 +1,8 @@
 %% Code to understand what adding heterogeneity into eigenmodes actually does
 disp("running....")
 
-% Setup project functions
-projDir = '/fs04/kg98/vbarnes/HeteroModes';
-cd(fullfile(projDir, 'scripts'))
-% Load project functions using 'starProject.m' script
-startProject
+% Setup project by loading necessary functions
+setupProject
 
 % Load config file
 config = jsondecode(fileread("/fs04/kg98/vbarnes/HeteroModes/scripts/config.json"));

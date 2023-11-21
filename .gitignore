@@ -3,8 +3,9 @@
 data/
 docs/
 results/
-scripts/config.json
 scripts/sandbox/
+scripts/config.json
+scripts/setupProject.m
 .ipynb_checkpoints
 pathdef.m
 environment.yml

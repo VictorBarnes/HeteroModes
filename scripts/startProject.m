@@ -1,5 +1,4 @@
 %% Add required functions to path
-projectDirLibraries = "/fs03/kg98/vbarnes";
 
 libraries = [
     "repos/BMH_utils_matlab", ...
@@ -8,10 +7,10 @@ libraries = [
     "repos/nitoolsmat" ...
     ];
 
-% Add folder WITHOUT subfolders
+% Add folder WITHOUT subfolders to path
 addpath(projectDirLibraries + filesep + "repos/BrainEigenmodes/functions_matlab")
 
-% Add foler WITH subfolders (using genpath)
+% Add foler WITH subfolders to path (using genpath)
 for ii = libraries
     addpath(genpath(projectDirLibraries+filesep+ii));
 end
