@@ -1,11 +1,12 @@
 %% Code to understand what adding heterogeneity into eigenmodes actually does
-disp("running....")
+clear
+clc
 
 % Setup project by loading necessary functions
 setupProject
 
 % Load config file
-config = jsondecode(fileread("/fs04/kg98/vbarnes/HeteroModes/scripts/config.json"));
+config = jsondecode(fileread(fullfile(pwd, "config.json")));
 atlas = config.atlas;
 space = config.space;
 den = config.den;
@@ -15,25 +16,13 @@ nModes = config.n_modes;
 realHeteroMaps = config.hetero_maps;
 emodeDir = config.emode_dir;
 surfDir = config.surface_dir;
+resultsDir = config.results_dir;
+pang2023dir = '/fs03/kg98/vbarnes/repos/BrainEigenmodes';
 
 heteroLabel = "myelinmap"; % only plot one hetero map per figure
-scale = ["cmean"];
-alphaVals = 0.1:0.1:0.2;
-% alphaVals = ["0.1", "0.5", "1.0", "1.5", "2.0", "2.5"];
-dset = "hcp-tfMRI";
-
-% Set text for output fileneames
-heteroParams = {heteroLabel, scale};
-text = cell(1, numel(heteroParams));
-for ii = 1:numel(heteroParams)
-    if size(heteroParams{ii}, 2) > 1
-        text{ii} = strjoin(heteroParams{ii}, '-');
-    else
-        text{ii} = heteroParams{ii};
-    end
-end
-heteroText = text{1};
-scaleText = text{2};
+scale = "cmean";
+alphaVals = 0.1:0.1:1.0;
+dset = "hcp";
 
 % TODO: set list of basis set filenames
 nBasisSets = length(alphaVals);
@@ -45,6 +34,11 @@ disp("Loading modes and empirical data...")
 medialMask = dlmread(sprintf('%s/atlas-yeo_space-%s_den-%s_hemi-%s_medialMask.txt', surfDir, space, ...
     den, hemi));
 cortexInds = find(medialMask);
+
+% Load parcellation
+parc_name = 'Glasser360';
+parc = dlmread(sprintf('%s/data/parcellations/fsLR_32k_%s-lh.txt', pang2023dir, parc_name));
+parcellate = true; % Whether or not to parcellate data
 
 % Load geometric eigenmodes and eigenvalues
 geomDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_maskMed-True';
@@ -65,10 +59,19 @@ for ii=1:nBasisSets
 end
 
 % Load empirical data to reconstruct
-if dset == "nm-images" || dset == "nm-subset"
+if dset == "nm" || dset == "nm-subset"
+    % TODO: update load_images to return images and labels separately (not as a struct)
     % Load neuromaps empiricalData
-    empiricalData = load_images('/fs03/kg98/vbarnes/HBO_data/neuromaps-data/resampled/fsLR/dset-nm_desc-noPET_space-fsLR_den-32k_resampled.csv');
+    nm_data = load_images('/fs03/kg98/vbarnes/HBO_data/neuromaps-data/resampled/fsLR/dset-nm_desc-noPET_space-fsLR_den-32k_resampled.csv');
     
+    % TODO: modify `calc_eigendecomposition` to allow for nans but remove `abagen` until then
+    empiricalLabels = fieldnames(nm_data);
+    empiricalData = nan(size(nm_data.(empiricalLabels{1}), 1), numel(empiricalLabels));
+    for ii = 1:numel(empiricalLabels)
+        empiricalData(:, ii) = hcpData.(empiricalLabels{ii});
+    end
+
+    % TODO: fix this
     if dset == "nm-subset"
         all_empiricalData = empiricalData;
         % Get subset of neuromaps data
@@ -80,152 +83,123 @@ if dset == "nm-images" || dset == "nm-subset"
             empiricalData.(label) = all_empiricalData.(label);
         end
     end
-elseif dset == "hcp-tfMRI"
-    pang2023Dir = '/fs03/kg98/vbarnes/repos/BrainEigenmodes';
+elseif dset == "hcp"
     % Load hcp task fMRI data
-    empiricalData = load(sprintf('%s/data/empirical/S255_tfMRI_ALLTASKS_raw_lh.mat', pang2023Dir));
-    empiricalData = empiricalData.zstat;
+    hcpData = load(sprintf('%s/data/empirical/S255_tfMRI_ALLTASKS_raw_lh.mat', pang2023dir));
+    hcpData = hcpData.zstat;
+
     % Only load first subject for each task contrast
-    contrasts = fieldnames(empiricalData);
-    for ii=1:numel(contrasts)
-        empiricalData.(contrasts{ii}) = empiricalData.(contrasts{ii})(:, 1);
+    empiricalLabels = fieldnames(hcpData);
+    empiricalData = nan(size(hcpData.(empiricalLabels{1}), 1), numel(empiricalLabels));
+    for ii=1:numel(empiricalLabels)
+        % Average across all subjects for each hcp contrast
+        empiricalData(:, ii) = mean(hcpData.(empiricalLabels{ii}), 2, "omitnan");
     end
 end
-empiricalLabels = fieldnames(empiricalData);
 nImages = numel(empiricalLabels);
 
-%% Calculate recon beta coefficients using 1 to num_modes eigenmodes
-tic
-disp("Computing beta coefficients...")
-geomReconBeta = zeros(nModes, nModes, nImages);
-heteroReconBeta = zeros(nModes, nModes, nImages);
+%% Calculate eigenreconstruction for geometric modes
+disp("Calculating eigenreconstructions...")
 
+[geomReconCorrs, ~, ~] = calc_eigenreconstruction(empiricalData(cortexInds, :), ...
+        geomModes(cortexInds, :), "matrix");
+
+% Calculate eigenreconstruction for hetero modes
+heteroReconCorrs = nan(nModes, nImages, length(alphaVals));
+reconCorrDiff = nan(nModes, nImages, length(alphaVals));
 for ii = 1:length(alphaVals)
-    for jj = 1:nImages
-        image = empiricalData.(empiricalLabels{jj});
-        disp(empiricalLabels{jj})
-        
-        % If an image contains NaNs then set method to 'regression' to avoid errors
-        if any(isnan(image(cortexInds)))
-            method = 'regression';
-            disp('Found NaNs... Using regression')
-        else
-            method = 'matrix';
-        end
-        
-        for mode = 1:nModes
-            % Calculate beta spectra of empirical data using geometric modes
-            geomReconBeta(1:mode, mode, jj) = calc_eigendecomposition(image(cortexInds), ...
-                geomModes(cortexInds, 1:mode), method);
-            % Calculate beta spectra of empirical data using hetero modes
-            heteroReconBeta(1:mode, mode, jj) = calc_eigendecomposition(image(cortexInds), ...
-                heteroModes(cortexInds, 1:mode, ii), method);
-        end
-    end
-    fprintf("Finished computing beta coefficients: %.2f mins\n", toc/60)
-
-    %% Calculate reconstruction accuracy using 1 to num_modes eigenmodes
+    fprintf("alpha: %.1f", alphaVals(ii))
     tic
-    disp("Computing reconstruction accuracy...")
-    geomReconCorrs = zeros(nImages, nModes);   
-    heteroReconCorrs = zeros(nImages, nModes);
-    for jj = 1:nImages
-        image = empiricalData.(empiricalLabels{jj});
-        for mode = 1:nModes
-            reconTemp = geomModes(cortexInds, 1:mode)*geomReconBeta(1:mode, mode, jj);
-            geomReconCorrs(jj, mode) = corr(image(cortexInds), reconTemp, "rows", "complete");
-
-            reconTemp = heteroModes(cortexInds, 1:mode)*heteroReconBeta(1:mode, mode, jj);
-            heteroReconCorrs(jj, mode) = corr(image(cortexInds), reconTemp, "rows", "complete");
-        end
-    end
-    fprintf("Finished computing reconsruction corrs: %.2f mins\n", toc/60)
-
-    % Change labels to plotting labels for clearer figures
-    if dset == "nm_images" || dset == "nm_subset"
-        config_file = fileread('/fs03/kg98/vbarnes/human-brain-observatory/scripts/configurations/configHBO.json');
-        configHBO = jsondecode(config_file);
-        plotting_labels = configHBO.neuromaps.plotting_labels;
-        for jj = 1:length(empiricalLabels)
-            original_label = empiricalLabels{jj};
-            empiricalLabels{jj} = plotting_labels.(original_label);
-        end
-    end
+    [heteroReconCorrs(:, :, ii), ~, ~] = calc_eigenreconstruction(empiricalData(cortexInds, :), ...
+        heteroModes(cortexInds, :, ii), "matrix");
+    reconCorrDiff(:, :, ii) = heteroReconCorrs(:, :, ii) - geomReconCorrs;
 
     fprintf("Finished computing reconstruction difference: %.2f mins\n", toc/60)
 
-    %% Compare reconstruction accuracy and plot
-    fig = figure('Position', [200 200 1000 600]);
-
-    recon_corr_combined = cat(3, heteroReconCorrs - geomReconCorrs);
-
-    % Set clims
-    clims_combined = zeros(2,2);
-    for kk=1:1
-        recon_corr = recon_corr_combined(:, :, kk);
-        clim_max = max(recon_corr(:,2:end),[],'all');
-        clim_min = min(recon_corr(:,2:end),[],'all');
-        clims_combined(kk,:) = [clim_min, clim_max];
-    end
-
-    tl = tiledlayout(1, 1);
-    for kk=1:1   
-        data_to_plot = recon_corr_combined(:,:,kk);
-        %     clim = clims_combined(kk,:);
-        % Make absolute colorbar for all two eigenmodes
-        clim = [min(clims_combined(:,1)), max(clims_combined(:,2))]; 
-        % Make colorbar symmetric according to the maximum absolute value
-        clim = max(abs(min(clims_combined(:,1))), abs(max(clims_combined(:,2))))*[-1 1]; 
-        
-        nexttile();
-        imagesc(data_to_plot)
-        for jj=1:nImages-1
-            yline(jj+0.5, 'k-');
-        end
-
-        caxis(clim)
-        colormap(bluewhitered)
-        % cbar = colorbar;
-        set(gca, 'fontsize', 10, 'ticklength', [0.02, 0.02], 'xlim', [1, nModes], 'ytick', 1:nImages,...
-            'yticklabel', empiricalLabels, 'ticklabelinterpreter', 'none')
-        if kk~=1
-            set(gca, 'yticklabel', {})
-        end
-        xlabel(tl, 'number of modes')
-        title({'Heterogeneous modes'; sprintf('(%s | alpha: %.1f)', heteroLabel, alphaVals)}, 'fontweight', 'normal', 'fontsize', 18)
-    end
-
-    cbar = colorbar('Location', 'eastoutside');
-    ylabel(cbar, 'reconstruction accuracy difference', 'fontsize', 16)
-
-    % Save image
-    savecf(sprintf("%s/results/evaluation/hetero-%s_surf-%s_scale-%s_alpha-%.1f_empiricalData-%s_reconAccuracyDiff", ...
-        projDir, heteroText, surf, scaleText, alphaVals(ii), dset), ".png", 200)
+    % TODO: remove this since we now plot in another for loop so we can take the overall clims of
+    % reconCorrDiff
+    % Plot difference between reconstruction correlation results
+    % fig = figure('Position', [200, 200, 1500, 900]);
+    % % Set colormap limits for plotting
+    % clim_max = max(reconCorrDiff(:, 2:end, ii), [], 'all');
+    % clim_min = min(reconCorrDiff(:, 2:end, ii), [], 'all');
+    % clims = [clim_min, clim_max];
+    % 
+    % % Plot reconstruction accuracy difference
+    % imagesc(reconCorrDiff(:, 2:end, ii).')  % transpose matrix to have nModes along the x-axis
+    % % Plot horizontal lines of separation for better visualisation
+    % for jj=1:nImages-1
+    %     yline(jj+0.5, 'k-');
+    % end
+    % 
+    % clim(clims)
+    % colormap(bluewhitered)
+    % % cbar = colorbar;
+    % set(gca, 'fontsize', 14, 'ticklength', [0.02, 0.02], 'xlim', [1, nModes], 'ytick', 1:nImages,...
+    %     'yticklabel', empiricalLabels, 'ticklabelinterpreter', 'none')
+    % xlabel('number of modes')
+    % title({'Reconstruction accuracy difference (heterogeneous - geometric)'; sprintf('(hetero: %s | alpha: %.1f)', heteroLabel, alphaVals(ii))}, 'fontweight', 'normal', 'fontsize', 18)
+    % 
+    % cbar = colorbar('Location', 'eastoutside');
+    % ylabel(cbar, 'reconstruction accuracy difference', 'fontsize', 16)
+    % 
+    % % Save figure
+    % savecf(sprintf("%s/evaluation/hetero-%s_surf-%s_scale-%s_alpha-%.1f_empiricalData-%s_reconAccuracyDiff", ...
+    %     resultsDir, heteroLabel, surf, scale, alphaVals(ii), dset), ".png", 200)
 end
 
-% %% Plot reconstruction acuracy paths
-% figure; 
+%% Plot recon corr paths (for geom and hetero) and difference between recon corrs
 
-% % Hetero modes recon accuracy
-% subplot(1, 2, 1); 
-% hold on; 
-% for i=1:n_images
-%     plot(recon_corr_hetero(i, 2:n_modes)); 
-% end
-% hold off; 
-% xlabel("number of modes"); title("Heterogeneous"); pbaspect([1 1 1]);
-% ylabel("reconstruction accuracy");
-% ylim([0, 1])
-% legend(labels, "location", "southeast", 'Interpreter', 'none')
+% Set the colormap limits for all plots
+clims = [min(reconCorrDiff(:)), max(reconCorrDiff(:))];
 
-% % Geometric modes recon accuracy
-% subplot(1, 2, 2); 
-% hold on; 
-% for i=1:n_images
-%     plot(recon_corr_geom(i, 2:n_modes)); 
-% end
-% hold off; 
-% xlabel("number of modes"); title("Geometric"); pbaspect([1 1 1]);
-% ylabel("reconstruction accuracy");
-% ylim([0, 1])
-% legend(labels, "location", "southeast", 'Interpreter', 'none')
+for ii = 1:length(alphaVals)
+    fig = figure('Position', [200, 200, 1500, 900]);
+    tl = tiledlayout(2, 2);
+    title(tl, {"Reconstruction accuracy"; sprintf('(hetero: %s | alpha: %.1f)', heteroLabel, alphaVals(ii))})
+
+    % Plot recon corr paths for hetero modes
+    nexttile
+    hold on; 
+    for jj=1:nImages
+        plot(heteroReconCorrs(2:nModes, jj, ii)); 
+    end
+    hold off; 
+    xlabel("number of modes"); title("Reconstruction accuracy (heterogeneous)", 'fontweight', 'normal');
+    ylabel("reconstruction accuracy");
+    ylim([0, 1])
+%     legend(labels, "location", "southeast", 'Interpreter', 'none')
+
+    % Plot reconstruction accuracy difference
+    ax = nexttile([2, 1]);
+    imagesc(reconCorrDiff(2:end, :, ii).')  % transpose matrix to have nModes along the x-axis
+    % Plot horizontal lines of separation for better visualisation
+    for jj=1:nImages-1
+        yline(jj+0.5, 'k-');
+    end  
+    % Set tile parameters
+    clim(clims)
+    colormap(bluewhitered)
+    set(gca, 'ticklength', [0.02, 0.02], 'xlim', [1, nModes], 'ytick', 1:nImages,...
+        'yticklabel', empiricalLabels, 'ticklabelinterpreter', 'none')
+    xlabel('number of modes')
+    title({'Reconstruction accuracy difference'; '(heterogeneous - geometric)'}, 'fontweight', 'normal')
+    cbar = colorbar('Location', 'eastoutside');
+    ylabel(cbar, 'reconstruction accuracy difference')
+
+    % Plot recon corr paths for hetero modes
+    nexttile
+    hold on; 
+    for jj=1:nImages
+        plot(geomReconCorrs(2:nModes, jj)); 
+    end
+    hold off; 
+    xlabel("number of modes"); title("Reconstruction accuracy (geometric)", 'fontweight', 'normal');
+    ylabel("reconstruction accuracy");
+    ylim([0, 1])
+%     legend(labels, "location", "southeast", 'Interpreter', 'none')
+    
+    % Save figure
+    savecf(sprintf("%s/evaluation/hetero-%s_surf-%s_scale-%s_alpha-%.1f_empiricalData-%s_reconAccuracy", ...
+        resultsDir, heteroLabel, surf, scale, alphaVals(ii), dset), ".png", 200)
+end
