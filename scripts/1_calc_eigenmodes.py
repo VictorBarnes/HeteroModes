@@ -87,19 +87,19 @@ if __name__ == '__main__':
     # Load surface template and medial wall mask
     surf = mesh_io.read_surface(f"{SURF_DIR}/atlas-{atlas}_space-{space}_den-{den}_"
                                 f"surf-{surf_type}_hemi-{hemi}_surface.vtk")
-    medial = np.loadtxt(f"{SURF_DIR}/atlas-{atlas}_space-{space}_den-{den}_hemi-{hemi}_"
+    medial_mask = np.loadtxt(f"{SURF_DIR}/atlas-{atlas}_space-{space}_den-{den}_hemi-{hemi}_"
                         f"medialMask.txt").astype(bool)
-    medial_inds = np.array([i for i, med in enumerate(medial) if med])
+    cortex_inds = np.array([i for i, med in enumerate(medial_mask) if med])
 
     # Mask surface template and heterogeneous map
     if mask_medial:
         # Mask surface template
-        surf_masked = mesh_operations.mask_points(surf, medial)
+        surf_masked = mesh_operations.mask_points(surf, medial_mask)
         v = surf_masked.Points
         t = np.reshape(surf_masked.Polygons, [surf_masked.n_cells, 4])[:,1:4]
         mesh = TriaMesh(v, t)
         # Mask heterogeneous map
-        hetero_map = hetero_map[medial]
+        hetero_map = hetero_map[medial_mask]
     else:
         # Initialise mesh without masking medial wall
         mesh = TriaMesh.read_vtk(getattr(surf, hemi))
@@ -140,9 +140,9 @@ if __name__ == '__main__':
         if mask_medial:
             emodes_reshaped = np.zeros([surf.n_points, n_modes])
             for mode in range(n_modes):
-                emodes_reshaped[medial_inds, mode] = emodes[:, mode]
+                emodes_reshaped[cortex_inds, mode] = emodes[:, mode]
             # Reshape propagation speed map
-            C_reshaped[medial_inds, i] = C[:, i]
+            C_reshaped[cortex_inds, i] = C[:, i]
 
         if save_results:
             print("Saving eigenmodes and eigenvalues...")
