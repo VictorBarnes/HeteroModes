@@ -1,4 +1,5 @@
 %% Code to plot heterogeneous modes
+% TODO: change geometric to homogeneous
 clear
 clc
 
@@ -18,7 +19,7 @@ emodeDir = config.emode_dir;
 surfDir = config.surface_dir;
 projDir = '/fs04/kg98/vbarnes/HeteroModes';
 
-heteroLabel = "myelinmap"; % only plot one hetero map per figure
+heteroLabel = "SAaxis"; % only plot one hetero map per figure
 scale = "cmean";
 alphaVals = [0.1, 0.5, 1.0];
 nAlpha = length(alphaVals);
@@ -48,7 +49,6 @@ for ii=1:nAlpha
         space, den, surf, hemi, nModes, scale, alphaVals(ii)) + "_cmap.txt")); 
 end
 
-% TODO: do we need this??
 % Find min and max values in cmaps for plotting on using same x axis
 cmapLimsGlobal = [round(min(cmaps(cortexInds, :), [], "all")), round(max(cmaps(cortexInds, :), [], "all"))];
 
@@ -77,15 +77,15 @@ end
 % TODO: change this to plot the cmaps and distributions first then modes in one plotBrain call. This
 % should make the plot look nicer and 
 
-modesToPlot = [2, 3, 4, 10, 15, 20, 25, 50, 100, 200];
+modesToPlot = [2, 3, 4, 10, 50, 100];
 % modesToPlot = [10, 14];
 nModesToPlot = length(modesToPlot);
-plotHist = 1;  % boolean for whether to plot cmap distribution or not
-nRows = nModesToPlot + 2 + plotHist;
+plotHist = 0;  % boolean for whether to plot cmap distribution or not
+nRows = nModesToPlot + 6 + plotHist; 
 nCols = nAlpha + 1;
 
 % Initialise plot
-figure('Position', [100, 0, 300*nCols, 100*nRows], 'visible', 'on');
+figure('Position', [100, 0, 400*nCols, 100*nRows], 'visible', 'on');
 tl1 = tiledlayout(1, nAlpha + 1, 'TileSpacing','tight');
 
 % Plot geometric eigenmodes
@@ -103,7 +103,7 @@ end
 title(tl3, 'Homogeneous modes');
 
 for ii = 1:nAlpha
-    tl2 = tiledlayout(tl1, nRows, 1, 'TileSpacing', 'tight');
+    tl2 = tiledlayout(tl1, nRows, 1, 'TileSpacing', 'compact');
     tl2.Layout.Tile = ii + 1;
 
     % Plot propagation speed map (C)
@@ -114,16 +114,18 @@ for ii = 1:nAlpha
         'clim', cmapLimsCurrent);
     tl3.Layout.Tile = 1;
     tl3.Layout.TileSpan = [2, 1];
-    title(tl3, "c^2 map", 'FontSize', 10)
-    title(tl2, {'Heterogeneous modes'; sprintf('%s | alpha: %.1f', heteroLabel, alphaVals(ii))})
-    % Plot colormap
+    title(tl3, "c_s^2 map", 'FontSize', 10)
+    title(tl2, {'Heterogeneous modes'; sprintf('%s | alpha: %.1f', heteroLabel, alphaVals(ii))}, ...
+        'interpreter', 'none')
+    % Plot colormap (turns out its much faster to plot the colorbar outside of the plotBrain call)
     colorbar('eastoutside'); clim(cmapLimsCurrent); colormap(gca, jet); 
     
+    % TODO: need to test that this still works
     % Plot propagation speed map distribution
     if plotHist
         ax = nexttile(tl2);
         histogram(sqrt(cmaps(cortexInds, ii)), 30)
-        title("c distribution")
+        title("c_s distribution")
         xlim(sqrt(cmapLimsGlobal))
         xlabel("mm/s", "FontSize", 8)
     end
@@ -144,36 +146,17 @@ for ii = 1:nAlpha
     mask = corrs_diag < -0.8; 
     currentModes(:, mask) = currentModes(:, mask) * -1;
     % Plot heterogeneous modes
-    [~, ~, tl3, ~] = plotBrain('lh', {surface, medialMask, currentModes(:, modesToPlot)}, 'parent', tl2, ...
+    [~, ~, tl3, tl4] = plotBrain('lh', {surface, medialMask, currentModes(:, modesToPlot)}, 'parent', tl2, ...
         'groupBy', 'data', 'colormap', @bluewhitered, 'tiledLayoutOptions', {nModesToPlot, 1, 'TileSpacing', 'none'},...
         'view', {'ll', 'lm'}, 'tiledLayout2Options', {1,2, 'TileSpacing', 'none'});
     tl3.Layout.Tile = 3 + plotHist;
     tl3.Layout.TileSpan = [nModesToPlot, 1];
-    % Plot mode labels for each column if they have been reordered
-    if reorder
-        for jj=1:length(modeLabels)
-            ylabel(tl_inner{jj}, sprintf("mode %i", modeLabels(jj)), 'FontSize', 10)
-        end
+    % Plot mode labels 
+    for jj=1:length(modeLabels)
+        ylabel(tl4{jj}, sprintf("mode %i", modeLabels(jj)), 'FontSize', 10)
     end
-end
 
-% Save figure
-savecf(sprintf("%s/results/hetero-%s_surf-%s_scale-%s_alpha-%.1f-%.1f_reorder-%s_visualiseModes_%i-%i", ...
-    projDir, heteroLabel, surf, scale, alphaVals(1), alphaVals(end), reorderText, modesToPlot(1), modesToPlot(end)), ".png", 300)
-
-
-%% Correlate heterogeneous modes with geometric modes
-if nAlpha > 4
-    nRows = 2;
-    nCols = ceil(nAlpha/2);
-    figure('Position', [200, 0, 600*nCols, 600*nRows], 'visible', 'on')
-else
-    nRows = 1;
-    nCols = nAlpha;
-    figure('Position', [200, 0, 600*nAlpha, 600], 'visible', 'on');
-end
-
-for ii=1:nAlpha
+    % Plot correlationg between heterogeneous modes and geometric modes
     if reorder
         % Reorder modes
         [~, ~, ~, newCorrs] = matchModes(heteroModes(:, :, ii), geomModes, 'showFigures', false, 'withinGroups', withinGroups);
@@ -183,14 +166,14 @@ for ii=1:nAlpha
     end
     
     % Plot matrix as heatmap
-    subplot(nRows, nCols, ii)
+    nexttile(tl2, [4, 1])
 
     imagesc(abs(currentCorrs));
     axis square;
     cbar = colorbar; ylabel(cbar, "absolute correlation");
     xticks(0:20:200); yticks(0:20:200);
     xlabel('Homogeneous modes'); ylabel('Heterogeneous modes');
-    title({'Heterogeneous eigenmodes'; sprintf("(alpha: %.1f)", alphaVals(ii))})
+%     title({'Heterogeneous eigenmodes'; sprintf("(alpha: %.1f)", alphaVals(ii))})
     % Plot box around eigengroups
     for jj = 1:ceil(sqrt(size(currentCorrs, 1))) % xline(ii^2 + 0.5);  yline(ii^2 + 0.5);
         rectangle('Position', [(jj-1)^2+0.5, (jj-1)^2+0.5, 2*jj-1, 2*jj-1]);
@@ -198,8 +181,8 @@ for ii=1:nAlpha
 end
 
 % Save figure
-savecf(sprintf("%s/results/hetero-%s_surf-%s_reorder-%s_scale-%s_alpha-%.1f-%.1f_corrs", ...
-    projDir, heteroLabel, surf, reorderText, scale, alphaVals(1), alphaVals(end)), ".png", 300)
+savecf(sprintf("%s/results/hetero-%s_surf-%s_scale-%s_alpha-%.1f-%.1f_reorder-%s_visualiseModes_%i-%i", ...
+    projDir, heteroLabel, surf, scale, alphaVals(1), alphaVals(end), reorderText, modesToPlot(1), modesToPlot(end)), ".png", 200)
 
 %% Eigenvalue plot
 
