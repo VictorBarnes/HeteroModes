@@ -72,20 +72,20 @@ else
     reorderText = num2str(reorder);
 end
 
-
-%% Visualize eigenmodes
+%% Plot heterogeneous modes
 % TODO: change this to plot the cmaps and distributions first then modes in one plotBrain call. This
 % should make the plot look nicer and 
 
 modesToPlot = [2, 3, 4, 10, 50, 100];
 % modesToPlot = [10, 14];
 nModesToPlot = length(modesToPlot);
-plotHist = 0;  % boolean for whether to plot cmap distribution or not
-nRows = nModesToPlot + 6 + plotHist; 
+plotHist = 0;   % boolean for whether to plot cmap distribution or not
+plotCorr = 1;   % boolean for whether to plot correlation matrix
+nRows = nModesToPlot + 2 + plotHist + plotCorr*3; 
 nCols = nAlpha + 1;
 
 % Initialise plot
-figure('Position', [100, 0, 400*nCols, 100*nRows], 'visible', 'on');
+figure('Position', [100, 0, 400*nCols, 100*nRows], 'visible', 'off');
 tl1 = tiledlayout(1, nAlpha + 1, 'TileSpacing','tight');
 
 % Plot geometric eigenmodes
@@ -98,7 +98,8 @@ tl3.Layout.Tile = 3 + plotHist;
 tl3.Layout.TileSpan = [nModesToPlot, 1];
 % Plot mode labels
 for ii=1:length(modesToPlot)
-    ylabel(tl4{ii}, sprintf("mode %i", modesToPlot(ii)), 'FontSize', 10)
+    ylab = ylabel(tl4{ii}, {"mode"; modesToPlot(ii)}, 'FontSize', 10, 'Rotation', 0, ...
+        'VerticalAlignment', 'middle');
 end
 title(tl3, 'Homogeneous modes');
 
@@ -109,7 +110,7 @@ for ii = 1:nAlpha
     % Plot propagation speed map (C)
     cmapLimsCurrent = [min(cmaps(cortexInds, ii)), max(cmaps(cortexInds, ii))];
     [~, ~, tl3, ~] = plotBrain('lh', {surface, medialMask, cmaps(:, ii)}, 'parent', tl2, ...
-        'groupBy', 'data', 'colormap', jet, 'tiledLayoutOptions', {1, 1, 'TileSpacing', 'none'}, ...
+        'groupBy', 'data', 'colormap', viridis, 'tiledLayoutOptions', {1, 1, 'TileSpacing', 'none'}, ...
         'view', {'ll', 'lm'}, 'tiledLayout2Options', {1,2, 'TileSpacing', 'none'}, ...
         'clim', cmapLimsCurrent);
     tl3.Layout.Tile = 1;
@@ -118,7 +119,7 @@ for ii = 1:nAlpha
     title(tl2, {'Heterogeneous modes'; sprintf('%s | alpha: %.1f', heteroLabel, alphaVals(ii))}, ...
         'interpreter', 'none')
     % Plot colormap (turns out its much faster to plot the colorbar outside of the plotBrain call)
-    colorbar('eastoutside'); clim(cmapLimsCurrent); colormap(gca, jet); 
+    colorbar('eastoutside'); clim(cmapLimsCurrent); colormap(gca, viridis); 
     
     % TODO: need to test that this still works
     % Plot propagation speed map distribution
@@ -151,32 +152,35 @@ for ii = 1:nAlpha
         'view', {'ll', 'lm'}, 'tiledLayout2Options', {1,2, 'TileSpacing', 'none'});
     tl3.Layout.Tile = 3 + plotHist;
     tl3.Layout.TileSpan = [nModesToPlot, 1];
-    % Plot mode labels 
-    for jj=1:length(modeLabels)
-        ylabel(tl4{jj}, sprintf("mode %i", modeLabels(jj)), 'FontSize', 10)
+    % If heterogeneous modes have been reordered then plot the mode labels 
+    if reorder
+        for jj=1:length(modeLabels)
+            ylabel(tl4{jj}, sprintf("mode %i", modeLabels(jj)), 'FontSize', 10)
+        end
     end
 
     % Plot correlationg between heterogeneous modes and geometric modes
-    if reorder
-        % Reorder modes
-        [~, ~, ~, newCorrs] = matchModes(heteroModes(:, :, ii), geomModes, 'showFigures', false, 'withinGroups', withinGroups);
-        currentCorrs = newCorrs;
-    else
-        currentCorrs = corr(heteroModes(:, :, ii), geomModes);
-    end
-    
-    % Plot matrix as heatmap
-    nexttile(tl2, [4, 1])
-
-    imagesc(abs(currentCorrs));
-    axis square;
-    cbar = colorbar; ylabel(cbar, "absolute correlation");
-    xticks(0:20:200); yticks(0:20:200);
-    xlabel('Homogeneous modes'); ylabel('Heterogeneous modes');
-%     title({'Heterogeneous eigenmodes'; sprintf("(alpha: %.1f)", alphaVals(ii))})
-    % Plot box around eigengroups
-    for jj = 1:ceil(sqrt(size(currentCorrs, 1))) % xline(ii^2 + 0.5);  yline(ii^2 + 0.5);
-        rectangle('Position', [(jj-1)^2+0.5, (jj-1)^2+0.5, 2*jj-1, 2*jj-1]);
+    if plotCorr
+        if reorder
+            % Reorder modes
+            [~, ~, ~, newCorrs] = matchModes(heteroModes(:, :, ii), geomModes, 'showFigures', false, ...
+                'withinGroups', withinGroups);
+            currentCorrs = newCorrs;
+        else
+            currentCorrs = corr(heteroModes(:, :, ii), geomModes);
+        end
+        % Plot matrix as heatmap
+        nexttile(tl2, [3, 1])
+        imagesc(abs(currentCorrs)); axis square;
+        cbar = colorbar(gca, "Limits", [0, 1], "Ticks", 0.1:0.1:1.0); 
+        ylabel(cbar, "absolute correlation"); 
+        colormap(gca, viridis);
+        xticks(0:20:200); yticks(0:20:200);
+        xlabel('Homogeneous modes'); ylabel('Heterogeneous modes');
+        % Plot box around eigengroups
+        for jj = 1:ceil(sqrt(size(currentCorrs, 1)))
+            rectangle('Position', [(jj-1)^2+0.5, (jj-1)^2+0.5, 2*jj-1, 2*jj-1]);
+        end
     end
 end
 
