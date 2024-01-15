@@ -19,7 +19,7 @@ emodeDir = config.emode_dir;
 surfDir = config.surface_dir;
 projDir = '/fs04/kg98/vbarnes/HeteroModes';
 
-heteroLabel = "SAaxis"; % only plot one hetero map per figure
+heteroLabel = "myelinmap"; % only plot one hetero map per figure
 scale = "cmean";
 alphaVals = [0.1, 0.5, 1.0];
 nAlpha = length(alphaVals);
@@ -34,11 +34,11 @@ medialMask = dlmread(sprintf('%s/atlas-yeo_space-%s_den-%s_hemi-%s_medialMask.tx
     den, hemi));
 cortexInds = find(medialMask);
 
-geomDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_maskMed-True';
+geomDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_scale-%s_maskMed-True';
 % Load geometric eigenmodes and eigenvalues
-geomModes = dlmread(fullfile(emodeDir, sprintf(geomDesc, "None", atlas, space, den, surf, hemi, nModes) ...
+geomModes = dlmread(fullfile(emodeDir, sprintf(geomDesc, "None", atlas, space, den, surf, hemi, nModes, scale) ...
     + "_emodes.txt"));
-geomEvals = dlmread(fullfile(emodeDir, sprintf(geomDesc, "None", atlas, space, den, surf, hemi, nModes) ...
+geomEvals = dlmread(fullfile(emodeDir, sprintf(geomDesc, "None", atlas, space, den, surf, hemi, nModes, scale) ...
     + "_evals.txt"));
 
 % Load propagation speed maps (C)
@@ -85,7 +85,7 @@ nRows = nModesToPlot + 2 + plotHist + plotCorr*3;
 nCols = nAlpha + 1;
 
 % Initialise plot
-figure('Position', [100, 0, 400*nCols, 100*nRows], 'visible', 'off');
+figure('Position', [100, 0, 400*nCols, 100*nRows], 'visible', 'on');
 tl1 = tiledlayout(1, nAlpha + 1, 'TileSpacing','tight');
 
 % Plot geometric eigenmodes
