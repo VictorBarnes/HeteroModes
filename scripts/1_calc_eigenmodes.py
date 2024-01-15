@@ -18,7 +18,7 @@ from brainspace.mesh import mesh_io, mesh_operations
 
 # Global variables
 DENSITIES = {"32k": 32492}
-CMEAN = 3352.4
+CMEAN = 3352.4  # 28.9
 
 def calc_determinant(matrix):
     mp.dps = 25
@@ -26,12 +26,16 @@ def calc_determinant(matrix):
     det = mp.mpf(1)
     for elem in matrix_mp:
         det *= elem
-
     return det
+
+def scale_norm(image):
+    """Scale between 0 and 1"""
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    return scaler.fit_transform(image.reshape(-1, 1)).flatten()
 
 def scale_zscore(image, alpha=1.0, cmean=3352.4):
     """Z-score and shift data by c_mean value (from Pang2023)"""
-    return cmean + alpha*stats.zscore(image)
+    return cmean + alpha * stats.zscore(image)
 
 def scale_cmean(image, alpha=1.0, cmean=3352.4):
     """Scale heterogeneity map to be a variation around the mean propagation speed (from Pang2023)
@@ -39,7 +43,6 @@ def scale_cmean(image, alpha=1.0, cmean=3352.4):
     # Calculate normalized density (rho)
     scaler = MinMaxScaler(feature_range=(0, 1))
     rho = scaler.fit_transform(image.reshape(-1, 1)).flatten()
-
     return cmean + alpha * cmean * (rho - np.mean(rho))
 
 
@@ -60,7 +63,7 @@ if __name__ == '__main__':
     mask_medial = config["mask_medial"]
     hetero_label = config["hetero_label"]
     scale = config["scale"]
-    alpha_vals = np.arange(0.1, 1.1, 0.1)
+    alpha_vals = [1.0] #np.arange(0.1, 1.1, 0.1)
 
     # Load map chosen to paramaterize heterogeneity
     if hetero_label is not None:
@@ -82,7 +85,6 @@ if __name__ == '__main__':
         # No heterogeneity is encoded by an array of ones
         hetero_map = np.ones(DENSITIES["32k"])
         alpha_vals = [None]
-        scale = None
 
     # Load surface template and medial wall mask
     surf = mesh_io.read_surface(f"{SURF_DIR}/atlas-{atlas}_space-{space}_den-{den}_"
@@ -149,7 +151,7 @@ if __name__ == '__main__':
             # Set output file names and save
             if hetero_label is None:
                 desc = f"hetero-{hetero_label}_atlas-{atlas}_space-{space}_den-{den}_surf-{surf_type}_" \
-                    f"hemi-{hemi}_n-{n_modes}_maskMed-{mask_medial}"
+                    f"hemi-{hemi}_n-{n_modes}_scale-{scale}_maskMed-{mask_medial}"
             else:
                 desc = f"hetero-{hetero_label}_atlas-{atlas}_space-{space}_den-{den}_surf-{surf_type}_"\
                     f"hemi-{hemi}_n-{n_modes}_scale-{scale}_alpha-{alpha}_maskMed-{mask_medial}"
