@@ -19,14 +19,11 @@ surfDir = config.surface_dir;
 resultsDir = config.results_dir;
 pang2023dir = '/fs03/kg98/vbarnes/repos/BrainEigenmodes';
 
-heteroLabel = "SAaxis"; % only plot one hetero map per figure
-scale = "cmean";
-alphaVals = 0.1:0.1:0.1; 
 dset = "nm-subset";
-
-% TODO: set list of basis set filenames
-nBasisSets = length(alphaVals);
-basisSetLabels = alphaVals;
+heteroLabel = "myelinmap"; % only plot one hetero map per figure
+scale = "cmean";
+alphaVals = 0.1:0.1:1.0; 
+nAlpha = length(alphaVals);
 
 disp("Loading modes and empirical data...")
 % Load Yeo surface file
@@ -53,9 +50,9 @@ geomEvals = dlmread(fullfile(emodeDir, sprintf(geomDesc, "None", atlas, space, d
 
 % Load heterogeneous eigenmodes and eigenvalues
 heteroDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_scale-%s_alpha-%.1f_maskMed-True';
-heteroModes = zeros([size(geomModes), nBasisSets]);
-heteroEvals = zeros(nBasisSets, nModes);
-for ii=1:nBasisSets  
+heteroModes = zeros([size(geomModes), nAlpha]);
+heteroEvals = zeros(nAlpha, nModes);
+for ii=1:nAlpha  
     heteroModes(:, :, ii) = dlmread(fullfile(emodeDir, sprintf(heteroDesc, heteroLabel, atlas, ...
         space, den, surf, hemi, nModes, scale, alphaVals(ii)) + "_emodes.txt")); 
     heteroEvals(ii, :) = dlmread(fullfile(emodeDir, sprintf(heteroDesc, heteroLabel, atlas, space, ...
@@ -117,9 +114,9 @@ disp("Calculating eigenreconstructions...")
         geomModes(cortexInds, :), "handleNans");
 
 % Calculate eigenreconstruction for hetero modes
-heteroReconCorrs = nan(nModes, nImages, length(alphaVals));
-reconCorrDiff = nan(nModes, nImages, length(alphaVals));
-for ii = 1:length(alphaVals)
+heteroReconCorrs = nan(nModes, nImages, nAlpha);
+reconCorrDiff = nan(nModes, nImages, nAlpha);
+for ii = 1:nAlpha
     fprintf("alpha: %.1f", alphaVals(ii))
     [heteroReconCorrs(:, :, ii), ~, ~] = calc_eigenreconstruction(empiricalData(cortexInds, :), ...
         heteroModes(cortexInds, :, ii), "handleNans");
@@ -132,7 +129,7 @@ fprintf("Finished computing reconstruction difference: %.2f mins\n", toc/60)
 modeReconPoints = [5, 10, 20, 50, 100];
 plotTargetMaps = 1;
 
-for ii = 1:length(alphaVals)
+for ii = 1:nAlpha
     reconCombinedStacked = nan(nImages, 2, length(modeReconPoints));
     
     for jj = 1:length(modeReconPoints)
@@ -201,7 +198,7 @@ for ii = 1:length(alphaVals)
     title(lgd, "Homogeneous    Heterogeneous", 'FontSize', 15)
     
     % Save figure
-    savecf(sprintf("%s/evaluation/hetero-%s_dset-%s_surf-%s_scale-%s_alpha-%.1f_reconAccuracy", ...
+    savecf(sprintf("%s/recon/hetero-%s_dset-%s_surf-%s_scale-%s_alpha-%.1f_reconAccuracy", ...
         resultsDir, heteroLabel, dset, surf, scale, alphaVals(ii)), ".png", 150)
 end
 
@@ -210,16 +207,16 @@ end
 % Set the colormap limits for all plots
 clims = [min(reconCorrDiff(2:nModes, :, :), [], "all"), max(reconCorrDiff(2:nModes, :, :), [], "all")];
 
-for jj = 1:length(alphaVals)
+for ii = 1:nAlpha
     fig = figure('Position', [200, 200, 1500, 900], 'visible', 'off');
     tl1 = tiledlayout(2, 2);
-    title(tl1, {"Reconstruction accuracy"; sprintf('(hetero: %s | alpha: %.1f)', heteroLabel, alphaVals(jj))}, 'interpreter', 'none')
+    title(tl1, {"Reconstruction accuracy"; sprintf('(hetero: %s | alpha: %.1f)', heteroLabel, alphaVals(ii))}, 'interpreter', 'none')
 
     % Plot recon corr paths for hetero modes
     nexttile
     hold on; 
     for ii=1:nImages
-        plot(heteroReconCorrs(2:nModes, ii, jj)); 
+        plot(heteroReconCorrs(2:nModes, ii, ii)); 
     end
     hold off; 
     xlabel("number of modes"); title("Reconstruction accuracy (heterogeneous)", 'fontweight', 'normal');
@@ -229,7 +226,7 @@ for jj = 1:length(alphaVals)
 
     % Plot reconstruction accuracy difference
     ax = nexttile([2, 1]);
-    imagesc(reconCorrDiff(2:nModes, :, jj).')  % transpose matrix to have nModes along the x-axis
+    imagesc(reconCorrDiff(2:nModes, :, ii).')  % transpose matrix to have nModes along the x-axis
     % Plot horizontal lines of separation for better visualisation
     for ii=1:nImages-1
         yline(ii+0.5, 'k-');
@@ -258,5 +255,5 @@ for jj = 1:length(alphaVals)
     
     % Save figure
     savecf(sprintf("%s/evaluation/hetero-%s_dset-%s_surf-%s_scale-%s_alpha-%.1f_reconAccuracy", ...
-        resultsDir, heteroLabel, dset, surf, scale, alphaVals(jj)), ".png", 200)
+        resultsDir, heteroLabel, dset, surf, scale, alphaVals(ii)), ".png", 200)
 end
