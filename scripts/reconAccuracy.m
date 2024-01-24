@@ -12,22 +12,21 @@ space = config.space;
 den = config.den;
 surf = config.surf;
 hemi = config.hemi;
-nModes = config.n_modes;
+nModes = 200;
 realHeteroMaps = config.hetero_maps;
 emodeDir = config.emode_dir;
 surfDir = config.surface_dir;
 resultsDir = config.results_dir;
-pang2023dir = '/fs03/kg98/vbarnes/repos/BrainEigenmodes';
+BEdir = '/fs03/kg98/vbarnes/repos/BrainEigenmodes';
+dset = 'nm-subset';
 
-dset = "nm-subset";
-heteroLabel = "myelinmap"; % only plot one hetero map per figure
-scale = "cmean";
-alphaVals = 0.1:0.1:1.0;
-beta = -0.5;
-nAlpha = length(alphaVals);
+% Set parameters for heterogeneous modes
+modeParams_default = struct('heteroLabel', 'myelinmap', 'scale', 'cmean', 'alpha', 1.0, 'beta', 1.0);
+modeParams = [struct('beta', 1.0)];
+nHeteroBSs = length(modeParams);     % Number of heterogeneous basis sets
 
 disp("Loading modes and empirical data...")
-% Load Yeo surface file
+% Load surface file
 [vertices, faces] = read_vtk(sprintf('%s/atlas-yeo_space-%s_den-%s_surf-%s_hemi-%s_surface.vtk', ...
     surfDir, space, den, surf, hemi));
 surface.vertices = vertices';
@@ -38,25 +37,38 @@ medialMask = dlmread(sprintf('%s/atlas-yeo_space-%s_den-%s_hemi-%s_medialMask.tx
 cortexInds = find(medialMask);
 
 % Load parcellation
-parc_name = 'Glasser360';
-parc = dlmread(sprintf('%s/data/parcellations/fsLR_32k_%s-lh.txt', pang2023dir, parc_name));
+parcName = 'Glasser360';
+parc = dlmread(sprintf('%s/data/parcellations/fsLR_32k_%s-lh.txt', BEdir, parcName));
+nParcels = length(unique(parc(parc>0)));
 
 % Load homogeneous eigenmodes and eigenvalues
-geomDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_maskMed-True';
-geomModes = dlmread(fullfile(emodeDir, sprintf(geomDesc, "None", atlas, space, den, surf, hemi, nModes) ...
-    + "_emodes.txt"));
-geomEvals = dlmread(fullfile(emodeDir, sprintf(geomDesc, "None", atlas, space, den, surf, hemi, nModes) ...
-    + "_evals.txt"));
+homoDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_scale-%s_maskMed-True';
+homoModes = dlmread(fullfile(emodeDir, sprintf(homoDesc, "None", atlas, space, den, surf, hemi, ...
+    nModes, modeParams_default.scale) + "_emodes.txt"));
+homoEvals = dlmread(fullfile(emodeDir, sprintf(homoDesc, "None", atlas, space, den, surf, hemi, ...
+    nModes, modeParams_default.scale) + "_evals.txt"));
 
 % Load heterogeneous eigenmodes and eigenvalues
 heteroDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_scale-%s_alpha-%.1f_beta-%.1f_maskMed-True';
-heteroModes = zeros([size(geomModes), nAlpha]);
-heteroEvals = zeros(nAlpha, nModes);
-for ii=1:nAlpha  
-    heteroModes(:, :, ii) = dlmread(fullfile(emodeDir, sprintf(heteroDesc, heteroLabel, atlas, ...
-        space, den, surf, hemi, nModes, scale, alphaVals(ii), beta) + "_emodes.txt")); 
-    heteroEvals(ii, :) = dlmread(fullfile(emodeDir, sprintf(heteroDesc, heteroLabel, atlas, space, ...
-        den, surf, hemi, nModes, scale, alphaVals(ii), beta) + "_evals.txt")); 
+heteroModes = zeros([size(homoModes), nHeteroBSs]);
+heteroEvals = zeros(nHeteroBSs, nModes);
+for ii=1:nHeteroBSs
+% Extract current parameter values from the struct
+    currentParams = modeParams_default;
+    paramNames = fieldnames(modeParams_default);
+    
+    % Set default values for parameters not specified
+    for jj=1:length(paramNames)
+        if isfield(modeParams(ii), paramNames{jj})
+            currentParams.(paramNames{jj}) = modeParams(ii).(paramNames{jj});
+        end
+    end
+
+    % Load data
+    heteroModes(:, :, ii) = dlmread(fullfile(emodeDir, sprintf(heteroDesc, currentParams.heteroLabel, atlas, ...
+        space, den, surf, hemi, nModes, currentParams.scale, currentParams.alpha, currentParams.beta) + "_emodes.txt")); 
+    heteroEvals(ii, :) = dlmread(fullfile(emodeDir, sprintf(heteroDesc, currentParams.heteroLabel, atlas, space, ...
+        den, surf, hemi, nModes, currentParams.scale, currentParams.alpha, currentParams.beta) + "_evals.txt")); 
 end
 
 % Load empirical data to reconstruct
@@ -94,7 +106,7 @@ if dset == "nm" || dset == "nm-subset"
 
 elseif dset == "hcp"
     % Load hcp task fMRI data
-    hcpData = load(sprintf('%s/data/empirical/S255_tfMRI_ALLTASKS_raw_lh.mat', pang2023dir));
+    hcpData = load(sprintf('%s/data/empirical/S255_tfMRI_ALLTASKS_raw_lh.mat', BEdir));
     hcpData = hcpData.zstat;
 
     % Only load first subject for each task contrast
@@ -109,18 +121,18 @@ nImages = numel(empiricalLabels);
 
 %% Calculate eigenreconstruction
 tic
+
 disp("Calculating eigenreconstructions...")
-[geomReconCorrs, ~, ~] = calc_eigenreconstruction(empiricalData(cortexInds, :), ...
-        geomModes(cortexInds, :), "handleNans");
+[homoReconCorrs, ~, ~] = calc_eigenreconstruction(empiricalData(cortexInds, :), ...
+        homoModes(cortexInds, :), "matrix");
 
 % Calculate eigenreconstruction for hetero modes
-heteroReconCorrs = nan(nModes, nImages, nAlpha);
-reconCorrDiff = nan(nModes, nImages, nAlpha);
-for ii = 1:nAlpha
-    fprintf("alpha: %.1f", alphaVals(ii))
+heteroReconCorrs = nan(nModes, nImages, nHeteroBSs);
+reconCorrDiff = nan(nModes, nImages, nHeteroBSs);
+for ii = 1:nHeteroBSs
     [heteroReconCorrs(:, :, ii), ~, ~] = calc_eigenreconstruction(empiricalData(cortexInds, :), ...
-        heteroModes(cortexInds, :, ii), "handleNans");
-    reconCorrDiff(:, :, ii) = heteroReconCorrs(:, :, ii) - geomReconCorrs;
+        heteroModes(cortexInds, :, ii), "matrix");
+    reconCorrDiff(:, :, ii) = heteroReconCorrs(:, :, ii) - homoReconCorrs;
 end
 fprintf("Finished computing reconstruction difference: %.2f mins\n", toc/60)
 
@@ -129,27 +141,30 @@ fprintf("Finished computing reconstruction difference: %.2f mins\n", toc/60)
 modeReconPoints = [5, 10, 20, 50, 100];
 plotTargetMaps = 1;
 
-for ii = 1:nAlpha
+for ii = 1:nHeteroBSs
     reconCombinedStacked = nan(nImages, 2, length(modeReconPoints));
-    
+
+    % Calculate mode reconstruction accuracies for each recon point
     for jj = 1:length(modeReconPoints)
         if jj == 1
-            prevAccGeom = zeros([1, nImages]);
+            prevAccHomo = zeros([1, nImages]);
             prevAccHetero = zeros([1, nImages]);
         else
-            prevAccGeom = geomReconCorrs(modeReconPoints(jj - 1), :);
+            prevAccHomo = homoReconCorrs(modeReconPoints(jj - 1), :);
             prevAccHetero = heteroReconCorrs(modeReconPoints(jj - 1), :, ii);
         end
         % Subtract corr accuracy at previous modeReconPoint from the corr accuracy at the current
         % modeReconPoint
-        reconCombinedStacked(:, 1, jj) = geomReconCorrs(modeReconPoints(jj), :) - prevAccGeom;
+        reconCombinedStacked(:, 1, jj) = homoReconCorrs(modeReconPoints(jj), :) - prevAccHomo;
         reconCombinedStacked(:, 2, jj) = heteroReconCorrs(modeReconPoints(jj), :, ii) - prevAccHetero; 
     end
 
     figure('Position', [200, 200, 1600, 800], 'visible', 'on');
     nRows = 6;
     tl1 = tiledlayout(nRows, 1, 'TileSpacing', 'none');
-    title(tl1, sprintf("hetero: %s | alpha: %.1f | beta: %.1f", heteroLabel, alphaVals(ii), beta))
+    field = fieldnames(modeParams(ii));
+    value = modeParams(ii).(field{1});
+    title(tl1, sprintf("hetero: %s | %s: %.1f", modeParams_default.heteroLabel, field{1}, value))
 
     % Plot the target maps
     tl2 = tiledlayout(tl1, 1, nImages, 'TileSpacing', 'tight');
@@ -174,7 +189,7 @@ for ii = 1:nAlpha
         tl3.Layout.Tile = jj;
     end
 
-    % Plot the recon accuracy plot
+    % Plot the recon accuracy bars
     ax = nexttile(tl1, [nRows-1, 1]);
     h = plotBarStackGroups(reconCombinedStacked, empiricalLabels);
     
@@ -198,11 +213,11 @@ for ii = 1:nAlpha
     title(lgd, "Homogeneous    Heterogeneous", 'FontSize', 15)
     
     % Save figure
-%     savecf(sprintf("%s/recon/hetero-%s_dset-%s_surf-%s_scale-%s_alpha-%.1f_beta-%.1f_reconAccuracy", ...
+%     savecf(sprintf("%s/reconSpatialMaps/hetero-%s_dset-%s_surf-%s_scale-%s_alpha-%.1f_beta-%.1f_reconAccuracy", ...
 %         resultsDir, heteroLabel, dset, surf, scale, alphaVals(ii), beta), ".png", 150)
 end
 
-%% Plot recon corr paths (for geom and hetero) and difference between recon corrs
+%% Plot recon corr paths (for homo and hetero) and difference between recon corrs
 
 % Set the colormap limits for all plots
 clims = [min(reconCorrDiff(2:nModes, :, :), [], "all"), max(reconCorrDiff(2:nModes, :, :), [], "all")];
@@ -245,7 +260,7 @@ for ii = 1:nAlpha
     nexttile
     hold on; 
     for jj=1:nImages
-        plot(geomReconCorrs(2:nModes, jj)); 
+        plot(homoReconCorrs(2:nModes, jj)); 
     end
     hold off; 
     xlabel("number of modes"); title("Reconstruction accuracy (homogeneous)", 'fontweight', 'normal');
@@ -254,6 +269,6 @@ for ii = 1:nAlpha
 %     legend(labels, "location", "southeast", 'Interpreter', 'none')
     
     % Save figure
-%     savecf(sprintf("%s/evaluation/hetero-%s_dset-%s_surf-%s_scale-%s_alpha-%.1f_reconAccuracy", ...
+%     savecf(sprintf("%s/reconSpatialMaps/hetero-%s_dset-%s_surf-%s_scale-%s_alpha-%.1f_reconAccuracy", ...
 %         resultsDir, heteroLabel, dset, surf, scale, alphaVals(ii), beta), ".png", 200)
 end
