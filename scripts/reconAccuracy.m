@@ -22,7 +22,8 @@ pang2023dir = '/fs03/kg98/vbarnes/repos/BrainEigenmodes';
 dset = "nm-subset";
 heteroLabel = "myelinmap"; % only plot one hetero map per figure
 scale = "cmean";
-alphaVals = 0.1:0.1:1.0; 
+alphaVals = 0.1:0.1:1.0;
+beta = -0.5;
 nAlpha = length(alphaVals);
 
 disp("Loading modes and empirical data...")
@@ -39,7 +40,6 @@ cortexInds = find(medialMask);
 % Load parcellation
 parc_name = 'Glasser360';
 parc = dlmread(sprintf('%s/data/parcellations/fsLR_32k_%s-lh.txt', pang2023dir, parc_name));
-parcellate = false; % Whether or not to parcellate data
 
 % Load homogeneous eigenmodes and eigenvalues
 geomDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_maskMed-True';
@@ -49,14 +49,14 @@ geomEvals = dlmread(fullfile(emodeDir, sprintf(geomDesc, "None", atlas, space, d
     + "_evals.txt"));
 
 % Load heterogeneous eigenmodes and eigenvalues
-heteroDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_scale-%s_alpha-%.1f_maskMed-True';
+heteroDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_scale-%s_alpha-%.1f_beta-%.1f_maskMed-True';
 heteroModes = zeros([size(geomModes), nAlpha]);
 heteroEvals = zeros(nAlpha, nModes);
 for ii=1:nAlpha  
     heteroModes(:, :, ii) = dlmread(fullfile(emodeDir, sprintf(heteroDesc, heteroLabel, atlas, ...
-        space, den, surf, hemi, nModes, scale, alphaVals(ii)) + "_emodes.txt")); 
+        space, den, surf, hemi, nModes, scale, alphaVals(ii), beta) + "_emodes.txt")); 
     heteroEvals(ii, :) = dlmread(fullfile(emodeDir, sprintf(heteroDesc, heteroLabel, atlas, space, ...
-        den, surf, hemi, nModes, scale, alphaVals(ii)) + "_evals.txt")); 
+        den, surf, hemi, nModes, scale, alphaVals(ii), beta) + "_evals.txt")); 
 end
 
 % Load empirical data to reconstruct
@@ -146,10 +146,10 @@ for ii = 1:nAlpha
         reconCombinedStacked(:, 2, jj) = heteroReconCorrs(modeReconPoints(jj), :, ii) - prevAccHetero; 
     end
 
-    figure('Position', [200, 200, 1600, 800], 'visible', 'off');
+    figure('Position', [200, 200, 1600, 800], 'visible', 'on');
     nRows = 6;
     tl1 = tiledlayout(nRows, 1, 'TileSpacing', 'none');
-    title(tl1, sprintf("hetero: %s | alpha: %.1f", heteroLabel, alphaVals(ii)))
+    title(tl1, sprintf("hetero: %s | alpha: %.1f | beta: %.1f", heteroLabel, alphaVals(ii), beta))
 
     % Plot the target maps
     tl2 = tiledlayout(tl1, 1, nImages, 'TileSpacing', 'tight');
@@ -198,8 +198,8 @@ for ii = 1:nAlpha
     title(lgd, "Homogeneous    Heterogeneous", 'FontSize', 15)
     
     % Save figure
-    savecf(sprintf("%s/recon/hetero-%s_dset-%s_surf-%s_scale-%s_alpha-%.1f_reconAccuracy", ...
-        resultsDir, heteroLabel, dset, surf, scale, alphaVals(ii)), ".png", 150)
+%     savecf(sprintf("%s/recon/hetero-%s_dset-%s_surf-%s_scale-%s_alpha-%.1f_beta-%.1f_reconAccuracy", ...
+%         resultsDir, heteroLabel, dset, surf, scale, alphaVals(ii), beta), ".png", 150)
 end
 
 %% Plot recon corr paths (for geom and hetero) and difference between recon corrs
@@ -208,15 +208,15 @@ end
 clims = [min(reconCorrDiff(2:nModes, :, :), [], "all"), max(reconCorrDiff(2:nModes, :, :), [], "all")];
 
 for ii = 1:nAlpha
-    fig = figure('Position', [200, 200, 1500, 900], 'visible', 'off');
+    fig = figure('Position', [200, 200, 1500, 900], 'visible', 'on');
     tl1 = tiledlayout(2, 2);
-    title(tl1, {"Reconstruction accuracy"; sprintf('(hetero: %s | alpha: %.1f)', heteroLabel, alphaVals(ii))}, 'interpreter', 'none')
+    title(tl1, {"Reconstruction accuracy"; sprintf('(hetero: %s | alpha: %.1f | beta: %.1f)', heteroLabel, alphaVals(ii), beta)}, 'interpreter', 'none')
 
     % Plot recon corr paths for hetero modes
     nexttile
     hold on; 
-    for ii=1:nImages
-        plot(heteroReconCorrs(2:nModes, ii, ii)); 
+    for jj=1:nImages
+        plot(heteroReconCorrs(2:nModes, jj, jj)); 
     end
     hold off; 
     xlabel("number of modes"); title("Reconstruction accuracy (heterogeneous)", 'fontweight', 'normal');
@@ -228,8 +228,8 @@ for ii = 1:nAlpha
     ax = nexttile([2, 1]);
     imagesc(reconCorrDiff(2:nModes, :, ii).')  % transpose matrix to have nModes along the x-axis
     % Plot horizontal lines of separation for better visualisation
-    for ii=1:nImages-1
-        yline(ii+0.5, 'k-');
+    for jj=1:nImages-1
+        yline(jj+0.5, 'k-');
     end
     % Set tile parameters
     clim(clims)
@@ -244,8 +244,8 @@ for ii = 1:nAlpha
     % Plot recon corr paths for hetero modes
     nexttile
     hold on; 
-    for ii=1:nImages
-        plot(geomReconCorrs(2:nModes, ii)); 
+    for jj=1:nImages
+        plot(geomReconCorrs(2:nModes, jj)); 
     end
     hold off; 
     xlabel("number of modes"); title("Reconstruction accuracy (homogeneous)", 'fontweight', 'normal');
@@ -254,6 +254,6 @@ for ii = 1:nAlpha
 %     legend(labels, "location", "southeast", 'Interpreter', 'none')
     
     % Save figure
-    savecf(sprintf("%s/evaluation/hetero-%s_dset-%s_surf-%s_scale-%s_alpha-%.1f_reconAccuracy", ...
-        resultsDir, heteroLabel, dset, surf, scale, alphaVals(ii)), ".png", 200)
+%     savecf(sprintf("%s/evaluation/hetero-%s_dset-%s_surf-%s_scale-%s_alpha-%.1f_reconAccuracy", ...
+%         resultsDir, heteroLabel, dset, surf, scale, alphaVals(ii), beta), ".png", 200)
 end
