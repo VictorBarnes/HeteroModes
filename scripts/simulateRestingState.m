@@ -21,8 +21,8 @@ BEdir = '/fs03/kg98/vbarnes/repos/BrainEigenmodes';
 
 % Set parameters for heterogeneous modes
 modeParams_default = struct('heteroLabel', 'myelinmap', 'scale', 'cmean', 'alpha', 1.0, 'beta', 1.0);
-% heteroModesParams = [struct('beta', -1.0), struct('beta', -0.5), struct('beta', 0.5), struct('beta', 1.0)];
-heteroModesParams = [struct('alpha', 0.2), struct('alpha', 0.4), struct('alpha', 0.6), struct('alpha', 0.8), struct('alpha', 1.0)];
+heteroModesParams = [struct('beta', -1.0), struct('beta', -0.5), struct('beta', 0.5), struct('beta', 1.0)];
+% heteroModesParams = [struct('alpha', 0.2), struct('alpha', 0.4), struct('alpha', 0.6), struct('alpha', 0.8), struct('alpha', 1.0)];
 nHeteroBSs = length(heteroModesParams);     % Number of heterogeneous basis sets
 
 disp("Loading modes and empirical data...")
@@ -122,48 +122,62 @@ disp('Simulating FC using homoegeneous modes')
 % simulate BOLD activity from the neural activity
 [~, homoSimBOLD] = model_BOLD_balloon(homoModes, homoSimNeural, balloonParams, method);
 
+%%% Calculate FC of simulated BOLD data
 time_steady_ind = dsearchn(waveParams.T', tpre);    % index of start of steady state
 homoSimBOLD = homoSimBOLD(:,time_steady_ind:end);                        
 % T_steady = (0:size(homoSimBOLD,2)-1)*param.tstep;
-
 % downsample time series to match TR
 homoSimBOLD = downsample(homoSimBOLD', floor(TR/(balloonParams.tstep)))';
-
 % parcellate BOLD-fMRI time series
 homoSimBOLD_parc = calc_parcellate(parc, homoSimBOLD);
-
 % construct FC matrix (detrending the signal first)
 homoSimBOLD_parc = detrend(homoSimBOLD_parc', 'constant');
 homoSimBOLD_parc = homoSimBOLD_parc./repmat(std(homoSimBOLD_parc),T,1);
 homoSimBOLD_parc(isnan(homoSimBOLD_parc)) = 0;
 homoFC = homoSimBOLD_parc'*homoSimBOLD_parc/T;
 
+%%% Calculate FC of simulated neural data
+% parcellate BOLD-fMRI time series
+homoSimNeural_parc = calc_parcellate(parc, homoSimNeural);
+% construct FC matrix (detrending the signal first)
+homoSimNeural_parc = detrend(homoSimNeural_parc', 'constant');
+homoSimNeural_parc = homoSimNeural_parc./repmat(std(homoSimNeural_parc),10149,1);
+homoSimNeural_parc(isnan(homoSimNeural_parc)) = 0;
+homoNeuralFC = homoSimNeural_parc'*homoSimNeural_parc/10149;
+
 %% Simulate FC using heterogeneous modes
 
 disp('Simulating FC using heterogeneous modes')
 heteroFCs = zeros(nParcels, nParcels, nHeteroBSs);
+heteroNeuralFCs = zeros(nParcels, nParcels, nHeteroBSs);
 for ii = 1:nHeteroBSs
     % simulate neural activity
     [~, heteroSimNeural] = model_neural_waves(heteroModes(:, :, ii), heteroEvals(ii, :), ext_input, waveParams, method);
     % simulate BOLD activity from the neural activity
     [~, heteroSimBOLD] = model_BOLD_balloon(heteroModes(:, :, ii), heteroSimNeural, balloonParams, method);
     
-    time_steady_ind = dsearchn(waveParams.T', tpre);                       % index of start of steady state
+    %%% Calculate FC of simulated BOLD data
+    time_steady_ind = dsearchn(waveParams.T', tpre);    % index of start of steady state
     heteroSimBOLD = heteroSimBOLD(:,time_steady_ind:end);                        
     % T_steady = (0:size(heteroSimBOLD,2)-1)*param.tstep;
-    
     % downsample time series to match TR
-    heteroSimBOLD = downsample(heteroSimBOLD', floor(TR/(balloonParams.tstep)));
-    heteroSimBOLD = heteroSimBOLD';
-    
+    heteroSimBOLD = downsample(heteroSimBOLD', floor(TR/(balloonParams.tstep)))';
     % parcellate BOLD-fMRI time series
     heteroSimBOLD_parc = calc_parcellate(parc, heteroSimBOLD);
-    
     % construct FC matrix (detrending the signal first)
     heteroSimBOLD_parc = detrend(heteroSimBOLD_parc', 'constant');
     heteroSimBOLD_parc = heteroSimBOLD_parc./repmat(std(heteroSimBOLD_parc),T,1);
     heteroSimBOLD_parc(isnan(heteroSimBOLD_parc)) = 0;
     heteroFCs(:, :, ii) = heteroSimBOLD_parc'*heteroSimBOLD_parc/T;
+
+    %%% Calculate FC of simulated neural data
+    % parcellate BOLD-fMRI time series
+    heteroSimNeural_parc = calc_parcellate(parc, heteroSimNeural);
+    % construct FC matrix (detrending the signal first)
+    heteroSimNeural_parc = detrend(heteroSimNeural_parc', 'constant');
+    heteroSimNeural_parc = heteroSimNeural_parc./repmat(std(heteroSimNeural_parc),10149,1);
+    heteroSimNeural_parc(isnan(heteroSimNeural_parc)) = 0;
+    heteroNeuralFCs(:, :, ii) = heteroSimNeural_parc'*heteroSimNeural_parc/10149;    
 end
 
 %% Plot results
@@ -218,5 +232,33 @@ for ii = 1:nHeteroBSs
     title(sprintf('Node FC (r = %.2f)', heteroNodeFCcorr)); xlabel('model'); ylabel('empirical')
 end
 
+% savecf(sprintf("%s/simulateFC/hetero-%s_scale-%s_alpha-%.1f_beta-%.1f_reconAccuracy", ...
+%     resultsDir, heteroLabel, surf, scale, alphaVals(ii), beta), ".png", 150)
+      
+%% Plot FC of simulated neural data
 
-            
+figure('Position', [100, 100, 1800, 400]);
+tl1 = tiledlayout(1, 4);
+for ii=1:4
+    nexttile
+    imagesc(heteroNeuralFCs(:, :, ii)); colormap(bluewhitered); colorbar;
+    
+    field = fieldnames(heteroModesParams(ii));
+    value = heteroModesParams(ii).(field{1});
+    title(sprintf('%s: %.1f', field{1}, value))
+end
+
+
+%% Plot homo vs hetero edge FC
+figure('Position', [100, 100, 1800, 400]);
+tl1 = tiledlayout(1, 4);
+for ii=1:4
+    nexttile
+    scatter(homoFC, heteroFCs(:, :, ii))
+    
+    field = fieldnames(heteroModesParams(ii));
+    value = heteroModesParams(ii).(field{1});
+    title(sprintf('%s: %.1f', field{1}, value))
+    xlabel('Homogeneous'); ylabel('Heterogeneous')
+end
+
