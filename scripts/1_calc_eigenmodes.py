@@ -63,7 +63,10 @@ if __name__ == '__main__':
     mask_medial = config["mask_medial"]
     hetero_label = config["hetero_label"]
     scale = config["scale"]
-    alpha_vals = [1.0] #np.arange(0.1, 1.1, 0.1)
+    alpha_vals = [1.0] #np.arange(0.2, 1.2, 0.2)
+    beta = 1.0
+
+    # TODO: set default mode params as a dict
 
     # Load map chosen to paramaterize heterogeneity
     if hetero_label is not None:
@@ -109,31 +112,35 @@ if __name__ == '__main__':
     # Set up C matrix (only one column since alpha is None)
     if hetero_label is None:
         # Calculate C matrix
-        C = hetero_map * CMEAN
+        cs = hetero_map * CMEAN
         # Ensure C is doesn't have negative values
-        assert np.min(C) >= 0.0, f"Minimum value of C is negative: {np.min(C)}"
+        assert np.min(cs) >= 0.0, f"Minimum value of C is negative: {np.min(cs)}"
         # Each term in C needs to be squared (according to the NFT equation)
-        C = (C ** 2).reshape(-1, 1)
+        cs = (cs ** 2).reshape(-1, 1)
     else:
         # Set up C matrix (each col defines the heterogeneity in propagation speed across the cortex)
-        C = np.zeros((len(hetero_map), len(alpha_vals)))
+        cs = np.zeros((len(hetero_map), len(alpha_vals)))
         for i, alpha in enumerate(alpha_vals):
-            # Scale the heterogeneity map to vary around CMEAN (while still preserving CMEAN)
-            C[:, i] = scale_cmean(hetero_map, alpha=alpha, cmean=CMEAN)
+            # Scale propagation speed
+            scaler = MinMaxScaler(feature_range=(0, 1))
+            rho = scaler.fit_transform(hetero_map.reshape(-1, 1)).flatten()
+            cs[:, i] = CMEAN * (1 + alpha*(rho - np.mean(rho)))**beta
+
             # Ensure C doesn't have negative values
-            assert np.min(C[:, i]) >= 0.0, f"Minimum value of C is negative: {np.min(C[:, i])}"
+            assert np.min(cs[:, i]) >= 0.0, f"Minimum value of C is negative: {np.min(cs[:, i])}"
             # Each term in C needs to be squared (according to the NFT equation)
-            C[:, i] **= 2
+            cs[:, i] **= 2
 
     # Solve heterogeneous Helmholtz equation (using each column of C as the heterogeneity)
-    C_reshaped = np.zeros((surf.n_points, C.shape[1]))
-    for i in range(C.shape[1]):
+    C_reshaped = np.zeros((surf.n_points, cs.shape[1]))
+    for i in range(cs.shape[1]):
         alpha = f"{alpha_vals[i]:.1f}" if isinstance(alpha_vals[i], float) else alpha_vals[i]
         print(f"Atlas: {atlas} | Space: {space} | Density: {den} | Surface: {surf_type} | "
-            f"Hetero: {hetero_label} | Scaling: {scale} | alpha: {alpha} | cmean: {CMEAN}")
+              f"Hetero: {hetero_label} | Scaling: {scale} | alpha: {alpha} | beta: {beta} | "
+              f"cmean: {CMEAN} | nmodes: {n_modes}")
 
         # Calculate the hetero value for each triangle by taking the average of the values at its vertices
-        C_tfunc = mesh.map_vfunc_to_tfunc(C[:, i])
+        C_tfunc = mesh.map_vfunc_to_tfunc(cs[:, i])
         # Initialise FEM solver and solve for eigenvalues and eigenmodes
         fem = Solver(mesh, aniso=(0, 0), hetero=C_tfunc)
         evals, emodes = fem.eigs(k=n_modes)
@@ -144,7 +151,7 @@ if __name__ == '__main__':
             for mode in range(n_modes):
                 emodes_reshaped[cortex_inds, mode] = emodes[:, mode]
             # Reshape propagation speed map
-            C_reshaped[cortex_inds, i] = C[:, i]
+            C_reshaped[cortex_inds, i] = cs[:, i]
 
         if save_results:
             print("Saving eigenmodes and eigenvalues...")
@@ -154,7 +161,7 @@ if __name__ == '__main__':
                     f"hemi-{hemi}_n-{n_modes}_scale-{scale}_maskMed-{mask_medial}"
             else:
                 desc = f"hetero-{hetero_label}_atlas-{atlas}_space-{space}_den-{den}_surf-{surf_type}_"\
-                    f"hemi-{hemi}_n-{n_modes}_scale-{scale}_alpha-{alpha}_maskMed-{mask_medial}"
+                    f"hemi-{hemi}_n-{n_modes}_scale-{scale}_alpha-{alpha}_beta-{beta}_maskMed-{mask_medial}"
 
             evals_savefile = Path(EMODE_DIR, f"{desc}_evals.txt")
             emodes_savefile = Path(EMODE_DIR, f"{desc}_emodes.txt")
