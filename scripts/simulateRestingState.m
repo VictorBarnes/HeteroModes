@@ -21,9 +21,10 @@ BEdir = '/fs03/kg98/vbarnes/repos/BrainEigenmodes';
 
 % Set parameters for heterogeneous modes
 modeParams_default = struct('heteroLabel', 'myelinmap', 'scale', 'cmean', 'alpha', 1.0, 'beta', 1.0);
-heteroModesParams = [struct('beta', -1.0), struct('beta', -0.5), struct('beta', 0.5), struct('beta', 1.0)];
+modeParams = [struct('beta', -2.0), struct('beta', -1.0), struct('beta', -0.5), ...
+    struct('beta', 0.5), struct('beta', 1.0), struct('beta', 2.0)];
 % heteroModesParams = [struct('alpha', 0.2), struct('alpha', 0.4), struct('alpha', 0.6), struct('alpha', 0.8), struct('alpha', 1.0)];
-nHeteroBSs = length(heteroModesParams);     % Number of heterogeneous basis sets
+nHeteroBSs = length(modeParams);     % Number of heterogeneous basis sets
 
 disp("Loading modes and empirical data...")
 % Load surface file
@@ -43,8 +44,6 @@ nParcels = length(unique(parc(parc>0)));
 
 % Load homogeneous eigenmodes and eigenvalues
 homoDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_scale-%s_maskMed-True';
-% homoModes = dlmread('/home/vbarnes/kg98_scratch/jamesp/eigenmode_templates/fsLR_32k_midthickness-lh_evec_500.txt');
-% homoEvals = dlmread('/home/vbarnes/kg98_scratch/jamesp/eigenmode_templates/fsLR_32k_midthickness-lh_eval_500.txt');
 homoModes = dlmread(fullfile(emodeDir, sprintf(homoDesc, "None", atlas, space, den, surf, hemi, ...
     nModes, modeParams_default.scale) + "_emodes.txt"));
 homoEvals = dlmread(fullfile(emodeDir, sprintf(homoDesc, "None", atlas, space, den, surf, hemi, ...
@@ -61,8 +60,8 @@ for ii=1:nHeteroBSs
     
     % Set default values for parameters not specified
     for jj=1:length(paramNames)
-        if isfield(heteroModesParams(ii), paramNames{jj})
-            currentParams.(paramNames{jj}) = heteroModesParams(ii).(paramNames{jj});
+        if isfield(modeParams(ii), paramNames{jj})
+            currentParams.(paramNames{jj}) = modeParams(ii).(paramNames{jj});
         end
     end
 
@@ -81,6 +80,7 @@ triuInds = find(triu(ones(size(empFC, 1), size(empFC, 2), 1), 1));
 
 %% Set simulation parameters
 
+disp('Setting simulation parameters...');
 waveParams = loadParameters_wave_func;
 waveParams.tstep = 0.09; % in s
 tpre =  50;                                     % burn time to remove transient
@@ -114,9 +114,10 @@ rand_ind = 1;
 rng(rand_ind)
 ext_input = randn(size(homoModes,1), length(waveParams.T));
 
-%% Simulate FC using homogeneous modes
+%% Simulate FC using homogeneous and heterogeneous modes
 
-disp('Simulating FC using homoegeneous modes')
+%%% HOMOGENEOUS
+disp('Simulating FC using homoegeneous modes...')
 % simulate neural activity
 [~, homoSimNeural] = model_neural_waves(homoModes, homoEvals, ext_input, waveParams, method);
 % simulate BOLD activity from the neural activity
@@ -145,9 +146,8 @@ homoSimNeural_parc = homoSimNeural_parc./repmat(std(homoSimNeural_parc),10149,1)
 homoSimNeural_parc(isnan(homoSimNeural_parc)) = 0;
 homoNeuralFC = homoSimNeural_parc'*homoSimNeural_parc/10149;
 
-%% Simulate FC using heterogeneous modes
-
-disp('Simulating FC using heterogeneous modes')
+%%% HETEROGENEOUS
+disp('Simulating FC using heterogeneous modes...')
 heteroFCs = zeros(nParcels, nParcels, nHeteroBSs);
 heteroNeuralFCs = zeros(nParcels, nParcels, nHeteroBSs);
 for ii = 1:nHeteroBSs
@@ -185,7 +185,7 @@ end
 % Calculate Node FC of empirical data (mean of each row excluding the diagonals)
 empNodeFC = mean(empFC - diag(diag(empFC)), 2);
 
-figure('Position', [100, 100, 350*(nHeteroBSs+1), 1200]);
+figure('Position', [100, 100, 350*(nHeteroBSs+1), 900]);
 tl1 = tiledlayout(1, 1 + nHeteroBSs);
 
 %%% Plot homogeneous model results
@@ -193,8 +193,9 @@ tl2 = tiledlayout(tl1, 4, 1, 'TileSpacing', 'tight');
 tl2.Layout.Tile = 1;
 title(tl2, 'Homogeneous model');
 % Plot emprical and model FC matrices
-nexttile(tl2); imagesc(empFC); colormap(bluewhitered); colorbar; title('Empirical FC');
-nexttile(tl2); imagesc(homoFC); colormap(bluewhitered); colorbar; 
+nexttile(tl2); imagesc(empFC); colormap(bluewhitered_mg); colorbar; title('Empirical FC');
+nexttile(tl2); imagesc(homoFC); colormap(bluewhitered_mg); 
+cb = colorbar; cb.Ruler.TickLabelFormat = '%.1f';
 title('Simulated FC');
 % Calculate edge FC
 nexttile(tl2);
@@ -213,13 +214,14 @@ for ii = 1:nHeteroBSs
     heteroFC = heteroFCs(:, :, ii);
     tl2 = tiledlayout(tl1, 4, 1, 'TileSpacing', 'tight');
     tl2.Layout.Tile = ii + 1;
-    field = fieldnames(heteroModesParams(ii));
-    value = heteroModesParams(ii).(field{1});
-    title(tl2, sprintf('Heterogeneous model (%s: %.1f)', field{1}, value))
+    field = fieldnames(modeParams(ii));
+    value = modeParams(ii).(field{1});
+    title(tl2, {'Heterogeneous model', sprintf('(%s: %.1f)', field{1}, value)})
 
     % Plot emprical and model FC matrices
-    nexttile(tl2); imagesc(empFC); colormap(bluewhitered); colorbar; title('Empirical FC');
-    nexttile(tl2); imagesc(heteroFC); colormap(bluewhitered); colorbar; 
+    nexttile(tl2); imagesc(empFC); colormap(bluewhitered_mg); colorbar; title('Empirical FC');
+    nexttile(tl2); imagesc(heteroFC); colormap(bluewhitered_mg); 
+    cb = colorbar; cb.Ruler.TickLabelFormat = '%.1f';
     title('Simulated FC');
     % Calculate and plot edge FC
     nexttile(tl2); scatter(heteroFC(triuInds), empFC(triuInds), 16, 'filled');
@@ -241,10 +243,10 @@ figure('Position', [100, 100, 1800, 400]);
 tl1 = tiledlayout(1, 4);
 for ii=1:4
     nexttile
-    imagesc(heteroNeuralFCs(:, :, ii)); colormap(bluewhitered); colorbar;
-    
-    field = fieldnames(heteroModesParams(ii));
-    value = heteroModesParams(ii).(field{1});
+    imagesc(heteroNeuralFCs(:, :, ii)); colormap(bluewhitered_mg); colorbar;
+
+    field = fieldnames(modeParams(ii));
+    value = modeParams(ii).(field{1});
     title(sprintf('%s: %.1f', field{1}, value))
 end
 
@@ -256,8 +258,8 @@ for ii=1:4
     nexttile
     scatter(homoFC, heteroFCs(:, :, ii))
     
-    field = fieldnames(heteroModesParams(ii));
-    value = heteroModesParams(ii).(field{1});
+    field = fieldnames(modeParams(ii));
+    value = modeParams(ii).(field{1});
     title(sprintf('%s: %.1f', field{1}, value))
     xlabel('Homogeneous'); ylabel('Heterogeneous')
 end
