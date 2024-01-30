@@ -72,19 +72,8 @@ if __name__ == '__main__':
         hetero_map = np.ones(DENSITIES["32k"])
     else:
         # Load heterogeneity map
-        mode_match = re.search(r"mode(\d+)", hetero_label)
-        if mode_match:
-            mode_id = int(mode_match.group(1)) - 1
-            hetero_modes = np.loadtxt(f"{EMODE_DIR}/hetero-None_atlas-{atlas}_space-{space}_"
-                                        f"den-{den}_surf-{surf_type}_hemi-{hemi}_n-{n_modes}_"
-                                        f"maskMed-{mask_medial}_emodes.txt")
-            hetero_map = hetero_modes[:, mode_id]
-        elif hetero_label in config["hetero_maps"]:
-            # Load heterogeneity map
-            hetero_file = config["hetero_maps"][hetero_label]
-            hetero_map = nib.load(hetero_file).agg_data()
-        else:
-            hetero_map = np.loadtxt(f"./data/hetero-{hetero_label}_surf-{surf_type}.txt")
+        hetero_file = config["hetero_maps"][hetero_label]
+        hetero_map = nib.load(hetero_file).agg_data()
 
         # TODO: try allowing alpha and vary to beta and set up a double for loop when calculating cs
         # Set alpha and beta values
