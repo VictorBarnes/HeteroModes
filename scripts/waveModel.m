@@ -1,5 +1,4 @@
 %% Simulate wave model
-% TODO: change geometric to homogeneous
 clear
 clc
 
@@ -104,8 +103,8 @@ param.is_time_ms = 1;
 % method = 'ODE';
 method = 'Fourier';
 
-param.r_s = 28.9;      % 30 (default) in mm
-param.gamma_s = 50; %116; % (default) in s^-1
+param.r_s = 28.9;       % (default) in mm
+param.gamma_s = 116;    % (default) in s^-1
 if param.is_time_ms==1
     param.gamma_s = 116*1e-3;
 end
