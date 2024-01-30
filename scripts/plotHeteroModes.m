@@ -7,21 +7,21 @@ clc
 setupProject
 
 % Load config file
-config = jsondecode(fileread("/fs04/kg98/vbarnes/HeteroModes/scripts/config.json"));
+config = jsondecode(fileread("config.json"));
 atlas = config.atlas;
 space = config.space;
 den = config.den;
 surf = config.surf;
 hemi = config.hemi;
-nModes = 200;
+nModes = config.n_modes;
 realHeteroMaps = config.hetero_maps;
 emodeDir = config.emode_dir;
 surfDir = config.surface_dir;
 projDir = '/fs04/kg98/vbarnes/HeteroModes';
 
 % Set parameters for heterogeneous modes
-modeParams_default = struct('heteroLabel', 'myelinmap', 'scale', 'cmean', 'alpha', 1.0, 'beta', 1.0);
-modeParams = [struct('beta', -1.0), struct('beta', -0.5), struct('beta', 0.5), struct('beta', 1.0)];
+modeParams_default = struct('heteroLabel', 'SAaxis', 'scale', 'cmean', 'alpha', 1.0, 'beta', 1.0);
+modeParams = [struct('beta', -2.0), struct('beta', -1.0), struct('beta', -0.5), struct('beta', 0.5), struct('beta', 1.0), struct('beta', 2.0)];
 nHeteroBSs = length(modeParams);     % Number of heterogeneous basis sets
 
 % Load Yeo surface file
@@ -37,11 +37,9 @@ cortexInds = find(medialMask);
 % Load homogeneous eigenmodes and eigenvalues
 homoDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_scale-%s_maskMed-True';
 homoModes = dlmread(fullfile(emodeDir, sprintf(homoDesc, "None", atlas, space, den, surf, hemi, ...
-    500, modeParams_default.scale) + "_emodes.txt"));
-homoModes = homoModes(:, 1:nModes);
+    nModes, modeParams_default.scale) + "_emodes.txt"));
 homoEvals = dlmread(fullfile(emodeDir, sprintf(homoDesc, "None", atlas, space, den, surf, hemi, ...
-    500, modeParams_default.scale) + "_evals.txt"));
-homoEvals = homoEvals(1:nModes);
+    nModes, modeParams_default.scale) + "_evals.txt"));
 
 % Load heterogeneous eigenmodes and eigenvalues
 heteroDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_scale-%s_alpha-%.1f_beta-%.1f_maskMed-True';
@@ -62,14 +60,14 @@ for ii=1:nHeteroBSs
     
     % Load propagation maps
     cmaps(:, ii) = dlmread(fullfile(emodeDir, 'cmaps', sprintf(heteroDesc, currentParams.heteroLabel, atlas, space, ...
-        den, surf, hemi, 500, currentParams.scale, currentParams.alpha, currentParams.beta) + "_cmap.txt"));  
+        den, surf, hemi, nModes, currentParams.scale, currentParams.alpha, currentParams.beta) + "_cmap.txt"));  
 
     % Load hetero modes and evals
     modes_current = dlmread(fullfile(emodeDir, sprintf(heteroDesc, currentParams.heteroLabel, atlas, ...
-        space, den, surf, hemi, 500, currentParams.scale, currentParams.alpha, currentParams.beta) + "_emodes.txt"));
+        space, den, surf, hemi, nModes, currentParams.scale, currentParams.alpha, currentParams.beta) + "_emodes.txt"));
     heteroModes(:, :, ii) = modes_current(:, 1:nModes);
     evals_current = dlmread(fullfile(emodeDir, sprintf(heteroDesc, currentParams.heteroLabel, atlas, space, ...
-        den, surf, hemi, 500, currentParams.scale, currentParams.alpha, currentParams.beta) + "_evals.txt")); 
+        den, surf, hemi, nModes, currentParams.scale, currentParams.alpha, currentParams.beta) + "_evals.txt")); 
     heteroEvals(ii, :) = evals_current(1:nModes);
 end
 
@@ -90,6 +88,7 @@ end
 % TODO: change this to plot the cmaps and distributions first then modes in one plotBrain call. This
 % should make the plot look nicer and 
 
+nModes_vis = 200; % number of modes to visualise in correlation matrix
 modesToPlot = [2, 3, 4, 10, 50, 100];
 % modesToPlot = [10, 14];
 nModesToPlot = length(modesToPlot);
@@ -116,6 +115,26 @@ for ii=1:length(modesToPlot)
         'VerticalAlignment', 'middle');
 end
 title(tl3, 'Homogeneous modes');
+
+% Plot eigenvalues
+nexttile(tl2, [3, 1])
+pointSize = 12;
+% Plot geometric eigvenvalues against itself
+scatter(homoEvals, homoEvals, pointSize, "filled")
+xlabel("Homogeneous eigenvalues")
+axis('square')
+legend("Homogeneous")
+hold on
+legendNames = cell(1, nHeteroBSs);
+% Plot heterogeneous eigenvalues against geometric
+for ii=1:nHeteroBSs
+    scatter(homoEvals, heteroEvals(ii, :), pointSize, "filled")
+    field = fieldnames(modeParams(ii));
+    value = modeParams(ii).(field{1});
+    legendNames{ii} = sprintf('%s: %.1f', field{1}, value);
+    hold on
+end
+legend(["Homogeneous", legendNames], "location", "northwest")
 
 for ii = 1:nHeteroBSs
     tl2 = tiledlayout(tl1, nRows, 1, 'TileSpacing', 'compact');
@@ -179,11 +198,11 @@ for ii = 1:nHeteroBSs
     if plotCorr
         if reorder
             % Reorder modes
-            [~, ~, ~, newCorrs] = matchModes(heteroModes(:, :, ii), homoModes, 'showFigures', false, ...
-                'withinGroups', withinGroups);
+            [~, ~, ~, newCorrs] = matchModes(heteroModes(:, 1:nModes_vis, ii), homoModes(:, 1:nModes_vis), ...
+                'showFigures', false, 'withinGroups', withinGroups);
             currentCorrs = newCorrs;
         else
-            currentCorrs = corr(heteroModes(:, :, ii), homoModes);
+            currentCorrs = corr(heteroModes(:, 1:nModes_vis, ii), homoModes(:, 1:nModes_vis));
         end
         % Plot matrix as heatmap
         nexttile(tl2, [3, 1])
@@ -191,7 +210,7 @@ for ii = 1:nHeteroBSs
         cbar = colorbar(gca, "Limits", [0, 1], "Ticks", 0.1:0.1:1.0); 
         ylabel(cbar, "absolute correlation"); 
         colormap(gca, viridis);
-        xticks(0:20:200); yticks(0:20:200);
+        xticks(0:20:nModes); yticks(0:20:nModes);
         xlabel('Homogeneous modes'); ylabel('Heterogeneous modes');
         % Plot box around eigengroups
         for jj = 1:ceil(sqrt(size(currentCorrs, 1)))
@@ -204,32 +223,3 @@ end
 % savecf(sprintf("%s/results/hetero-%s_surf-%s_scale-%s_alpha-%.1f-%.1f_reorder-%s_visualiseModes_%i-%i", ...
 %     projDir, heteroLabel, surf, scale, alphaVals(1), alphaVals(end), reorderText, modesToPlot(1), modesToPlot(end)), ".png", 200)
 
-%% Eigenvalue plot
-
-% Plot
-figure('Position', [0, 0, 800, 800]);
-pointSize = 12;
-
-% Plot geometric eigvenvalues against itself
-scatter(homoEvals, homoEvals, pointSize, "filled")
-xlabel("Homogeneous eigenvalues")
-title("Eigenvalue Plot")
-axis('square')
-legend("Homogeneous")
-hold on
-
-legendNames = cell(1, nHeteroBSs);
-% Plot heterogeneous eigenvalues against geometric
-for ii=1:nHeteroBSs
-    scatter(homoEvals, heteroEvals(ii, :), pointSize, "filled")
-    legendNames{ii} = sprintf("alpha: %.1f", alphaVals(ii));
-    hold on
-end
-
-% set(gca, "YScale", "log")
-% xlim([0, 0.05])
-% ylim([0, 0.05])
-legend(["Homogeneous", legendNames], "location", "northwest")
-
-savecf(sprintf("%s/results/hetero-%s_surf-%s_scale-%s_alpha-%.1f-%.1f_eigvalPlot", ...
-    projDir, heteroLabel, surf, scale, alphaVals(1), alphaVals(end)), ".png", 300)
