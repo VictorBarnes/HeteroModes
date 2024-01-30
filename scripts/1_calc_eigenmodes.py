@@ -47,7 +47,7 @@ def scale_cmean(image, alpha=1.0, cmean=3352.4):
 
 
 if __name__ == '__main__':
-    config_file = "/fs04/kg98/vbarnes/HeteroModes/scripts/config.json"
+    config_file = "scripts/config.json"
     with open(config_file, encoding="UTF-8") as f:
         config = json.load(f)
     save_results = config["save_results"]
@@ -63,13 +63,14 @@ if __name__ == '__main__':
     mask_medial = config["mask_medial"]
     hetero_label = config["hetero_label"]
     scale = config["scale"]
-    alpha_vals = [1.0] #np.arange(0.2, 1.2, 0.2)
-    beta = 1.0
-
-    # TODO: set default mode params as a dict
+    alpha_vals = config["alpha_vals"]
+    beta_vals = config["beta_vals"]
 
     # Load map chosen to paramaterize heterogeneity
-    if hetero_label is not None:
+    if hetero_label is None:
+        # No heterogeneity is encoded by an array of ones
+        hetero_map = np.ones(DENSITIES["32k"])
+    else:
         # Load heterogeneity map
         mode_match = re.search(r"mode(\d+)", hetero_label)
         if mode_match:
@@ -84,10 +85,18 @@ if __name__ == '__main__':
             hetero_map = nib.load(hetero_file).agg_data()
         else:
             hetero_map = np.loadtxt(f"./data/hetero-{hetero_label}_surf-{surf_type}.txt")
-    else:
-        # No heterogeneity is encoded by an array of ones
-        hetero_map = np.ones(DENSITIES["32k"])
-        alpha_vals = [None]
+
+        # TODO: try allowing alpha and vary to beta and set up a double for loop when calculating cs
+        # Set alpha and beta values
+        if len(alpha_vals) > 1 and len(beta_vals) > 1:
+            raise ValueError("alpha_vals and beta_vals cannot both have a length larger than one")
+        # Set up parameter that will be varied (can only vary one of these for now)
+        if len(alpha_vals) > 1:
+            param = "alpha"
+            param_vals = alpha_vals
+        elif len(beta_vals) > 1:
+            param = "beta"
+            param_vals = beta_vals     
 
     # Load surface template and medial wall mask
     surf = mesh_io.read_surface(f"{SURF_DIR}/atlas-{atlas}_space-{space}_den-{den}_"
@@ -114,35 +123,32 @@ if __name__ == '__main__':
         # Calculate C matrix
         cs = hetero_map * CMEAN
         # Ensure C is doesn't have negative values
-        assert np.min(cs) >= 0.0, f"Minimum value of C is negative: {np.min(cs)}"
+        assert np.min(cs) >= 0.0, f"Minimum value of cs is negative: {np.min(cs)}"
         # Each term in C needs to be squared (according to the NFT equation)
         cs = (cs ** 2).reshape(-1, 1)
     else:
-        # Set up C matrix (each col defines the heterogeneity in propagation speed across the cortex)
-        cs = np.zeros((len(hetero_map), len(alpha_vals)))
-        for i, alpha in enumerate(alpha_vals):
+        # Set up cs matrix (each col defines the heterogeneity in propagation speed across the cortex)
+        cs = np.zeros((len(hetero_map), len(param_vals)))
+        for i, val in enumerate(param_vals):
+            alpha = val if param == "alpha" else alpha_vals[0]
+            beta = val if param == "beta" else beta_vals[0]
             # Scale propagation speed
             scaler = MinMaxScaler(feature_range=(0, 1))
             rho = scaler.fit_transform(hetero_map.reshape(-1, 1)).flatten()
             cs[:, i] = CMEAN * (1 + alpha*(rho - np.mean(rho)))**beta
 
             # Ensure C doesn't have negative values
-            assert np.min(cs[:, i]) >= 0.0, f"Minimum value of C is negative: {np.min(cs[:, i])}"
+            assert np.min(cs[:, i]) >= 0.0, f"cs cannot have negative values"
             # Each term in C needs to be squared (according to the NFT equation)
             cs[:, i] **= 2
 
     # Solve heterogeneous Helmholtz equation (using each column of C as the heterogeneity)
-    C_reshaped = np.zeros((surf.n_points, cs.shape[1]))
+    cs_reshaped = np.zeros((surf.n_points, cs.shape[1]))
     for i in range(cs.shape[1]):
-        alpha = f"{alpha_vals[i]:.1f}" if isinstance(alpha_vals[i], float) else alpha_vals[i]
-        print(f"Atlas: {atlas} | Space: {space} | Density: {den} | Surface: {surf_type} | "
-              f"Hetero: {hetero_label} | Scaling: {scale} | alpha: {alpha} | beta: {beta} | "
-              f"cmean: {CMEAN} | nmodes: {n_modes}")
-
         # Calculate the hetero value for each triangle by taking the average of the values at its vertices
-        C_tfunc = mesh.map_vfunc_to_tfunc(cs[:, i])
+        cs_tri = mesh.map_vfunc_to_tfunc(cs[:, i])
         # Initialise FEM solver and solve for eigenvalues and eigenmodes
-        fem = Solver(mesh, aniso=(0, 0), hetero=C_tfunc)
+        fem = Solver(mesh, aniso=(0, 0), hetero=cs_tri)
         evals, emodes = fem.eigs(k=n_modes)
 
         # Reshape emodes to match vertices of original surface
@@ -151,15 +157,22 @@ if __name__ == '__main__':
             for mode in range(n_modes):
                 emodes_reshaped[cortex_inds, mode] = emodes[:, mode]
             # Reshape propagation speed map
-            C_reshaped[cortex_inds, i] = cs[:, i]
+            cs_reshaped[cortex_inds, i] = cs[:, i]
 
         if save_results:
             print("Saving eigenmodes and eigenvalues...")
             # Set output file names and save
             if hetero_label is None:
+                print(f"Atlas: {atlas} | Space: {space} | Density: {den} | Surface: {surf_type} | "
+                    f"Hetero: {hetero_label} | Scaling: {scale} | cmean: {CMEAN} | nmodes: {n_modes}")
                 desc = f"hetero-{hetero_label}_atlas-{atlas}_space-{space}_den-{den}_surf-{surf_type}_" \
                     f"hemi-{hemi}_n-{n_modes}_scale-{scale}_maskMed-{mask_medial}"
             else:
+                alpha = param_vals[i] if param == "alpha" else alpha_vals[0]
+                beta = param_vals[i] if param == "beta" else beta_vals[0]
+                print(f"Atlas: {atlas} | Space: {space} | Density: {den} | Surface: {surf_type} | "
+                    f"Hetero: {hetero_label} | Scaling: {scale} | alpha: {alpha} | beta: {beta} | "
+                    f"cmean: {CMEAN} | nmodes: {n_modes}")
                 desc = f"hetero-{hetero_label}_atlas-{atlas}_space-{space}_den-{den}_surf-{surf_type}_"\
                     f"hemi-{hemi}_n-{n_modes}_scale-{scale}_alpha-{alpha}_beta-{beta}_maskMed-{mask_medial}"
 
@@ -168,4 +181,4 @@ if __name__ == '__main__':
             cmap_savefile = Path(EMODE_DIR, "cmaps", f"{desc}_cmap.txt")
             np.savetxt(evals_savefile, evals)
             np.savetxt(emodes_savefile, emodes_reshaped)
-            np.savetxt(cmap_savefile, C_reshaped[:, i])
+            np.savetxt(cmap_savefile, cs_reshaped[:, i])
