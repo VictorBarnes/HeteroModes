@@ -62,7 +62,6 @@ if __name__ == '__main__':
     n_modes = config["n_modes"]
     mask_medial = config["mask_medial"]
     hetero_label = config["hetero_label"]
-    scale = config["scale"]
     alpha_vals = config["alpha_vals"]
     beta_vals = config["beta_vals"]
 
@@ -102,8 +101,8 @@ if __name__ == '__main__':
     for i, alpha in enumerate(alpha_vals):
         for j, beta in enumerate(beta_vals):
             print(f"Atlas: {atlas} | Space: {space} | Density: {den} | Surface: {surf_type} | "
-                f"Hetero: {hetero_label} | Scaling: {scale} | alpha: {alpha} | beta: {beta} | "
-                f"cmean: {CMEAN} | nmodes: {n_modes}")
+                f"Hetero: {hetero_label} | alpha: {alpha} | beta: {beta} | cmean: {CMEAN} | "
+                f"nmodes: {n_modes}")
             # Scale propagation speed
             scaler = MinMaxScaler(feature_range=(0, 1))
             rho = scaler.fit_transform(hetero_map).flatten()
@@ -136,7 +135,7 @@ if __name__ == '__main__':
                 print("Saving eigenmodes and eigenvalues...")
                 # Set output file names and save
                 desc = f"hetero-{hetero_label}_atlas-{atlas}_space-{space}_den-{den}_surf-{surf_type}_"\
-                    f"hemi-{hemi}_n-{n_modes}_scale-{scale}_alpha-{alpha}_beta-{beta}_maskMed-{mask_medial}"
+                    f"hemi-{hemi}_n-{n_modes}_alpha-{alpha}_beta-{beta}_maskMed-{mask_medial}"
 
                 evals_savefile = Path(EMODE_DIR, f"{desc}_evals.txt")
                 emodes_savefile = Path(EMODE_DIR, f"{desc}_emodes.txt")

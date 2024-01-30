@@ -20,29 +20,29 @@ surfDir = config.surface_dir;
 projDir = '/fs04/kg98/vbarnes/HeteroModes';
 
 % Set parameters for heterogeneous modes
-modeParams_default = struct('heteroLabel', 'SAaxis', 'scale', 'cmean', 'alpha', 1.0, 'beta', 1.0);
+modeParams_default = struct('heteroLabel', 'SAaxis', 'alpha', 1.0, 'beta', 1.0);
 modeParams = [struct('beta', -2.0), struct('beta', -1.0), struct('beta', -0.5), struct('beta', 0.5), struct('beta', 1.0), struct('beta', 2.0)];
 nHeteroBSs = length(modeParams);     % Number of heterogeneous basis sets
 
 % Load Yeo surface file
-[vertices, faces] = read_vtk(sprintf('%s/atlas-yeo_space-%s_den-%s_surf-%s_hemi-%s_surface.vtk', ...
-    surfDir, space, den, surf, hemi));
+[vertices, faces] = read_vtk(sprintf('%s/atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_surface.vtk', ...
+    surfDir, atlas, space, den, surf, hemi));
 surface.vertices = vertices';
 surface.faces = faces';
 % Load cortex mask
-medialMask = dlmread(sprintf('%s/atlas-yeo_space-%s_den-%s_hemi-%s_medialMask.txt', surfDir, space, ...
-    den, hemi));
+medialMask = dlmread(sprintf('%s/atlas-%s_space-%s_den-%s_hemi-%s_medialMask.txt', surfDir, atlas, ...
+    space, den, hemi));
 cortexInds = find(medialMask);
 
 % Load homogeneous eigenmodes and eigenvalues
-homoDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_scale-%s_maskMed-True';
+homoDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_maskMed-True';
 homoModes = dlmread(fullfile(emodeDir, sprintf(homoDesc, "None", atlas, space, den, surf, hemi, ...
-    nModes, modeParams_default.scale) + "_emodes.txt"));
+    nModes) + "_emodes.txt"));
 homoEvals = dlmread(fullfile(emodeDir, sprintf(homoDesc, "None", atlas, space, den, surf, hemi, ...
-    nModes, modeParams_default.scale) + "_evals.txt"));
+    nModes) + "_evals.txt"));
 
 % Load heterogeneous eigenmodes and eigenvalues
-heteroDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_scale-%s_alpha-%.1f_beta-%.1f_maskMed-True';
+heteroDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_alpha-%.1f_beta-%.1f_maskMed-True';
 cmaps = zeros(size(homoModes, 1), nHeteroBSs);
 heteroModes = zeros([size(homoModes), nHeteroBSs]);
 heteroEvals = zeros(nHeteroBSs, nModes);
@@ -60,14 +60,14 @@ for ii=1:nHeteroBSs
     
     % Load propagation maps
     cmaps(:, ii) = dlmread(fullfile(emodeDir, 'cmaps', sprintf(heteroDesc, currentParams.heteroLabel, atlas, space, ...
-        den, surf, hemi, nModes, currentParams.scale, currentParams.alpha, currentParams.beta) + "_cmap.txt"));  
+        den, surf, hemi, nModes, currentParams.alpha, currentParams.beta) + "_cmap.txt"));  
 
     % Load hetero modes and evals
     modes_current = dlmread(fullfile(emodeDir, sprintf(heteroDesc, currentParams.heteroLabel, atlas, ...
-        space, den, surf, hemi, nModes, currentParams.scale, currentParams.alpha, currentParams.beta) + "_emodes.txt"));
+        space, den, surf, hemi, nModes, currentParams.alpha, currentParams.beta) + "_emodes.txt"));
     heteroModes(:, :, ii) = modes_current(:, 1:nModes);
     evals_current = dlmread(fullfile(emodeDir, sprintf(heteroDesc, currentParams.heteroLabel, atlas, space, ...
-        den, surf, hemi, nModes, currentParams.scale, currentParams.alpha, currentParams.beta) + "_evals.txt")); 
+        den, surf, hemi, nModes, currentParams.alpha, currentParams.beta) + "_evals.txt")); 
     heteroEvals(ii, :) = evals_current(1:nModes);
 end
 
@@ -220,6 +220,6 @@ for ii = 1:nHeteroBSs
 end
 
 % Save figure
-% savecf(sprintf("%s/results/hetero-%s_surf-%s_scale-%s_alpha-%.1f-%.1f_reorder-%s_visualiseModes_%i-%i", ...
-%     projDir, heteroLabel, surf, scale, alphaVals(1), alphaVals(end), reorderText, modesToPlot(1), modesToPlot(end)), ".png", 200)
+% savecf(sprintf("%s/results/hetero-%s_surf-%s_alpha-%.1f-%.1f_reorder-%s_visualiseModes_%i-%i", ...
+%     projDir, heteroLabel, surf, alphaVals(1), alphaVals(end), reorderText, modesToPlot(1), modesToPlot(end)), ".png", 200)
 

@@ -21,19 +21,19 @@ BEdir = '/fs03/kg98/vbarnes/repos/BrainEigenmodes';
 dset = 'nm-subset';
 
 % Set parameters for heterogeneous modes
-modeParams_default = struct('heteroLabel', 'myelinmap', 'scale', 'cmean', 'alpha', 1.0, 'beta', 1.0);
+modeParams_default = struct('heteroLabel', 'myelinmap', 'alpha', 1.0, 'beta', 1.0);
 modeParams = [struct('beta', 1.0)];
 nHeteroBSs = length(modeParams);     % Number of heterogeneous basis sets
 
 disp("Loading modes and empirical data...")
 % Load surface file
-[vertices, faces] = read_vtk(sprintf('%s/atlas-yeo_space-%s_den-%s_surf-%s_hemi-%s_surface.vtk', ...
-    surfDir, space, den, surf, hemi));
+[vertices, faces] = read_vtk(sprintf('%s/atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_surface.vtk', ...
+    surfDir, atlas, space, den, surf, hemi));
 surface.vertices = vertices';
 surface.faces = faces';
 % Get cortex indices
-medialMask = dlmread(sprintf('%s/atlas-yeo_space-%s_den-%s_hemi-%s_medialMask.txt', surfDir, space, ...
-    den, hemi));
+medialMask = dlmread(sprintf('%s/atlas-%s_space-%s_den-%s_hemi-%s_medialMask.txt', surfDir, atlas, ...
+    space, den, hemi));
 cortexInds = find(medialMask);
 
 % Load parcellation
@@ -42,14 +42,14 @@ parc = dlmread(sprintf('%s/data/parcellations/fsLR_32k_%s-lh.txt', BEdir, parcNa
 nParcels = length(unique(parc(parc>0)));
 
 % Load homogeneous eigenmodes and eigenvalues
-homoDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_scale-%s_maskMed-True';
+homoDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_maskMed-True';
 homoModes = dlmread(fullfile(emodeDir, sprintf(homoDesc, "None", atlas, space, den, surf, hemi, ...
-    nModes, modeParams_default.scale) + "_emodes.txt"));
+    nModes) + "_emodes.txt"));
 homoEvals = dlmread(fullfile(emodeDir, sprintf(homoDesc, "None", atlas, space, den, surf, hemi, ...
-    nModes, modeParams_default.scale) + "_evals.txt"));
+    nModes) + "_evals.txt"));
 
 % Load heterogeneous eigenmodes and eigenvalues
-heteroDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_scale-%s_alpha-%.1f_beta-%.1f_maskMed-True';
+heteroDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_alpha-%.1f_beta-%.1f_maskMed-True';
 heteroModes = zeros([size(homoModes), nHeteroBSs]);
 heteroEvals = zeros(nHeteroBSs, nModes);
 for ii=1:nHeteroBSs
@@ -66,9 +66,9 @@ for ii=1:nHeteroBSs
 
     % Load data
     heteroModes(:, :, ii) = dlmread(fullfile(emodeDir, sprintf(heteroDesc, currentParams.heteroLabel, atlas, ...
-        space, den, surf, hemi, nModes, currentParams.scale, currentParams.alpha, currentParams.beta) + "_emodes.txt")); 
+        space, den, surf, hemi, nModes, currentParams.alpha, currentParams.beta) + "_emodes.txt")); 
     heteroEvals(ii, :) = dlmread(fullfile(emodeDir, sprintf(heteroDesc, currentParams.heteroLabel, atlas, space, ...
-        den, surf, hemi, nModes, currentParams.scale, currentParams.alpha, currentParams.beta) + "_evals.txt")); 
+        den, surf, hemi, nModes, currentParams.alpha, currentParams.beta) + "_evals.txt")); 
 end
 
 % Load empirical data to reconstruct
@@ -213,8 +213,8 @@ for ii = 1:nHeteroBSs
     title(lgd, "Homogeneous    Heterogeneous", 'FontSize', 15)
     
     % Save figure
-%     savecf(sprintf("%s/reconSpatialMaps/hetero-%s_dset-%s_surf-%s_scale-%s_alpha-%.1f_beta-%.1f_reconAccuracy", ...
-%         resultsDir, heteroLabel, dset, surf, scale, alphaVals(ii), beta), ".png", 150)
+%     savecf(sprintf("%s/reconSpatialMaps/hetero-%s_dset-%s_surf-%s_alpha-%.1f_beta-%.1f_reconAccuracy", ...
+%         resultsDir, heteroLabel, dset, surf, alphaVals(ii), beta), ".png", 150)
 end
 
 %% Plot recon corr paths (for homo and hetero) and difference between recon corrs
@@ -269,6 +269,6 @@ for ii = 1:nAlpha
 %     legend(labels, "location", "southeast", 'Interpreter', 'none')
     
     % Save figure
-%     savecf(sprintf("%s/reconSpatialMaps/hetero-%s_dset-%s_surf-%s_scale-%s_alpha-%.1f_reconAccuracy", ...
-%         resultsDir, heteroLabel, dset, surf, scale, alphaVals(ii), beta), ".png", 200)
+%     savecf(sprintf("%s/reconSpatialMaps/hetero-%s_dset-%s_surf-%s__alpha-%.1f_reconAccuracy", ...
+%         resultsDir, heteroLabel, dset, surf, alphaVals(ii), beta), ".png", 200)
 end

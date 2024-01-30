@@ -20,7 +20,7 @@ resultsDir = config.results_dir;
 BEdir = '/fs03/kg98/vbarnes/repos/BrainEigenmodes';
 
 % Set parameters for heterogeneous modes
-modeParams_default = struct('heteroLabel', 'myelinmap', 'scale', 'cmean', 'alpha', 1.0, 'beta', 1.0);
+modeParams_default = struct('heteroLabel', 'myelinmap', 'alpha', 1.0, 'beta', 1.0);
 modeParams = [struct('beta', -2.0), struct('beta', -1.0), struct('beta', -0.5), ...
     struct('beta', 0.5), struct('beta', 1.0), struct('beta', 2.0)];
 % heteroModesParams = [struct('alpha', 0.2), struct('alpha', 0.4), struct('alpha', 0.6), struct('alpha', 0.8), struct('alpha', 1.0)];
@@ -28,13 +28,13 @@ nHeteroBSs = length(modeParams);     % Number of heterogeneous basis sets
 
 disp("Loading modes and empirical data...")
 % Load surface file
-[vertices, faces] = read_vtk(sprintf('%s/atlas-yeo_space-%s_den-%s_surf-%s_hemi-%s_surface.vtk', ...
-    surfDir, space, den, surf, hemi));
+[vertices, faces] = read_vtk(sprintf('%s/atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_surface.vtk', ...
+    surfDir, atlas, space, den, surf, hemi));
 surface.vertices = vertices';
 surface.faces = faces';
 % Get cortex indices
-medialMask = dlmread(sprintf('%s/atlas-yeo_space-%s_den-%s_hemi-%s_medialMask.txt', surfDir, space, ...
-    den, hemi));
+medialMask = dlmread(sprintf('%s/atlas-%s_space-%s_den-%s_hemi-%s_medialMask.txt', surfDir, atlas, ...
+    space, den, hemi));
 cortexInds = find(medialMask);
 
 % Load parcellation
@@ -43,14 +43,14 @@ parc = dlmread(sprintf('%s/data/parcellations/fsLR_32k_%s-lh.txt', BEdir, parcNa
 nParcels = length(unique(parc(parc>0)));
 
 % Load homogeneous eigenmodes and eigenvalues
-homoDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_scale-%s_maskMed-True';
+homoDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_maskMed-True';
 homoModes = dlmread(fullfile(emodeDir, sprintf(homoDesc, "None", atlas, space, den, surf, hemi, ...
-    nModes, modeParams_default.scale) + "_emodes.txt"));
+    nModes) + "_emodes.txt"));
 homoEvals = dlmread(fullfile(emodeDir, sprintf(homoDesc, "None", atlas, space, den, surf, hemi, ...
-    nModes, modeParams_default.scale) + "_evals.txt"));
+    nModes) + "_evals.txt"));
 
 % Load heterogeneous eigenmodes and eigenvalues
-heteroDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_scale-%s_alpha-%.1f_beta-%.1f_maskMed-True';
+heteroDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_alpha-%.1f_beta-%.1f_maskMed-True';
 heteroModes = zeros([size(homoModes), nHeteroBSs]);
 heteroEvals = zeros(nHeteroBSs, nModes);
 for ii=1:nHeteroBSs
@@ -67,9 +67,9 @@ for ii=1:nHeteroBSs
 
     % Load data
     heteroModes(:, :, ii) = dlmread(fullfile(emodeDir, sprintf(heteroDesc, currentParams.heteroLabel, atlas, ...
-        space, den, surf, hemi, nModes, currentParams.scale, currentParams.alpha, currentParams.beta) + "_emodes.txt")); 
+        space, den, surf, hemi, nModes, currentParams.alpha, currentParams.beta) + "_emodes.txt")); 
     heteroEvals(ii, :) = dlmread(fullfile(emodeDir, sprintf(heteroDesc, currentParams.heteroLabel, atlas, space, ...
-        den, surf, hemi, nModes, currentParams.scale, currentParams.alpha, currentParams.beta) + "_evals.txt")); 
+        den, surf, hemi, nModes, currentParams.alpha, currentParams.beta) + "_evals.txt")); 
 end
 
 % Load empirical FC data
@@ -234,8 +234,8 @@ for ii = 1:nHeteroBSs
     title(sprintf('Node FC (r = %.2f)', heteroNodeFCcorr)); xlabel('model'); ylabel('empirical')
 end
 
-% savecf(sprintf("%s/simulateFC/hetero-%s_scale-%s_alpha-%.1f_beta-%.1f_reconAccuracy", ...
-%     resultsDir, heteroLabel, surf, scale, alphaVals(ii), beta), ".png", 150)
+% savecf(sprintf("%s/simulateFC/hetero-%s_alpha-%.1f_beta-%.1f_reconAccuracy", ...
+%     resultsDir, heteroLabel, surf, alphaVals(ii), beta), ".png", 150)
       
 %% Plot FC of simulated neural data
 
