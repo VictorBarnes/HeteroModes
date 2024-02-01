@@ -7,26 +7,26 @@ setupProject
 
 % Load surface and mode parameters
 config = jsondecode(fileread(fullfile(pwd, "config.json")));
+emodeDir = config.emode_dir;
+surfDir = config.surface_dir;
+resultsDir = config.results_dir;
+reposDir = config.repos_dir;
+BEdir = fullfile(reposDir, 'BrainEigenmodes');
 atlas = config.atlas;
 space = config.space;
 den = config.den;
 surf = config.surf;
 hemi = config.hemi;
 nModes = config.n_modes;
-realHeteroMaps = config.hetero_maps;
-emodeDir = config.emode_dir;
-surfDir = config.surface_dir;
-resultsDir = config.results_dir;
-BEdir = '/fs03/kg98/vbarnes/repos/BrainEigenmodes';
+heteroLabel = config.hetero_label;
+alphaVals = config.alpha_vals;
+betaVals = config.beta_vals;
 
-% Set parameters for heterogeneous modes
-modeParams_default = struct('heteroLabel', 'myelinmap', 'alpha', 1.0, 'beta', 1.0);
-modeParams = [struct('beta', -2.0), struct('beta', -1.0), struct('beta', -0.5), ...
-    struct('beta', 0.5), struct('beta', 1.0), struct('beta', 2.0)];
-% heteroModesParams = [struct('alpha', 0.2), struct('alpha', 0.4), struct('alpha', 0.6), struct('alpha', 0.8), struct('alpha', 1.0)];
-nHeteroBSs = length(modeParams);     % Number of heterogeneous basis sets
+% Get all alpha and beta combinations
+[A, B] = meshgrid(alphaVals, betaVals);
+abCombs = reshape(cat(2,A',B'), [], 2);
+nHeteroBSs = size(abCombs, 1);     % Number of heterogeneous basis sets
 
-disp("Loading modes and empirical data...")
 % Load surface file
 [vertices, faces] = read_vtk(sprintf('%s/atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_surface.vtk', ...
     surfDir, atlas, space, den, surf, hemi));
@@ -43,34 +43,27 @@ parc = dlmread(sprintf('%s/data/parcellations/fsLR_32k_%s-lh.txt', BEdir, parcNa
 nParcels = length(unique(parc(parc>0)));
 
 % Load homogeneous eigenmodes and eigenvalues
-homoDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_maskMed-True';
-homoModes = dlmread(fullfile(emodeDir, sprintf(homoDesc, "None", atlas, space, den, surf, hemi, ...
-    nModes) + "_emodes.txt"));
-homoEvals = dlmread(fullfile(emodeDir, sprintf(homoDesc, "None", atlas, space, den, surf, hemi, ...
-    nModes) + "_evals.txt"));
+desc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_alpha-%.1f_beta-%.1f_maskMed-True';
+homoModes = dlmread(fullfile(emodeDir, sprintf(desc, "None", atlas, space, den, surf, hemi, ...
+    nModes, 0.0, 0.0) + "_emodes.txt"));
+homoEvals = dlmread(fullfile(emodeDir, sprintf(desc, "None", atlas, space, den, surf, hemi, ...
+    nModes, 0.0, 0.0) + "_evals.txt"));
 
 % Load heterogeneous eigenmodes and eigenvalues
-heteroDesc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_alpha-%.1f_beta-%.1f_maskMed-True';
+fprintf("Loading %i heterogeneous basis sets... ", nHeteroBSs);
 heteroModes = zeros([size(homoModes), nHeteroBSs]);
 heteroEvals = zeros(nHeteroBSs, nModes);
 for ii=1:nHeteroBSs
-% Extract current parameter values from the struct
-    currentParams = modeParams_default;
-    paramNames = fieldnames(modeParams_default);
-    
-    % Set default values for parameters not specified
-    for jj=1:length(paramNames)
-        if isfield(modeParams(ii), paramNames{jj})
-            currentParams.(paramNames{jj}) = modeParams(ii).(paramNames{jj});
-        end
-    end
+    alpha = abCombs(ii, 1);
+    beta = abCombs(ii, 2);
 
     % Load data
-    heteroModes(:, :, ii) = dlmread(fullfile(emodeDir, sprintf(heteroDesc, currentParams.heteroLabel, atlas, ...
-        space, den, surf, hemi, nModes, currentParams.alpha, currentParams.beta) + "_emodes.txt")); 
-    heteroEvals(ii, :) = dlmread(fullfile(emodeDir, sprintf(heteroDesc, currentParams.heteroLabel, atlas, space, ...
-        den, surf, hemi, nModes, currentParams.alpha, currentParams.beta) + "_evals.txt")); 
+    heteroModes(:, :, ii) = dlmread(fullfile(emodeDir, sprintf(desc, heteroLabel, atlas, ...
+        space, den, surf, hemi, nModes, alpha, beta) + "_emodes.txt")); 
+    heteroEvals(ii, :) = dlmread(fullfile(emodeDir, sprintf(desc, heteroLabel, atlas, space, ...
+        den, surf, hemi, nModes, alpha, beta) + "_evals.txt")); 
 end
+fprintf("done\n");
 
 % Load empirical FC data
 data = matfile(fullfile(BEdir, 'data', 'results', 'model_results_Glasser360_lh.mat'));
@@ -80,7 +73,6 @@ triuInds = find(triu(ones(size(empFC, 1), size(empFC, 2), 1), 1));
 
 %% Set simulation parameters
 
-disp('Setting simulation parameters...');
 waveParams = loadParameters_wave_func;
 waveParams.tstep = 0.09; % in s
 tpre =  50;                                     % burn time to remove transient
@@ -117,7 +109,7 @@ ext_input = randn(size(homoModes,1), length(waveParams.T));
 %% Simulate FC using homogeneous and heterogeneous modes
 
 %%% HOMOGENEOUS
-disp('Simulating FC using homoegeneous modes...')
+fprintf('Simulating FC using homoegeneous modes... ')
 % simulate neural activity
 [~, homoSimNeural] = model_neural_waves(homoModes, homoEvals, ext_input, waveParams, method);
 % simulate BOLD activity from the neural activity
@@ -145,9 +137,10 @@ homoSimNeural_parc = detrend(homoSimNeural_parc', 'constant');
 homoSimNeural_parc = homoSimNeural_parc./repmat(std(homoSimNeural_parc),10149,1);
 homoSimNeural_parc(isnan(homoSimNeural_parc)) = 0;
 homoNeuralFC = homoSimNeural_parc'*homoSimNeural_parc/10149;
+fprintf('done\n')
 
 %%% HETEROGENEOUS
-disp('Simulating FC using heterogeneous modes...')
+fprintf('Simulating FC using heterogeneous modes... ')
 heteroFCs = zeros(nParcels, nParcels, nHeteroBSs);
 heteroNeuralFCs = zeros(nParcels, nParcels, nHeteroBSs);
 for ii = 1:nHeteroBSs
@@ -179,6 +172,7 @@ for ii = 1:nHeteroBSs
     heteroSimNeural_parc(isnan(heteroSimNeural_parc)) = 0;
     heteroNeuralFCs(:, :, ii) = heteroSimNeural_parc'*heteroSimNeural_parc/10149;    
 end
+fprintf('done')
 
 %% Plot results
 
@@ -187,6 +181,7 @@ empNodeFC = mean(empFC - diag(diag(empFC)), 2);
 
 figure('Position', [100, 100, 350*(nHeteroBSs+1), 900]);
 tl1 = tiledlayout(1, 1 + nHeteroBSs);
+title(tl1, {'Simulating FC using wave model'; sprintf('(hetero: %s)', heteroLabel)}, 'FontSize', 16)
 
 %%% Plot homogeneous model results
 tl2 = tiledlayout(tl1, 4, 1, 'TileSpacing', 'tight');
@@ -214,9 +209,8 @@ for ii = 1:nHeteroBSs
     heteroFC = heteroFCs(:, :, ii);
     tl2 = tiledlayout(tl1, 4, 1, 'TileSpacing', 'tight');
     tl2.Layout.Tile = ii + 1;
-    field = fieldnames(modeParams(ii));
-    value = modeParams(ii).(field{1});
-    title(tl2, {'Heterogeneous model', sprintf('(%s: %.1f)', field{1}, value)})
+    title(tl2, {'Heterogeneous model', sprintf('(alpha: %.1f | beta: %.1f)', abCombs(ii, 1), ...
+        abCombs(ii, 2))})
 
     % Plot emprical and model FC matrices
     nexttile(tl2); imagesc(empFC); colormap(bluewhitered_mg); colorbar; title('Empirical FC');
@@ -236,31 +230,5 @@ end
 
 % savecf(sprintf("%s/simulateFC/hetero-%s_alpha-%.1f_beta-%.1f_reconAccuracy", ...
 %     resultsDir, heteroLabel, surf, alphaVals(ii), beta), ".png", 150)
-      
-%% Plot FC of simulated neural data
 
-figure('Position', [100, 100, 1800, 400]);
-tl1 = tiledlayout(1, 4);
-for ii=1:4
-    nexttile
-    imagesc(heteroNeuralFCs(:, :, ii)); colormap(bluewhitered_mg); colorbar;
-
-    field = fieldnames(modeParams(ii));
-    value = modeParams(ii).(field{1});
-    title(sprintf('%s: %.1f', field{1}, value))
-end
-
-
-%% Plot homo vs hetero edge FC
-figure('Position', [100, 100, 1800, 400]);
-tl1 = tiledlayout(1, 4);
-for ii=1:4
-    nexttile
-    scatter(homoFC, heteroFCs(:, :, ii))
-    
-    field = fieldnames(modeParams(ii));
-    value = modeParams(ii).(field{1});
-    title(sprintf('%s: %.1f', field{1}, value))
-    xlabel('Homogeneous'); ylabel('Heterogeneous')
-end
 
