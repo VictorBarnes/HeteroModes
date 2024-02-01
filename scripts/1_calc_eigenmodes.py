@@ -5,13 +5,10 @@ Calculate heterogeneous eigenmodes of a surface by solving the heterogeneous Hel
 """
 
 import json
-import re
 from pathlib import Path
 import numpy as np
 import nibabel as nib
-from scipy import stats
 from sklearn.preprocessing import MinMaxScaler
-from mpmath import mp
 from lapy import Solver, TriaMesh
 from brainspace.mesh import mesh_io, mesh_operations
 
