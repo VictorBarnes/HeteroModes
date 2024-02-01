@@ -19,27 +19,13 @@ from brainspace.mesh import mesh_io, mesh_operations
 # Global variables
 DENSITIES = {"32k": 32492}
 CMEAN = 3352.4  # 28.9
-# Load config file and variables therein
+# Load config file
 config_file = "scripts/config.json"
 with open(config_file, encoding="UTF-8") as f:
     config = json.load(f)
-save_results = config["save_results"]
-EMODE_DIR = config["emode_dir"]
-SURF_DIR = config["surface_dir"]
-RESULTS_DIR = config["results_dir"]
-atlas = config["atlas"]
-space = config["space"]
-den = config["den"]
-surf_type = config["surf"]
-hemi = config["hemi"]
-n_modes = config["n_modes"]
-mask_medial = config["mask_medial"]
-hetero_label = config["hetero_label"]
-alpha_vals = config["alpha_vals"]
-beta_vals = config["beta_vals"]
 
 # Load map chosen to paramaterize heterogeneity
-if hetero_label is None:
+if config["hetero_label"] is None:
     # No heterogeneity is encoded by an array of ones
     hetero_map = np.ones(DENSITIES["32k"]).reshape(-1, 1)
     # Setting alpha and beta to 0 will mean that cs is CMEAN at every vertex
@@ -47,18 +33,19 @@ if hetero_label is None:
     beta_vals = [0.0]
 else:
     # Load heterogeneity map
-    hetero_file = config["hetero_maps"][hetero_label]
+    hetero_file = config["hetero_maps"][config["hetero_label"]]
     hetero_map = nib.load(hetero_file).agg_data().reshape(-1, 1)
 
 # Load surface template and medial wall mask
-surf = mesh_io.read_surface(f"{SURF_DIR}/atlas-{atlas}_space-{space}_den-{den}_"
-                            f"surf-{surf_type}_hemi-{hemi}_surface.vtk")
-medial_mask = np.loadtxt(f"{SURF_DIR}/atlas-{atlas}_space-{space}_den-{den}_hemi-{hemi}_"
-                    f"medialMask.txt").astype(bool)
+surf = mesh_io.read_surface(f"{config['surface_dir']}/atlas-{config['atlas']}_"
+                            f"space-{config['space']}_den-{config['den']}_surf-{config['surf']}_"
+                            f"hemi-{config['hemi']}_surface.vtk")
+medial_mask = np.loadtxt(f"{config['surface_dir']}/atlas-{config['atlas']}_space-{config['space']}_"
+                         f"den-{config['den']}_hemi-{config['hemi']}_medialMask.txt").astype(bool)
 cortex_inds = np.array([i for i, med in enumerate(medial_mask) if med])
 
 # Mask surface template and heterogeneous map
-if mask_medial:
+if config['mask_medial']:
     # Mask surface template
     surf_masked = mesh_operations.mask_points(surf, medial_mask)
     v = surf_masked.Points
@@ -68,14 +55,14 @@ if mask_medial:
     hetero_map = hetero_map[medial_mask]
 else:
     # Initialise mesh without masking medial wall
-    mesh = TriaMesh.read_vtk(getattr(surf, hemi))
+    mesh = TriaMesh.read_vtk(getattr(surf, config['hemi']))
 
 # Loop through alpha and beta, calculate cs, and solve eigenmodes and eigenvalues
-for i, alpha in enumerate(alpha_vals):
-    for j, beta in enumerate(beta_vals):
-        print(f"Atlas: {atlas} | Space: {space} | Density: {den} | Surface: {surf_type} | "
-            f"Hetero: {hetero_label} | alpha: {alpha} | beta: {beta} | cmean: {CMEAN} | "
-            f"nmodes: {n_modes}")
+for i, alpha in enumerate(config['alpha_vals']):
+    for j, beta in enumerate(config['beta_vals']):
+        print(f"Space: {config['space']} | Density: {config['den']} | Surface: {config['surf']} | "
+              f"Hetero: {config['hetero_label']} | alpha: {alpha} | beta: {beta} | "
+              f"cmean: {CMEAN} | nmodes: {config['n_modes']}")
         # Scale propagation speed
         scaler = MinMaxScaler(feature_range=(0, 1))
         rho = scaler.fit_transform(hetero_map).flatten()
@@ -90,12 +77,12 @@ for i, alpha in enumerate(alpha_vals):
         cs_tri = mesh.map_vfunc_to_tfunc(cs)
         # Initialise FEM solver and solve for eigenvalues and eigenmodes
         fem = Solver(mesh, aniso=(0, 0), hetero=cs_tri)
-        evals, emodes = fem.eigs(k=n_modes)
+        evals, emodes = fem.eigs(k=config['n_modes'])
 
-        if mask_medial:
+        if config['mask_medial']:
             # Reshape emodes to match vertices of original surface
-            emodes_reshaped = np.zeros([surf.n_points, n_modes])
-            for mode in range(n_modes):
+            emodes_reshaped = np.zeros([surf.n_points, config['n_modes']])
+            for mode in range(config['n_modes']):
                 emodes_reshaped[cortex_inds, mode] = emodes[:, mode]
             emodes = emodes_reshaped
 
@@ -104,15 +91,17 @@ for i, alpha in enumerate(alpha_vals):
             cs_reshaped[cortex_inds] = cs
             cs = cs_reshaped            
 
-        if save_results:
+        if config['save_results']:
             print("Saving eigenmodes and eigenvalues...")
             # Set output file names and save
-            desc = f"hetero-{hetero_label}_atlas-{atlas}_space-{space}_den-{den}_surf-{surf_type}_"\
-                f"hemi-{hemi}_n-{n_modes}_alpha-{alpha}_beta-{beta}_maskMed-{mask_medial}"
+            desc = (f"hetero-{config['hetero_label']}_atlas-{config['atlas']}_"
+                    f"space-{config['space']}_den-{config['den']}_surf-{config['surf']}_"
+                    f"hemi-{config['hemi']}_n-{config['n_modes']}_alpha-{alpha}_beta-{beta}_"
+                    f"maskMed-{config['mask_medial']}")
 
-            evals_savefile = Path(EMODE_DIR, f"{desc}_evals.txt")
-            emodes_savefile = Path(EMODE_DIR, f"{desc}_emodes.txt")
-            cmap_savefile = Path(EMODE_DIR, "cmaps", f"{desc}_cmap.txt")
+            evals_savefile = Path(config['emode_dir'], f"{desc}_evals.txt")
+            emodes_savefile = Path(config['emode_dir'], f"{desc}_emodes.txt")
+            cmap_savefile = Path(config['emode_dir'], "cmaps", f"{desc}_cmap.txt")
             np.savetxt(evals_savefile, evals)
             np.savetxt(emodes_savefile, emodes)
             np.savetxt(cmap_savefile, cs)
