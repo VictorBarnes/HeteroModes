@@ -70,8 +70,8 @@ if __name__ == '__main__':
         # No heterogeneity is encoded by an array of ones
         hetero_map = np.ones(DENSITIES["32k"]).reshape(-1, 1)
         # Setting alpha and beta to 0 will mean that cs is CMEAN at every vertex
-        alpha_vals = [0]
-        beta_vals = [0]
+        alpha_vals = [0.0]
+        beta_vals = [0.0]
     else:
         # Load heterogeneity map
         hetero_file = config["hetero_maps"][hetero_label]
@@ -109,7 +109,7 @@ if __name__ == '__main__':
             cs = CMEAN * (1 + alpha*(rho - np.mean(rho)))**beta
 
             # Ensure C doesn't have negative values
-            assert np.min(cs) >= 0.0, f"cs cannot have negative values"
+            assert np.min(cs) >= 1.0, f"Values of cs less than 1.0 can lead to infinity problems."
             # Each term in C needs to be squared (according to the NFT equation)
             cs **= 2
 
