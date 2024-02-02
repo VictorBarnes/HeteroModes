@@ -25,7 +25,7 @@ betaVals = config.beta_vals;
 % Get all alpha and beta combinations
 [A, B] = meshgrid(alphaVals, betaVals);
 abCombs = reshape(cat(2,A',B'), [], 2);
-nHeteroBSs = size(abCombs, 1);     % Number of heterogeneous basis sets
+nBasisSets = 1 + size(abCombs, 1);     % Number of homogeneous and heterogeneous basis sets
 
 % Load surface file
 [vertices, faces] = read_vtk(sprintf('%s/atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_surface.vtk', ...
@@ -42,25 +42,27 @@ parcName = 'Glasser360';
 parc = dlmread(sprintf('%s/data/parcellations/fsLR_32k_%s-lh.txt', BEdir, parcName));
 nParcels = length(unique(parc(parc>0)));
 
-% Load homogeneous eigenmodes and eigenvalues
+% Load eigenmodes and eigenvalues
+fprintf("Loading %i basis sets... ", nBasisSets);
 desc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_alpha-%.1f_beta-%.1f_maskMed-True';
-homoModes = dlmread(fullfile(emodeDir, sprintf(desc, "None", atlas, space, den, surf, hemi, ...
-    nModes, 0.0, 0.0) + "_emodes.txt"));
-homoEvals = dlmread(fullfile(emodeDir, sprintf(desc, "None", atlas, space, den, surf, hemi, ...
-    nModes, 0.0, 0.0) + "_evals.txt"));
-
-% Load heterogeneous eigenmodes and eigenvalues
-fprintf("Loading %i heterogeneous basis sets... ", nHeteroBSs);
-heteroModes = zeros([size(homoModes), nHeteroBSs]);
-heteroEvals = zeros(nHeteroBSs, nModes);
-for ii=1:nHeteroBSs
-    alpha = abCombs(ii, 1);
-    beta = abCombs(ii, 2);
+basisSets_modes = zeros([size(surface.vertices, 1), nModes, nBasisSets]);
+basisSets_evals = zeros(nModes, nBasisSets);
+for ii=1:nBasisSets
+    % The first basis set to load is the homogeneous baisis set. All others are heterogeneous
+    if ii == 1
+        heteroLabel = "None";
+        alpha = 0.0;
+        beta = 0.0;
+    else
+        heteroLabel = config.hetero_label;
+        alpha = abCombs(ii-1, 1);
+        beta = abCombs(ii-1, 2);
+    end
 
     % Load data
-    heteroModes(:, :, ii) = dlmread(fullfile(emodeDir, sprintf(desc, heteroLabel, atlas, ...
+    basisSets_modes(:, :, ii) = dlmread(fullfile(emodeDir, sprintf(desc, heteroLabel, atlas, ...
         space, den, surf, hemi, nModes, alpha, beta) + "_emodes.txt")); 
-    heteroEvals(ii, :) = dlmread(fullfile(emodeDir, sprintf(desc, heteroLabel, atlas, space, ...
+    basisSets_evals(:, ii) = dlmread(fullfile(emodeDir, sprintf(desc, heteroLabel, atlas, space, ...
         den, surf, hemi, nModes, alpha, beta) + "_evals.txt")); 
 end
 fprintf("done\n");
@@ -68,8 +70,6 @@ fprintf("done\n");
 % Load empirical FC data
 data = matfile(fullfile(BEdir, 'data', 'results', 'model_results_Glasser360_lh.mat'));
 empFC = data.FC_emp;
-% Calculate upper triangle indices (without diagonal values)
-triuInds = find(triu(ones(size(empFC, 1), size(empFC, 2), 1), 1));
 
 %% Set simulation parameters
 
@@ -104,128 +104,81 @@ TR = 0.72;       % in s
 % random external input (to mimic resting state)
 rand_ind = 1;
 rng(rand_ind)
-ext_input = randn(size(homoModes,1), length(waveParams.T));
+extInput = randn(size(surface.vertices, 1), length(waveParams.T));
 
 %% Simulate FC using homogeneous and heterogeneous modes
 
-%%% HOMOGENEOUS
-fprintf('Simulating FC using homoegeneous modes... ')
-% simulate neural activity
-[~, homoSimNeural] = model_neural_waves(homoModes, homoEvals, ext_input, waveParams, method);
-% simulate BOLD activity from the neural activity
-[~, homoSimBOLD] = model_BOLD_balloon(homoModes, homoSimNeural, balloonParams, method);
-
-%%% Calculate FC of simulated BOLD data
-time_steady_ind = dsearchn(waveParams.T', tpre);    % index of start of steady state
-homoSimBOLD = homoSimBOLD(:,time_steady_ind:end);                        
-% T_steady = (0:size(homoSimBOLD,2)-1)*param.tstep;
-% downsample time series to match TR
-homoSimBOLD = downsample(homoSimBOLD', floor(TR/(balloonParams.tstep)))';
-% parcellate BOLD-fMRI time series
-homoSimBOLD_parc = calc_parcellate(parc, homoSimBOLD);
-% construct FC matrix (detrending the signal first)
-homoSimBOLD_parc = detrend(homoSimBOLD_parc', 'constant');
-homoSimBOLD_parc = homoSimBOLD_parc./repmat(std(homoSimBOLD_parc),T,1);
-homoSimBOLD_parc(isnan(homoSimBOLD_parc)) = 0;
-homoFC = homoSimBOLD_parc'*homoSimBOLD_parc/T;
-
-%%% Calculate FC of simulated neural data
-% parcellate BOLD-fMRI time series
-homoSimNeural_parc = calc_parcellate(parc, homoSimNeural);
-% construct FC matrix (detrending the signal first)
-homoSimNeural_parc = detrend(homoSimNeural_parc', 'constant');
-homoSimNeural_parc = homoSimNeural_parc./repmat(std(homoSimNeural_parc),10149,1);
-homoSimNeural_parc(isnan(homoSimNeural_parc)) = 0;
-homoNeuralFC = homoSimNeural_parc'*homoSimNeural_parc/10149;
-fprintf('done\n')
-
-%%% HETEROGENEOUS
-fprintf('Simulating FC using heterogeneous modes... ')
-heteroFCs = zeros(nParcels, nParcels, nHeteroBSs);
-heteroNeuralFCs = zeros(nParcels, nParcels, nHeteroBSs);
-for ii = 1:nHeteroBSs
+fprintf('Simulating FC using %i different basis sets... ', nBasisSets)
+simFCmatrices_bold = zeros(nParcels, nParcels, nBasisSets);
+simFCmatrices_neural = zeros(nParcels, nParcels, nBasisSets);
+for ii = 1:nBasisSets
     % simulate neural activity
-    [~, heteroSimNeural] = model_neural_waves(heteroModes(:, :, ii), heteroEvals(ii, :), ext_input, waveParams, method);
+    [~, neuralSim] = model_neural_waves(basisSets_modes(:, :, ii), basisSets_evals(:, ii), extInput, waveParams, method);
     % simulate BOLD activity from the neural activity
-    [~, heteroSimBOLD] = model_BOLD_balloon(heteroModes(:, :, ii), heteroSimNeural, balloonParams, method);
+    [~, boldSim] = model_BOLD_balloon(basisSets_modes(:, :, ii), neuralSim, balloonParams, method);
     
     %%% Calculate FC of simulated BOLD data
     time_steady_ind = dsearchn(waveParams.T', tpre);    % index of start of steady state
-    heteroSimBOLD = heteroSimBOLD(:,time_steady_ind:end);                        
+    boldSim = boldSim(:,time_steady_ind:end);                        
     % T_steady = (0:size(heteroSimBOLD,2)-1)*param.tstep;
     % downsample time series to match TR
-    heteroSimBOLD = downsample(heteroSimBOLD', floor(TR/(balloonParams.tstep)))';
+    boldSim = downsample(boldSim', floor(TR/(balloonParams.tstep)))';
     % parcellate BOLD-fMRI time series
-    heteroSimBOLD_parc = calc_parcellate(parc, heteroSimBOLD);
+    boldSim_parc = calc_parcellate(parc, boldSim);
     % construct FC matrix (detrending the signal first)
-    heteroSimBOLD_parc = detrend(heteroSimBOLD_parc', 'constant');
-    heteroSimBOLD_parc = heteroSimBOLD_parc./repmat(std(heteroSimBOLD_parc),T,1);
-    heteroSimBOLD_parc(isnan(heteroSimBOLD_parc)) = 0;
-    heteroFCs(:, :, ii) = heteroSimBOLD_parc'*heteroSimBOLD_parc/T;
+    boldSim_parc = detrend(boldSim_parc', 'constant');
+    boldSim_parc = boldSim_parc./repmat(std(boldSim_parc),T,1);
+    boldSim_parc(isnan(boldSim_parc)) = 0;
+    simFCmatrices_bold(:, :, ii) = boldSim_parc'*boldSim_parc/T;
 
     %%% Calculate FC of simulated neural data
     % parcellate BOLD-fMRI time series
-    heteroSimNeural_parc = calc_parcellate(parc, heteroSimNeural);
+    neuralSim_parc = calc_parcellate(parc, neuralSim);
     % construct FC matrix (detrending the signal first)
-    heteroSimNeural_parc = detrend(heteroSimNeural_parc', 'constant');
-    heteroSimNeural_parc = heteroSimNeural_parc./repmat(std(heteroSimNeural_parc),10149,1);
-    heteroSimNeural_parc(isnan(heteroSimNeural_parc)) = 0;
-    heteroNeuralFCs(:, :, ii) = heteroSimNeural_parc'*heteroSimNeural_parc/10149;    
+    neuralSim_parc = detrend(neuralSim_parc', 'constant');
+    neuralSim_parc = neuralSim_parc./repmat(std(neuralSim_parc),size(neuralSim, 2),1);
+    neuralSim_parc(isnan(neuralSim_parc)) = 0;
+    simFCmatrices_neural(:, :, ii) = neuralSim_parc'*neuralSim_parc/size(neuralSim, 2);    
 end
-fprintf('done')
+fprintf('done\n')
 
 %% Plot results
 
+% Calculate upper triangle indices (without diagonal values)
+triuInds = find(triu(ones(size(empFC, 1), size(empFC, 2), 1), 1));
 % Calculate Node FC of empirical data (mean of each row excluding the diagonals)
 empNodeFC = mean(empFC - diag(diag(empFC)), 2);
 
-figure('Position', [100, 100, 350*(nHeteroBSs+1), 900]);
-tl1 = tiledlayout(1, 1 + nHeteroBSs);
+figure('Position', [100, 100, 350*(nBasisSets), 900]);
+tl1 = tiledlayout(1, nBasisSets);
 title(tl1, {'Simulating FC using wave model'; sprintf('(hetero: %s)', heteroLabel)}, 'FontSize', 16)
 
-%%% Plot homogeneous model results
-tl2 = tiledlayout(tl1, 4, 1, 'TileSpacing', 'tight');
-tl2.Layout.Tile = 1;
-title(tl2, 'Homogeneous model');
-% Plot emprical and model FC matrices
-nexttile(tl2); imagesc(empFC); colormap(bluewhitered_mg); colorbar; title('Empirical FC');
-nexttile(tl2); imagesc(homoFC); colormap(bluewhitered_mg); 
-cb = colorbar; cb.Ruler.TickLabelFormat = '%.1f';
-title('Simulated FC');
-% Calculate edge FC
-nexttile(tl2);
-scatter(homoFC(triuInds), empFC(triuInds), 16, 'filled');
-homoEdgeFC = corr(homoFC(triuInds), empFC(triuInds));
-title(sprintf('Edge FC (r = %.2f)', homoEdgeFC)); xlabel('model'); ylabel('empirical');
-% Calculate Node FC (mean of each row excluding the diagonals)
-homoNodeFC = mean(homoFC - diag(diag(homoFC)), 2);
-homoNodeFCcorr = corr(homoNodeFC, empNodeFC);
-nexttile(tl2);
-scatter(homoNodeFC, empNodeFC, 16, 'filled');
-title(sprintf('Node FC (r = %.2f)', homoNodeFCcorr)); xlabel('model'); ylabel('empirical')
-
-%%% Plot heterogeneous model results
-for ii = 1:nHeteroBSs
-    heteroFC = heteroFCs(:, :, ii);
+for ii = 1:nBasisSets
+    % The first basis set to load is the homogeneous baisis set. All others are heterogeneous       
+    simFC = simFCmatrices_bold(:, :, ii);
     tl2 = tiledlayout(tl1, 4, 1, 'TileSpacing', 'tight');
-    tl2.Layout.Tile = ii + 1;
-    title(tl2, {'Heterogeneous model', sprintf('(alpha: %.1f | beta: %.1f)', abCombs(ii, 1), ...
-        abCombs(ii, 2))})
+    tl2.Layout.Tile = ii;
+    if ii == 1
+        title(tl2, 'Homogeneous model');
+    else
+        title(tl2, {'Heterogeneous model', sprintf('(alpha: %.1f | beta: %.1f)', abCombs(ii-1, 1), ...
+            abCombs(ii-1, 2))})
+    end
 
     % Plot emprical and model FC matrices
     nexttile(tl2); imagesc(empFC); colormap(bluewhitered_mg); colorbar; title('Empirical FC');
-    nexttile(tl2); imagesc(heteroFC); colormap(bluewhitered_mg); 
+    nexttile(tl2); imagesc(simFC); colormap(bluewhitered_mg); 
     cb = colorbar; cb.Ruler.TickLabelFormat = '%.1f';
     title('Simulated FC');
     % Calculate and plot edge FC
-    nexttile(tl2); scatter(heteroFC(triuInds), empFC(triuInds), 16, 'filled');
-    heteroEdgeFC = corr(heteroFC(triuInds), empFC(triuInds));
-    title(sprintf('Edge FC (r = %.2f)', heteroEdgeFC)); xlabel('model'); ylabel('empirical');
+    nexttile(tl2); scatter(simFC(triuInds), empFC(triuInds), 16, 'filled');
+    edgeFC = corr(simFC(triuInds), empFC(triuInds));
+    title(sprintf('Edge FC (r = %.2f)', edgeFC)); xlabel('model'); ylabel('empirical');
     % Calculate and plot Node FC (mean of each row excluding the diagonals)
-    heteroNodeFC = mean(heteroFC - diag(diag(heteroFC)), 2);
-    heteroNodeFCcorr = corr(heteroNodeFC, empNodeFC);
-    nexttile(tl2); scatter(heteroNodeFC, empNodeFC, 16, 'filled');
-    title(sprintf('Node FC (r = %.2f)', heteroNodeFCcorr)); xlabel('model'); ylabel('empirical')
+    nodeFC = mean(simFC - diag(diag(simFC)), 2);
+    nodeFCcorr = corr(nodeFC, empNodeFC);
+    nexttile(tl2); scatter(nodeFC, empNodeFC, 16, 'filled');
+    title(sprintf('Node FC (r = %.2f)', nodeFCcorr)); xlabel('model'); ylabel('empirical')
 end
 
 % savecf(sprintf("%s/simulateFC/hetero-%s_alpha-%.1f_beta-%.1f_reconAccuracy", ...
