@@ -22,6 +22,9 @@ heteroLabel = config.hetero_label;
 alphaVals = config.alpha_vals;
 betaVals = config.beta_vals;
 nRuns = 50;     % Number of randomly seeded runs to do
+fprintf('Hetero: %s | Runs: %i\n', heteroLabel, nRuns)
+fprintf(['alpha: ' repmat(' %.1f ',1,numel(alphaVals)) '\n'], alphaVals);
+fprintf(['beta: ' repmat(' %.1f ',1,numel(betaVals)) '\n'], betaVals);
 
 % Get all alpha and beta combinations
 [A, B] = meshgrid(alphaVals, betaVals);
@@ -192,7 +195,9 @@ end
 toc;
 
 % Save results
+fprintf("Saving results... ")
 outputFolder = fullfile(projDir, 'results', 'simulateFC', 'optimise');
 outputDesc = 'hetero-%s_empDset-hcp_nRuns-%i_simulateFCresults_50subjs_noCrossVal.mat';
 save(fullfile(outputFolder, sprintf(outputDesc, heteroLabel, nRuns)), 'alphaBetaCombs', ...
     'simFCs_avg', 'simEdgeFCs', 'simNodeFCs', 'simKSFCDs', 'simFCDs_avg', 'empFCDs');
+fprintf('done.\n')
