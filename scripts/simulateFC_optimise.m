@@ -140,16 +140,18 @@ triuInds = find(triu(ones(nParcels, nParcels), 1));
 simFCs_avg = nan(nParcels, nParcels, nBasisSets);   % Simulated FCs for each basis set averaged over all runs
 simEdgeFCs = nan(1, nBasisSets);
 simNodeFCs = nan(1, nBasisSets);
-simFCDs = nan(694431, nRuns, nBasisSets);
+simKSFCDs = nan(1, nBasisSets);
+simFCDs_avg = nan(694431, nBasisSets);
 fprintf('Simulating FC using %i different basis sets... \n', nBasisSets); tic;
 parfor ii=1:nBasisSets
     % Initialise matrix for simulated data
     simFCs = nan(nParcels, nParcels, nRuns);
+    simFCDs = nan(694431, nRuns)
     for run=1:nRuns
         % random external input (to mimic resting state)
         rng(run)
         extInput = randn(nVertices, length(waveParams.T));
-
+        
         % simulate neural activity
         [~, simNeural] = model_neural_waves(basisSets_modes(:, :, ii), basisSets_evals(:, ii), extInput, waveParams, method);
         % simulate BOLD activity from the neural activity
@@ -168,7 +170,7 @@ parfor ii=1:nBasisSets
         simFCs(:, :, run) = simBOLD_parc'*simBOLD_parc/T;
 
         % Compute FCD for each simulated FC
-        simFCDs(:, run, ii) = calc_phase_fcd(simBOLD_parc, TR);
+        simFCDs(:, run) = calc_phase_fcd(simBOLD_parc, TR);
     end
     
     % Average simulated FC over all runs
@@ -181,10 +183,16 @@ parfor ii=1:nBasisSets
     simNodeFC = mean(simFC_avg - diag(diag(simFC_avg)), 2);
     simNodeFCs(ii) = corr(simNodeFC, empNodeFC, 'rows', 'complete');
 
+    % Compute KS statistic between empirical FCDs and simulated FCDs
+    [~, ~, simKSFCDs(ii)] = kstest2(empFCDs(:), simFCDs(:));
+    % Compute and store FCD averaged over runs
+    simFCDs_avg(:, ii) = mean(simFCDs, 2);
+
 end
 toc;
 
 % Save results
 outputFolder = fullfile(projDir, 'results', 'simulateFC', 'optimise');
 outputDesc = 'hetero-%s_empDset-hcp_nRuns-%i_simulateFCresults_50subjs_noCrossVal.mat';
-save(fullfile(outputFolder, sprintf(outputDesc, heteroLabel, nRuns)), 'alphaBetaCombs', 'simFCs_avg', 'simEdgeFCs', 'simNodeFCs', 'simFCDs', 'empFCDs');
+save(fullfile(outputFolder, sprintf(outputDesc, heteroLabel, nRuns)), 'alphaBetaCombs', ...
+    'simFCs_avg', 'simEdgeFCs', 'simNodeFCs', 'simKSFCDs', 'simFCDs_avg', 'empFCDs');
