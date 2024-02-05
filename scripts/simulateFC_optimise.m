@@ -25,22 +25,25 @@ nRuns = 50;     % Number of randomly seeded runs to do
 
 % Get all alpha and beta combinations
 [A, B] = meshgrid(alphaVals, betaVals);
-abCombs = reshape(cat(2,A',B'), [], 2);
-nBasisSets = 1 + size(abCombs, 1);     % Number of homogeneous and heterogeneous basis sets
+alphaBetaCombs = reshape(cat(2,A',B'), [], 2);
+% Initial row is for the homogeneous basis set (alpha and beta are both 0)
+alphaBetaCombs = [0, 0; alphaBetaCombs];    
+nBasisSets = size(alphaBetaCombs, 1);     % Number of homogeneous and heterogeneous basis sets
 
 % Load surface file
 [vertices, faces] = read_vtk(sprintf('%s/atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_surface.vtk', ...
     surfDir, atlas, space, den, surf, hemi));
 surface.vertices = vertices';
 surface.faces = faces';
+nVertices = size(surface.vertices, 1);
 % Get cortex indices
-medialMask = dlmread(sprintf('%s/atlas-%s_space-%s_den-%s_hemi-%s_medialMask.txt', surfDir, atlas, ...
+medialMask = readmatrix(sprintf('%s/atlas-%s_space-%s_den-%s_hemi-%s_medialMask.txt', surfDir, atlas, ...
     space, den, hemi));
 cortexInds = find(medialMask);
 
 % Load parcellation
 parcName = 'Glasser360';
-parc = dlmread(sprintf('%s/data/parcellations/fsLR_32k_%s-lh.txt', BEdir, parcName));
+parc = readmatrix(sprintf('%s/data/parcellations/fsLR_32k_%s-lh.txt', BEdir, parcName));
 nParcels = length(unique(parc(parc>0)));
 
 % Load eigenmodes and eigenvalues
@@ -48,22 +51,20 @@ fprintf("Loading %i basis sets... ", nBasisSets); tic;
 desc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_alpha-%.1f_beta-%.1f_maskMed-True';
 basisSets_modes = nan([size(surface.vertices, 1), nModes, nBasisSets]);
 basisSets_evals = nan(nModes, nBasisSets);
-for bsI=1:nBasisSets
+for ii=1:nBasisSets
     % The first basis set to load is the homogeneous baisis set. All others are heterogeneous
-    if bsI == 1
+    if ii == 1
         heteroLabel = "None";
-        alpha = 0.0;
-        beta = 0.0;
     else
         heteroLabel = config.hetero_label;
-        alpha = abCombs(bsI-1, 1);
-        beta = abCombs(bsI-1, 2);
     end
+    alpha = alphaBetaCombs(ii, 1);
+    beta = alphaBetaCombs(ii, 2);
 
     % Load data
-    basisSets_modes(:, :, bsI) = dlmread(fullfile(emodeDir, sprintf(desc, heteroLabel, atlas, ...
+    basisSets_modes(:, :, ii) = readmatrix(fullfile(emodeDir, sprintf(desc, heteroLabel, atlas, ...
         space, den, surf, hemi, nModes, alpha, beta) + "_emodes.txt")); 
-    basisSets_evals(:, bsI) = dlmread(fullfile(emodeDir, sprintf(desc, heteroLabel, atlas, space, ...
+    basisSets_evals(:, ii) = readmatrix(fullfile(emodeDir, sprintf(desc, heteroLabel, atlas, space, ...
         den, surf, hemi, nModes, alpha, beta) + "_evals.txt")); 
 end
 fprintf("done. "); toc; fprintf('\n')
@@ -111,7 +112,7 @@ time_steady_ind = dsearchn(waveParams.T', tpre);
 
 %% Compute FC and evaluation metrics of empirical data 
 
-empFCmatrices = nan(nParcels, nParcels, nSubjects);
+empFCs = nan(nParcels, nParcels, nSubjects);
 empFCDs = nan(694431, nSubjects);       % TODO: make the first dim generalisable
 for ii=1:nSubjects
     empBOLD_current = empBOLD(:, :, ii);                        
@@ -119,13 +120,13 @@ for ii=1:nSubjects
     empBOLD_current = detrend(empBOLD_current', 'constant');
     empBOLD_current = empBOLD_current./repmat(std(empBOLD_current),T,1);
     empBOLD_current(isnan(empBOLD_current)) = 0;
-    empFCmatrices(:, :, ii) = empBOLD_current'*empBOLD_current/T;
+    empFCs(:, :, ii) = empBOLD_current'*empBOLD_current/T;
 
     % Compute FCD for each empirical FC
     empFCDs(:, ii) = calc_phase_fcd(empBOLD_current, TR);
 end
 % Average empirical FC over all subjects (for edge and node FC evaluation)
-empFC_avg = mean(empFCmatrices, 3);
+empFC_avg = mean(empFCs, 3);
 
 % Calculate Node FC of empirical data (mean of each row excluding the diagonals)
 empNodeFC = mean(empFC_avg - diag(diag(empFC_avg)), 2);
@@ -136,30 +137,23 @@ empNodeFC = mean(empFC_avg - diag(diag(empFC_avg)), 2);
 triuInds = find(triu(ones(nParcels, nParcels), 1));
 
 % Initialise matrices for evaluation metrics
-heteroEdgeFCs = nan([length(alphaVals), length(betaVals)]);
-heteroNodeFCs = nan([length(alphaVals), length(betaVals)]);
-heteroKSFCDs = nan([length(alphaVals), length(betaVals)]); % KS statistic taken between the emp and sim FC
-for bsI=1:nBasisSets
-    tic
-    if bsI == 1
-        fprintf('Simulating FC using homogeneous modes (runs: %i)... ', nRuns)
-    else
-        fprintf('Simulating FC using heterogeneous modes (alpha: %.1f, beta: %.1f, runs: %i)... ', ...
-            abCombs(bsI-1, 1), abCombs(bsI-1, 2), nRuns)
-    end
-
+simFCs_avg = nan(nParcels, nParcels, nBasisSets);   % Simulated FCs for each basis set averaged over all runs
+simEdgeFCs = nan(1, nBasisSets);
+simNodeFCs = nan(1, nBasisSets);
+simFCDs = nan(694431, nRuns, nBasisSets);
+fprintf('Simulating FC using %i different basis sets... \n', nBasisSets); tic;
+parfor ii=1:nBasisSets
     % Initialise matrix for simulated data
-    simFCmatrices = nan(nParcels, nParcels, nRuns);
-    simFCDs = nan(694431, nRuns);
+    simFCs = nan(nParcels, nParcels, nRuns);
     for run=1:nRuns
         % random external input (to mimic resting state)
         rng(run)
-        extInput = randn(size(surface.vertices, 1), length(waveParams.T));
+        extInput = randn(nVertices, length(waveParams.T));
 
         % simulate neural activity
-        [~, simNeural] = model_neural_waves(basisSets_modes(:, :, bsI), basisSets_evals(:, bsI), extInput, waveParams, method);
+        [~, simNeural] = model_neural_waves(basisSets_modes(:, :, ii), basisSets_evals(:, ii), extInput, waveParams, method);
         % simulate BOLD activity from the neural activity
-        [~, simBOLD] = model_BOLD_balloon(basisSets_modes(:, :, bsI), simNeural, balloonParams, method);
+        [~, simBOLD] = model_BOLD_balloon(basisSets_modes(:, :, ii), simNeural, balloonParams, method);
         
         % Calculate FC of simulated BOLD data
         simBOLD = simBOLD(:,time_steady_ind:end);                        
@@ -171,42 +165,26 @@ for bsI=1:nBasisSets
         simBOLD_parc = detrend(simBOLD_parc', 'constant');
         simBOLD_parc = simBOLD_parc./repmat(std(simBOLD_parc),T,1);
         simBOLD_parc(isnan(simBOLD_parc)) = 0;
-        simFCmatrices(:, :, run) = simBOLD_parc'*simBOLD_parc/T;
+        simFCs(:, :, run) = simBOLD_parc'*simBOLD_parc/T;
 
         % Compute FCD for each simulated FC
-        simFCDs(:, run) = calc_phase_fcd(simBOLD_parc, TR);
+        simFCDs(:, run, ii) = calc_phase_fcd(simBOLD_parc, TR);
     end
     
     % Average simulated FC over all runs
-    simFC_avg = mean(simFCmatrices, 3);
+    simFC_avg = mean(simFCs, 3);
+    simFCs_avg(:, :, ii) = simFC_avg;
     
     % Compute edge FC
-    edgeFC = corr(simFC_avg(triuInds), empFC_avg(triuInds), 'rows', 'complete');
+    simEdgeFCs(ii) = corr(simFC_avg(triuInds), empFC_avg(triuInds), 'rows', 'complete');
     % Compute Node FC (mean of each row excluding the diagonals)
     simNodeFC = mean(simFC_avg - diag(diag(simFC_avg)), 2);
-    nodeFC = corr(simNodeFC, empNodeFC, 'rows', 'complete');
+    simNodeFCs(ii) = corr(simNodeFC, empNodeFC, 'rows', 'complete');
 
-    % Compute KS statistic between empirical FCDs and simulated FCDs
-    [~, ~, ksFCD] = kstest2(empFCDs(:), simFCDs(:));
-
-    if bsI == 1
-        homoEdgeFC = edgeFC;
-        homoNodeFC = nodeFC;
-        homoKSFCD = ksFCD;
-    else
-        % Get alpha and beta indices
-        alphaInd = find(alphaVals == abCombs(bsI-1, 1));
-        betaInd = find(betaVals == abCombs(bsI-1, 2));
-        heteroEdgeFCs(alphaInd, betaInd) = edgeFC;
-        heteroNodeFCs(alphaInd, betaInd) = nodeFC;
-        heteroKSFCDs(alphaInd, betaInd) = ksFCD;
-    end
-    fprintf('done. '); toc; fprintf('\n')
 end
+toc;
 
 % Save results
 outputFolder = fullfile(projDir, 'results', 'simulateFC', 'optimise');
 outputDesc = 'hetero-%s_empDset-hcp_nRuns-%i_simulateFCresults_50subjs_noCrossVal.mat';
-save(fullfile(outputFolder, sprintf(outputDesc, 'None', nRuns)), 'homoEdgeFC', 'homoNodeFC', 'homoKSFCD');
-save(fullfile(outputFolder, sprintf(outputDesc, heteroLabel, nRuns)), 'heteroEdgeFCs', 'heteroNodeFCs', 'heteroKSFCDs');
-
+save(fullfile(outputFolder, sprintf(outputDesc, heteroLabel, nRuns)), 'alphaBetaCombs', 'simFCs_avg', 'simEdgeFCs', 'simNodeFCs', 'simFCDs', 'empFCDs');
