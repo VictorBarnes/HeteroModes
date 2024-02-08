@@ -1,84 +1,52 @@
-%% Simulate resting state FC using NFT wave equation
-clear
-clc
+function [simFC_avg, edgeFCcorr, nodeFCcorr, FCDks] = simulateFC(heteroLabel, alpha, beta, config, nRuns)
+%% Simulate FC for given alpha and beta values then calculate evaluation metrics.
+%
+% Inputs: 
+%       heteroLabel : label of heterogeneous map that the modes have been paramaterized by (str)
+%       alpha: alpha scaling value (float)
+%       beta: beta scaling value (float)
+%
+% Outputs:
+%       simFC_avg : simulated FC averaged over runs
+%       edgeFCcorr : edge FC correlation of average simulated FC with average empirical FC
+%       nodeFCcorr : node FC correlation of average simulated FC with average empirical FC
+%       FCDks : KS statistic taken between the FCD of the simulated data and the FCD of the
+%           empirical data
+%
+% Original: Victor Barnes, Monash University, 2024
 
-% Setup project by loading necessary functions
-setupProject
+%% Load data
 
-% Load surface and mode parameters
-config = jsondecode(fileread(fullfile(pwd, "config.json")));
-emodeDir = config.emode_dir;
-surfDir = config.surface_dir;
-resultsDir = config.results_dir;
-reposDir = config.repos_dir;
-BEdir = fullfile(reposDir, 'BrainEigenmodes');
-atlas = config.atlas;
-space = config.space;
-den = config.den;
-surf = config.surf;
-hemi = config.hemi;
-nModes = config.n_modes;
-heteroLabel = config.hetero_label;
-alphaVals = config.alpha_vals;
-betaVals = config.beta_vals;
+% Load eigenmodes and eigenvalues
+fprintf("Loading eigenmodes and eigenvalues... "); tic;
+desc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_alpha-%.1f_beta-%.1f_maskMed-True';
+modes = readmatrix(fullfile(config.emode_dir, sprintf(desc, heteroLabel, config.atlas, config.space, ...
+    config.den, config.surf, config.hemi, config.n_modes, alpha, beta) + "_emodes.txt")); 
+evals = readmatrix(fullfile(config.emode_dir, sprintf(desc, heteroLabel, config.atlas, config.space, ...
+    config.den, config.surf, config.hemi, config.n_modes, alpha, beta) + "_evals.txt")); 
+fprintf("done. "); toc; fprintf('\n')
+nVertices = size(modes, 1);
 
-% Get all alpha and beta combinations
-[A, B] = meshgrid(alphaVals, betaVals);
-abCombs = reshape(cat(2,A',B'), [], 2);
-nBasisSets = 1 + size(abCombs, 1);     % Number of homogeneous and heterogeneous basis sets
-
-% Load surface file
-[vertices, faces] = read_vtk(sprintf('%s/atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_surface.vtk', ...
-    surfDir, atlas, space, den, surf, hemi));
-surface.vertices = vertices';
-surface.faces = faces';
-% Get cortex indices
-medialMask = dlmread(sprintf('%s/atlas-%s_space-%s_den-%s_hemi-%s_medialMask.txt', surfDir, atlas, ...
-    space, den, hemi));
-cortexInds = find(medialMask);
+% TODO: add empBOLD as an input variable
+% Load empirical BOLD data
+empData = load(fullfile(config.project_dir, 'data', 'BOLD_empirical_HCP_S255_Glasser360-lh.mat'));
+empBOLD = empData.BOLD(:, :, 1:50);    % TEMP: only use first 50 subjects for now
+nSubjects = size(empBOLD, 3);
 
 % Load parcellation
 parcName = 'Glasser360';
-parc = dlmread(sprintf('%s/data/parcellations/fsLR_32k_%s-lh.txt', BEdir, parcName));
+parc = readmatrix(sprintf('%s/data/parcellations/fsLR_32k_%s-lh.txt', ...
+    fullfile(config.repos_dir, 'BrainEigenmodes'), parcName));
 nParcels = length(unique(parc(parc>0)));
-
-% Load eigenmodes and eigenvalues
-fprintf("Loading %i basis sets... ", nBasisSets);
-desc = 'hetero-%s_atlas-%s_space-%s_den-%s_surf-%s_hemi-%s_n-%i_alpha-%.1f_beta-%.1f_maskMed-True';
-basisSets_modes = zeros([size(surface.vertices, 1), nModes, nBasisSets]);
-basisSets_evals = zeros(nModes, nBasisSets);
-for ii=1:nBasisSets
-    % The first basis set to load is the homogeneous baisis set. All others are heterogeneous
-    if ii == 1
-        heteroLabel = "None";
-        alpha = 0.0;
-        beta = 0.0;
-    else
-        heteroLabel = config.hetero_label;
-        alpha = abCombs(ii-1, 1);
-        beta = abCombs(ii-1, 2);
-    end
-
-    % Load data
-    basisSets_modes(:, :, ii) = dlmread(fullfile(emodeDir, sprintf(desc, heteroLabel, atlas, ...
-        space, den, surf, hemi, nModes, alpha, beta) + "_emodes.txt")); 
-    basisSets_evals(:, ii) = dlmread(fullfile(emodeDir, sprintf(desc, heteroLabel, atlas, space, ...
-        den, surf, hemi, nModes, alpha, beta) + "_evals.txt")); 
-end
-fprintf("done\n");
-
-% Load empirical FC data
-data = matfile(fullfile(BEdir, 'data', 'results', 'model_results_Glasser360_lh.mat'));
-empFC = data.FC_emp;
 
 %% Set simulation parameters
 
+fprintf('Setting simulating parameters... '); tic
 waveParams = loadParameters_wave_func;
 waveParams.tstep = 0.09; % in s
 tpre =  50;                                     % burn time to remove transient
-tpost = 863.2800;                               % steady-state time
+tpost = 863.2800;                               % time during steady-state
 waveParams.tmax = tpre + waveParams.tstep + tpost;
-% param.tmax = 863.2800;  % in s
 waveParams.tspan = [0, waveParams.tmax];
 waveParams.T = 0:waveParams.tstep:waveParams.tmax;
 
@@ -101,87 +69,85 @@ balloonParams.T = waveParams.T;
 T = 1200;
 TR = 0.72;       % in s
 
-% random external input (to mimic resting state)
-rand_ind = 1;
-rng(rand_ind)
-extInput = randn(size(surface.vertices, 1), length(waveParams.T));
+% index of start of steady state
+time_steady_ind = dsearchn(waveParams.T', tpre);    
 
-%% Simulate FC using homogeneous and heterogeneous modes
+fprintf('done. '); toc; fprintf('\n')
 
-fprintf('Simulating FC using %i different basis sets... ', nBasisSets)
-simFCmatrices_bold = zeros(nParcels, nParcels, nBasisSets);
-simFCmatrices_neural = zeros(nParcels, nParcels, nBasisSets);
-for ii = 1:nBasisSets
-    % simulate neural activity
-    [~, neuralSim] = model_neural_waves(basisSets_modes(:, :, ii), basisSets_evals(:, ii), extInput, waveParams, method);
-    % simulate BOLD activity from the neural activity
-    [~, boldSim] = model_BOLD_balloon(basisSets_modes(:, :, ii), neuralSim, balloonParams, method);
-    
-    %%% Calculate FC of simulated BOLD data
-    time_steady_ind = dsearchn(waveParams.T', tpre);    % index of start of steady state
-    boldSim = boldSim(:,time_steady_ind:end);                        
-    % T_steady = (0:size(heteroSimBOLD,2)-1)*param.tstep;
-    % downsample time series to match TR
-    boldSim = downsample(boldSim', floor(TR/(balloonParams.tstep)))';
-    % parcellate BOLD-fMRI time series
-    boldSim_parc = calc_parcellate(parc, boldSim);
+%% Compute FC and evaluation metrics of empirical data 
+
+fprintf('Computing FC and evaluation metrics for empirical data... '); tic
+empFCs = nan(nParcels, nParcels, nSubjects);
+empFCDs = nan(694431, nSubjects);       % TODO: make the first dim generalisable
+for ii=1:nSubjects
+    empBOLD_current = empBOLD(:, :, ii);                        
     % construct FC matrix (detrending the signal first)
-    boldSim_parc = detrend(boldSim_parc', 'constant');
-    boldSim_parc = boldSim_parc./repmat(std(boldSim_parc),T,1);
-    boldSim_parc(isnan(boldSim_parc)) = 0;
-    simFCmatrices_bold(:, :, ii) = boldSim_parc'*boldSim_parc/T;
+    empBOLD_current = detrend(empBOLD_current', 'constant');
+    empBOLD_current = empBOLD_current./repmat(std(empBOLD_current),T,1);
+    empBOLD_current(isnan(empBOLD_current)) = 0;
+    empFCs(:, :, ii) = empBOLD_current'*empBOLD_current/T;
 
-    %%% Calculate FC of simulated neural data
-    % parcellate BOLD-fMRI time series
-    neuralSim_parc = calc_parcellate(parc, neuralSim);
-    % construct FC matrix (detrending the signal first)
-    neuralSim_parc = detrend(neuralSim_parc', 'constant');
-    neuralSim_parc = neuralSim_parc./repmat(std(neuralSim_parc),size(neuralSim, 2),1);
-    neuralSim_parc(isnan(neuralSim_parc)) = 0;
-    simFCmatrices_neural(:, :, ii) = neuralSim_parc'*neuralSim_parc/size(neuralSim, 2);    
+    % Compute FCD for each empirical FC
+    empFCDs(:, ii) = calc_phase_fcd(empBOLD_current, TR);
 end
-fprintf('done\n')
-
-%% Plot results
-
-% Calculate upper triangle indices (without diagonal values)
-triuInds = find(triu(ones(size(empFC, 1), size(empFC, 2), 1), 1));
+% Average empirical FC over all subjects (for edge and node FC evaluation)
+empFC_avg = mean(empFCs, 3);
 % Calculate Node FC of empirical data (mean of each row excluding the diagonals)
-empNodeFC = mean(empFC - diag(diag(empFC)), 2);
+empNodeFC = mean(empFC_avg - diag(diag(empFC_avg)), 2);
+fprintf('done. '); toc; fprintf('\n')
 
-figure('Position', [100, 100, 350*(nBasisSets), 900]);
-tl1 = tiledlayout(1, nBasisSets);
-title(tl1, {'Simulating FC using wave model'; sprintf('(hetero: %s)', heteroLabel)}, 'FontSize', 16)
+%% Simulate FC using homogeneous and heterogeneous modes and compute evaluation metrics
 
-for ii = 1:nBasisSets
-    % The first basis set to load is the homogeneous baisis set. All others are heterogeneous       
-    simFC = simFCmatrices_bold(:, :, ii);
-    tl2 = tiledlayout(tl1, 4, 1, 'TileSpacing', 'tight');
-    tl2.Layout.Tile = ii;
-    if ii == 1
-        title(tl2, 'Homogeneous model');
-    else
-        title(tl2, {'Heterogeneous model', sprintf('(alpha: %.1f | beta: %.1f)', abCombs(ii-1, 1), ...
-            abCombs(ii-1, 2))})
-    end
+fprintf('Computing FC and evaluation metrics for simulated data... '); tic
+% Calculate upper triangle indices (without diagonal values)
+triuInds = find(triu(ones(nParcels, nParcels), 1));
 
-    % Plot emprical and model FC matrices
-    nexttile(tl2); imagesc(empFC); colormap(bluewhitered_mg); colorbar; title('Empirical FC');
-    nexttile(tl2); imagesc(simFC); colormap(bluewhitered_mg); 
-    cb = colorbar; cb.Ruler.TickLabelFormat = '%.1f';
-    title('Simulated FC');
-    % Calculate and plot edge FC
-    nexttile(tl2); scatter(simFC(triuInds), empFC(triuInds), 16, 'filled');
-    edgeFC = corr(simFC(triuInds), empFC(triuInds));
-    title(sprintf('Edge FC (r = %.2f)', edgeFC)); xlabel('model'); ylabel('empirical');
-    % Calculate and plot Node FC (mean of each row excluding the diagonals)
-    nodeFC = mean(simFC - diag(diag(simFC)), 2);
-    nodeFCcorr = corr(nodeFC, empNodeFC);
-    nexttile(tl2); scatter(nodeFC, empNodeFC, 16, 'filled');
-    title(sprintf('Node FC (r = %.2f)', nodeFCcorr)); xlabel('model'); ylabel('empirical')
+% Initialise matrix for simulated data
+simFCs = nan(nParcels, nParcels, nRuns);
+simFCDs = nan(694431, nRuns);
+for run=1:nRuns
+    % random external input (to mimic resting state)
+    rng(run)
+    extInput = randn(nVertices, length(waveParams.T));
+    
+    % simulate neural activity
+    [~, simNeural] = model_neural_waves(modes, evals, extInput, waveParams, method);
+    % simulate BOLD activity from the neural activity
+    [~, simBOLD] = model_BOLD_balloon(modes, simNeural, balloonParams, method);
+    
+    % Calculate FC of simulated BOLD data
+    simBOLD = simBOLD(:,time_steady_ind:end);                        
+    % downsample time series to match TR
+    simBOLD = downsample(simBOLD', floor(TR/(balloonParams.tstep)))';
+    % parcellate BOLD-fMRI time series
+    simBOLD_parc = calc_parcellate(parc, simBOLD);
+    % construct FC matrix (detrending the signal first)
+    simBOLD_parc = detrend(simBOLD_parc', 'constant');
+    simBOLD_parc = simBOLD_parc./repmat(std(simBOLD_parc),T,1);
+    simBOLD_parc(isnan(simBOLD_parc)) = 0;
+    simFCs(:, :, run) = simBOLD_parc'*simBOLD_parc/T;
+    
+    % Compute FCD for each simulated FC
+    simFCDs(:, run) = calc_phase_fcd(simBOLD_parc, TR);
 end
 
-% savecf(sprintf("%s/simulateFC/hetero-%s_alpha-%.1f_beta-%.1f_reconAccuracy", ...
-%     resultsDir, heteroLabel, surf, alphaVals(ii), beta), ".png", 150)
+% Average simulated FC over all runs
+simFC_avg = mean(simFCs, 3);
 
+% Compute edge FC
+edgeFCcorr = corr(simFC_avg(triuInds), empFC_avg(triuInds), 'rows', 'complete');
+% Compute Node FC (mean of each row excluding the diagonals)
+simNodeFC = mean(simFC_avg - diag(diag(simFC_avg)), 2);
+nodeFCcorr = corr(simNodeFC, empNodeFC, 'rows', 'complete');
+% Compute KS statistic between empirical FCDs and simulated FCDs
+[~, ~, FCDks] = kstest2(empFCDs(:), simFCDs(:));
+fprintf('done. '); toc; fprintf('\n')
 
+fprintf('Saving results... '); tic
+outputFolder = fullfile(config.project_dir, 'results', 'simulateFC', 'optimise', 'temp');
+outputDesc = 'hetero-%s_alpha-%.1f_beta-%.1f_empDset-hcp_nRuns-%i_subj-50_crossVal-False_simulateFCresults.mat';
+save(fullfile(outputFolder, sprintf(outputDesc, heteroLabel, nRuns)), 'alpha', 'beta', ...
+    'edgeFCcorr', 'nodeFCcorr', 'FCDks', 'simFC_avg');
+fprintf('done. '); toc; fprintf('\n')
+
+end
