@@ -117,5 +117,6 @@ for i, alpha in enumerate(alpha_vals):
             np.savetxt(cmap_savefile, cs)
 
 # Save valid alpha and beta combinations
-alpha_beta_combs_df = pd.DataFrame(alpha_beta_combs, columns=['alpha', 'beta'])
-alpha_beta_combs_df.to_csv('alpha_beta_combs.csv', index=False)
+if config['save_results']:
+    alpha_beta_combs_df = pd.DataFrame(alpha_beta_combs, columns=['alpha', 'beta'])
+    alpha_beta_combs_df.to_csv('alpha_beta_combs.csv', index=False)
