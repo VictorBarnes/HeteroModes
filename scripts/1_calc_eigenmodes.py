@@ -13,11 +13,13 @@ from sklearn.preprocessing import MinMaxScaler
 from lapy import Solver, TriaMesh
 from brainspace.mesh import mesh_io, mesh_operations
 
+# TODO: change this to a function that takes a config file, alpha, and beta as inputs
+if __name__ == "__main__":
 
 # Global variables
 DENSITIES = {"32k": 32492}
 CMEAN = 3352.4  # 28.9
-alpha_vals = np.arange(0.2, 2.2, 0.2)
+alpha_vals = np.arange(0.2, 3.2, 0.2)
 beta_vals = np.sort(np.append(np.arange(-10.0, 11.0, 1.0), [-0.5, 0.5]))
 
 # Load config file
@@ -58,7 +60,7 @@ else:
     # Initialise mesh without masking medial wall
     mesh = TriaMesh.read_vtk(getattr(surf, config['hemi']))
 
-alpha_beta_combs = []
+combs_valid = []    # alpha and beta combinations
 # Loop through alpha and beta, calculate cs, and solve eigenmodes and eigenvalues
 for i, alpha in enumerate(alpha_vals):
     for j, beta in enumerate(beta_vals):
@@ -74,7 +76,7 @@ for i, alpha in enumerate(alpha_vals):
         try:
             # If the assert passes, store the alpha and beta values
             assert np.min(cs) >= 1.0, f"Values of cs less than 1.0 can lead to infinity problems."
-            alpha_beta_combs.append((alpha, beta))
+            combs_valid.append((alpha, beta))
         except AssertionError as e:
             # If the assert fails, skip to the next iteration
             print(e)
@@ -118,5 +120,6 @@ for i, alpha in enumerate(alpha_vals):
 
 # Save valid alpha and beta combinations
 if config['save_results']:
-    alpha_beta_combs_df = pd.DataFrame(alpha_beta_combs, columns=['alpha', 'beta'])
-    alpha_beta_combs_df.to_csv(Path(config['project_dir'], "data", "alpha_beta_combs.csv"), index=False)
+    alpha_beta_combs_df = pd.DataFrame(combs_valid, columns=['alpha', 'beta'])
+    alpha_beta_combs_df.to_csv(Path(config['project_dir'], "data", "alpha_beta_valid.csv"), index=False)
+print(f"Number of valid alpha/beta combinations: {len(combs_valid)}")
