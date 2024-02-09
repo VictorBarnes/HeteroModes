@@ -119,4 +119,4 @@ for i, alpha in enumerate(alpha_vals):
 # Save valid alpha and beta combinations
 if config['save_results']:
     alpha_beta_combs_df = pd.DataFrame(alpha_beta_combs, columns=['alpha', 'beta'])
-    alpha_beta_combs_df.to_csv('alpha_beta_combs.csv', index=False)
+    alpha_beta_combs_df.to_csv(Path(config['project_dir'], "data", "alpha_beta_combs.csv"), index=False)
