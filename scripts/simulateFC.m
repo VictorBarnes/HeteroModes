@@ -1,10 +1,11 @@
-function [simFC_avg, edgeFCcorr, nodeFCcorr, FCDks] = simulateFC(heteroLabel, alpha, beta, config, nRuns)
+function [simFC_avg, edgeFCcorr, nodeFCcorr, FCDks] = simulateFC(heteroLabel, alpha, beta, configFile, nRuns)
 %% Simulate FC for given alpha and beta values then calculate evaluation metrics.
 %
 % Inputs: 
 %       heteroLabel : label of heterogeneous map that the modes have been paramaterized by (str)
-%       alpha: alpha scaling value (float)
-%       beta: beta scaling value (float)
+%       alpha : alpha scaling value (float)
+%       beta : beta scaling value (float)
+%       configFile : configuration file
 %
 % Outputs:
 %       simFC_avg : simulated FC averaged over runs
@@ -16,6 +17,9 @@ function [simFC_avg, edgeFCcorr, nodeFCcorr, FCDks] = simulateFC(heteroLabel, al
 % Original: Victor Barnes, Monash University, 2024
 
 %% Load data
+
+% Load config file
+config = jsondecode(fileread(configFile));
 
 % Load eigenmodes and eigenvalues
 fprintf("Loading eigenmodes and eigenvalues... "); tic;
