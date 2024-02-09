@@ -7,6 +7,7 @@ Calculate heterogeneous eigenmodes of a surface by solving the heterogeneous Hel
 import json
 from pathlib import Path
 import numpy as np
+import pandas as pd
 import nibabel as nib
 from sklearn.preprocessing import MinMaxScaler
 from lapy import Solver, TriaMesh
@@ -16,6 +17,9 @@ from brainspace.mesh import mesh_io, mesh_operations
 # Global variables
 DENSITIES = {"32k": 32492}
 CMEAN = 3352.4  # 28.9
+alpha_vals = np.arange(0.2, 2.2, 0.2)
+beta_vals = np.sort(np.append(np.arange(-10.0, 11.0, 1.0), [-0.5, 0.5]))
+
 # Load config file
 config_file = "scripts/config.json"
 with open(config_file, encoding="UTF-8") as f:
@@ -54,9 +58,10 @@ else:
     # Initialise mesh without masking medial wall
     mesh = TriaMesh.read_vtk(getattr(surf, config['hemi']))
 
+alpha_beta_combs = []
 # Loop through alpha and beta, calculate cs, and solve eigenmodes and eigenvalues
-for i, alpha in enumerate(config['alpha_vals']):
-    for j, beta in enumerate(config['beta_vals']):
+for i, alpha in enumerate(alpha_vals):
+    for j, beta in enumerate(beta_vals):
         print(f"Space: {config['space']} | Density: {config['den']} | Surface: {config['surf']} | "
               f"Hetero: {config['hetero_label']} | alpha: {alpha} | beta: {beta} | "
               f"cmean: {CMEAN} | nmodes: {config['n_modes']}")
@@ -66,7 +71,15 @@ for i, alpha in enumerate(config['alpha_vals']):
         cs = CMEAN * (1 + alpha*(rho - np.mean(rho)))**beta
 
         # Ensure C doesn't have negative values
-        assert np.min(cs) >= 1.0, f"Values of cs less than 1.0 can lead to infinity problems."
+        try:
+            # If the assert passes, store the alpha and beta values
+            assert np.min(cs) >= 1.0, f"Values of cs less than 1.0 can lead to infinity problems."
+            alpha_beta_combs.append((alpha, beta))
+        except AssertionError as e:
+            # If the assert fails, skip to the next iteration
+            print(e)
+            continue
+
         # Each term in C needs to be squared (according to the NFT equation)
         cs **= 2
 
@@ -102,3 +115,7 @@ for i, alpha in enumerate(config['alpha_vals']):
             np.savetxt(evals_savefile, evals)
             np.savetxt(emodes_savefile, emodes)
             np.savetxt(cmap_savefile, cs)
+
+# Save valid alpha and beta combinations
+alpha_beta_combs_df = pd.DataFrame(alpha_beta_combs, columns=['alpha', 'beta'])
+alpha_beta_combs_df.to_csv('alpha_beta_combs.csv', index=False)
