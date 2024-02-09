@@ -18,6 +18,9 @@ function [simFC_avg, edgeFCcorr, nodeFCcorr, FCDks] = simulateFC(heteroLabel, al
 
 %% Load data
 
+% Setup project by loading necessary functions
+setupProject
+
 % Load config file
 config = jsondecode(fileread(configFile));
 
@@ -149,8 +152,8 @@ fprintf('done. '); toc; fprintf('\n')
 
 fprintf('Saving results... '); tic
 outputFolder = fullfile(config.project_dir, 'results', 'simulateFC', 'optimise', 'temp');
-outputDesc = 'hetero-%s_alpha-%.1f_beta-%.1f_empDset-hcp_nRuns-%i_subj-50_crossVal-False_simulateFCresults.mat';
-save(fullfile(outputFolder, sprintf(outputDesc, heteroLabel, nRuns)), 'alpha', 'beta', ...
+outputDesc = 'hetero-%s_alpha-%.1f_beta-%.1f_empDset-hcp_nRuns-%i_nSubj-50_crossVal-False_simulateFCresults.mat';
+save(fullfile(outputFolder, sprintf(outputDesc, heteroLabel, alpha, beta, nRuns)), 'alpha', 'beta', ...
     'edgeFCcorr', 'nodeFCcorr', 'FCDks', 'simFC_avg');
 fprintf('done. '); toc; fprintf('\n')
 
