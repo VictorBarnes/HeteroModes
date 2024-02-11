@@ -12,7 +12,9 @@
 
 echo -e "${SLURM_ARRAY_TASK_ID}"
 
+hetero_label="SAaxis"
 alpha_beta_file="/fs04/kg98/vbarnes/HeteroModes/data/alpha_beta_all.csv"
+
 # Skip the header row and select the row based on the SLURM_ARRAY_TASK_ID
 row=$(tail -n +2 "${alpha_beta_file}" | awk -F',' "NR==${SLURM_ARRAY_TASK_ID} {print}")
 alpha=$(echo "${row}" | awk -F',' '{print $1}')
@@ -25,4 +27,4 @@ conda activate HeteroModes
 cd /fs04/kg98/vbarnes/HeteroModes
 
 echo "===== Begin running script ====="
-python scripts/1_calc_eigenmodes.py ${config_file} ${alpha} ${beta}
+python scripts/1_calc_eigenmodes.py -c ${config_file} -a ${alpha} -b ${beta}
