@@ -4,7 +4,7 @@
 #SBATCH --output=/fs03/kg98/vbarnes/slurm/simulateFC_optimise_%j.out
 #SBATCH --time=1:00:00
 #SBATCH --ntasks=1
-#SBATCH --mem-per-cpu=4G
+#SBATCH --mem-per-cpu=8G
 #SBATCH --mail-user=victor.barnes@monash.edu
 #SBATCH --mail-type=FAIL
 #SBATCH --mail-type=END
