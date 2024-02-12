@@ -12,4 +12,4 @@ combs = [(round(a, 1), round(b, 1)) for a, b in combs]
 
 # Create a DataFrame with the pairs and save
 combs_df = pd.DataFrame(combs, columns=['alpha', 'beta'])
-combs_df.to_csv("data/alpha-beta-combs_all.csv")
+combs_df.to_csv("data/alpha-beta-combs_all.csv", index=None)
