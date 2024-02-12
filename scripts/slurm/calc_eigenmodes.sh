@@ -13,15 +13,14 @@
 echo -e "${SLURM_ARRAY_TASK_ID}"
 
 hetero_label="SAaxis"
-alpha_beta_file="/fs04/kg98/vbarnes/HeteroModes/data/alpha_beta_all.csv"
+alpha_beta_file="/fs04/kg98/vbarnes/HeteroModes/data/alpha-beta-combs_all.csv"
 
 # Skip the header row and select the row based on the SLURM_ARRAY_TASK_ID
 row=$(tail -n +2 "${alpha_beta_file}" | awk -F',' "NR==${SLURM_ARRAY_TASK_ID} {print}")
 alpha=$(echo "${row}" | awk -F',' '{print $1}')
 beta=$(echo "${row}" | awk -F',' '{print $2}')
 
-echo "Activating virtual environment"
-source /fs03/kg98/vbarnes/miniconda/bin/activate
+echo "Activating conda environment"
 conda activate HeteroModes
 
 cd /fs04/kg98/vbarnes/HeteroModes
