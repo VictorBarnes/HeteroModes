@@ -1,0 +1,63 @@
+%% Plot results from simulateFC_optimise.m
+clear
+clc
+
+% Setup project by loading necessary functions
+setupProject
+
+% Load surface and mode parameters
+config = jsondecode(fileread(fullfile(pwd, "config.json")));
+projDir = config.project_dir;
+heteroLabel = 'myelinmap';
+
+load(fullfile(projDir, "results", "simulateFC", "optimise",...
+    sprintf("hetero-%s_empDset-hcp_nRuns-50_simulateFCresults_50subjs_noCrossVal.mat", heteroLabel)));
+alphaVals = unique(alphaBetaCombs(2:end, 1));
+betaVals = unique(alphaBetaCombs(2:end, 2));
+
+% Reshape results into nAlpha x nBeta matrices
+edgeFC = nan(length(alphaVals), length(betaVals));
+nodeFC = nan(length(alphaVals), length(betaVals));
+ksFCD = nan(length(alphaVals), length(betaVals));
+for ii = 2:length(alphaBetaCombs)   % Start at 2 because the first index is the homogeneous case
+    % Get alpha and beta indices
+    alphaInd = find(alphaVals == alphaBetaCombs(ii, 1));
+    betaInd = find(betaVals == alphaBetaCombs(ii, 2));
+
+    edgeFC(alphaInd, betaInd) = simEdgeFCs(ii);
+    nodeFC(alphaInd, betaInd) = simNodeFCs(ii);
+    ksFCD(alphaInd, betaInd) = simKSFCDs(ii);    
+end
+
+%% Plot matrices
+figure('Position', [100, 100, 1500, 400])
+tl = tiledlayout(1, 3);
+title(tl, sprintf('Optimisation Results (Hetero: %s)', heteroLabel));
+
+% Convert alphaVals and betaVals to cell arrays for plotting
+alphaVals_cell = cellfun(@num2str, num2cell(alphaVals), 'UniformOutput', false);
+betaVals_cell = cellfun(@num2str, num2cell(betaVals), 'UniformOutput', false);
+
+% Plot edge FC
+nexttile
+h1 = heatmap(betaVals_cell, alphaVals_cell, edgeFC); 
+h1.Title = {'Edge FC correlation'; sprintf('(homo: %.2f)', simEdgeFCs(1))};
+h1.XLabel = 'beta'; h1.YLabel = 'alpha'; 
+h1.Colormap = inferno;
+h1.CellLabelFormat = '%.2f';
+
+% Plot node FC
+nexttile
+h2 = heatmap(betaVals_cell, alphaVals_cell, nodeFC); 
+h2.Title = {'Node FC correlation'; sprintf('(homo: %.2f)', simNodeFCs(1))};
+h2.XLabel = 'beta'; h2.YLabel = 'alpha';
+h2.Colormap = inferno;
+h2.CellLabelFormat = '%.2f';
+
+% Plot KS of FCD
+nexttile
+h3 = heatmap(betaVals_cell, alphaVals_cell, ksFCD); 
+h3.Title = {'FCD KS statistic'; sprintf('(homo: %.2f)', simKSFCDs(1))};
+h3.XLabel = 'beta'; h3.YLabel = 'alpha';
+h3.Colormap = flipud(inferno);
+h3.CellLabelFormat = '%.2f';
