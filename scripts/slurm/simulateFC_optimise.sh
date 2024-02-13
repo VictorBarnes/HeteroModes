@@ -11,7 +11,7 @@
 #SBATCH --array=1-222
 
 hetero_label="myelinmap"
-alpha_beta_file="/fs04/kg98/vbarnes/HeteroModes/data/hetero-${hetero_labe}_csParamCombs_valid.csv"
+alpha_beta_file="/fs04/kg98/vbarnes/HeteroModes/data/hetero-${hetero_label}_csParamCombs_valid.csv"
 config_file="/fs04/kg98/vbarnes/HeteroModes/scripts/config.json"
 n_runs=50
 

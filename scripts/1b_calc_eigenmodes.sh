@@ -26,4 +26,4 @@ source activate /fs03/kg98/vbarnes/miniconda/conda/envs/HeteroModes
 cd /fs04/kg98/vbarnes/HeteroModes
 
 echo "===== Begin running script ====="
-python scripts/calc_hetero_nmodes.py -c ${config_file} -a ${alpha} -b ${beta}
+python scripts/calc_hetero_modes.py -c ${config_file} -a ${alpha} -b ${beta}
