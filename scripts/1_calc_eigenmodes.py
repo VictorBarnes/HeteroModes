@@ -1,3 +1,4 @@
+#%%
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -14,18 +15,20 @@ from sklearn.preprocessing import MinMaxScaler
 from lapy import Solver, TriaMesh
 from brainspace.mesh import mesh_io, mesh_operations
 
+
 # Global variables
 DENSITIES = {"32k": 32492}
-CMEAN = 3352.4  # 28.9
+CMEAN = 3352.4  # mm/s
 
-# TODO: change this to a function that takes a config file, alpha, and beta as inputs
+# TODO: consider changing this to a function instead of parsing arguments
+# TODO: consider add hetero_label as an argument
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         epilog="eg: python 1_calc_eigenmodes.py -c <config_file> -a <alpha> -b <beta>"
     )
     parser.add_argument("-c", "--config", help="Path of the JSON configuration file")
-    parser.add_argument("-a", "--alpha", help="alpha value to control scaling of c_s")
-    parser.add_argument("-b", "--beta", help="beta value to control scaling of c_s")
+    parser.add_argument("-a", "--alpha", help="alpha value to control scaling of cs")
+    parser.add_argument("-b", "--beta", help="beta value to control scaling of cs")
     args = parser.parse_args()
 
     with open(args.config, encoding="UTF-8") as f:
@@ -38,8 +41,8 @@ if __name__ == "__main__":
         # No heterogeneity is encoded by an array of ones
         hetero_map = np.ones(DENSITIES["32k"]).reshape(-1, 1)
         # Setting alpha and beta to 0 will mean that cs is CMEAN at every vertex
-        alpha_vals = [0.0]
-        beta_vals = [0.0]
+        alpha = 0.0
+        beta = 0.0
     else:
         # Load heterogeneity map
         hetero_file = config["hetero_maps"][config["hetero_label"]]
@@ -75,6 +78,7 @@ if __name__ == "__main__":
     cs = CMEAN * (1 + alpha*(rho - np.mean(rho)))**beta
     # Ensure C doesn't have negative values
     assert np.min(cs) >= 1.0, f"Values of cs less than 1.0 can lead to infinity problems."
+    print(f"cs range: {np.min(cs)} mm/s to {np.max(cs)} mm/s")
     # Each term in C needs to be squared (according to the NFT equation)
     cs **= 2
 
@@ -94,7 +98,7 @@ if __name__ == "__main__":
         # Reshape propagation speed map to match vertices of original surface
         cs_reshaped = np.zeros(surf.n_points)
         cs_reshaped[cortex_inds] = cs
-        cs = cs_reshaped            
+        cs = cs_reshaped
 
     if config['save_results']:
         print("Saving eigenmodes and eigenvalues...")
@@ -110,4 +114,3 @@ if __name__ == "__main__":
         np.savetxt(evals_savefile, evals)
         np.savetxt(emodes_savefile, emodes)
         np.savetxt(cmap_savefile, cs)
-        
