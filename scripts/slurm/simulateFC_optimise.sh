@@ -10,9 +10,9 @@
 #SBATCH --mail-type=END
 #SBATCH --array=1-222
 
-alpha_beta_file="/fs04/kg98/vbarnes/HeteroModes/data/alpha_beta_valid.csv"
-config_file="/fs04/kg98/vbarnes/HeteroModes/scripts/config.json"
 hetero_label="myelinmap"
+alpha_beta_file="/fs04/kg98/vbarnes/HeteroModes/data/hetero-${hetero_labe}_csParamCombs_valid.csv"
+config_file="/fs04/kg98/vbarnes/HeteroModes/scripts/config.json"
 n_runs=50
 
 # Skip the header row and select the row based on the SLURM_ARRAY_TASK_ID
