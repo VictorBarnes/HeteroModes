@@ -5,8 +5,8 @@
 Calculate heterogeneous eigenmodes of a surface by solving the heterogeneous Helmholtz equation.
 """
 
+import os
 import json
-import argparse
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -20,32 +20,21 @@ from brainspace.mesh import mesh_io, mesh_operations
 DENSITIES = {"32k": 32492}
 CMEAN = 3352.4  # mm/s
 
-# TODO: consider changing this to a function instead of parsing arguments
-# TODO: consider add hetero_label as an argument
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        epilog="eg: python 1_calc_eigenmodes.py -c <config_file> -a <alpha> -b <beta>"
-    )
-    parser.add_argument("-c", "--config", help="Path of the JSON configuration file")
-    parser.add_argument("-a", "--alpha", help="alpha value to control scaling of cs")
-    parser.add_argument("-b", "--beta", help="beta value to control scaling of cs")
-    args = parser.parse_args()
-
-    with open(args.config, encoding="UTF-8") as f:
+# TODO: consider changing hetero_label to the path to the hetero map
+# TODO: change the name of this function and the filename to be more intuitive
+def calc_modes(config_file, hetero_label, alpha=0.0, beta=0.0):
+    with open(config_file, encoding="UTF-8") as f:
         config = json.load(f)
-    alpha = float(args.alpha)
-    beta = float(args.beta)
 
     # Load map chosen to paramaterize heterogeneity
-    if config["hetero_label"] is None:
+    if hetero_label is None:
         # No heterogeneity is encoded by an array of ones
         hetero_map = np.ones(DENSITIES["32k"]).reshape(-1, 1)
-        # Setting alpha and beta to 0 will mean that cs is CMEAN at every vertex
-        alpha = 0.0
-        beta = 0.0
+        # Alpha and beta must be equal to 0 in the homogeneous case
+        assert alpha == 0.0 and beta == 0.0
     else:
         # Load heterogeneity map
-        hetero_file = config["hetero_maps"][config["hetero_label"]]
+        hetero_file = config["hetero_maps"][hetero_label]
         hetero_map = nib.load(hetero_file).agg_data().reshape(-1, 1)
 
     # Load surface template and medial wall mask
@@ -70,15 +59,18 @@ if __name__ == "__main__":
         mesh = TriaMesh.read_vtk(getattr(surf, config['hemi']))
 
     print(f"Space: {config['space']} | Density: {config['den']} | Surface: {config['surf']} | "
-        f"Hetero: {config['hetero_label']} | alpha: {alpha} | beta: {beta} | "
+        f"Hetero: {hetero_label} | alpha: {alpha} | beta: {beta} | "
         f"cmean: {CMEAN} | nmodes: {config['n_modes']}")
     # Scale propagation speed
     scaler = MinMaxScaler(feature_range=(0, 1))
     rho = scaler.fit_transform(hetero_map).flatten()
     cs = CMEAN * (1 + alpha*(rho - np.mean(rho)))**beta
     # Ensure C doesn't have negative values
-    assert np.min(cs) >= 1.0, f"Values of cs less than 1.0 can lead to infinity problems."
-    print(f"cs range: {np.min(cs)} mm/s to {np.max(cs)} mm/s")
+    if np.min(cs) < 1.0:
+        print("Cannot compute eigenmodes because values of cs less than 1.0 can lead to infinity "\
+              "problems.")
+        return
+    print(f"cs range: {np.min(cs):.2f} mm/s to {np.max(cs):.2f} mm/s")
     # Each term in C needs to be squared (according to the NFT equation)
     cs **= 2
 
@@ -103,7 +95,7 @@ if __name__ == "__main__":
     if config['save_results']:
         print("Saving eigenmodes and eigenvalues...")
         # Set output file names and save
-        desc = (f"hetero-{config['hetero_label']}_atlas-{config['atlas']}_"
+        desc = (f"hetero-{hetero_label}_atlas-{config['atlas']}_"
                 f"space-{config['space']}_den-{config['den']}_surf-{config['surf']}_"
                 f"hemi-{config['hemi']}_n-{config['n_modes']}_alpha-{alpha}_beta-{beta}_"
                 f"maskMed-{config['mask_medial']}")
@@ -114,3 +106,29 @@ if __name__ == "__main__":
         np.savetxt(evals_savefile, evals)
         np.savetxt(emodes_savefile, emodes)
         np.savetxt(cmap_savefile, cs)
+
+
+def save_valid_combs(config_file, hetero_label):
+    with open(config_file, encoding="UTF-8") as f:
+        config = json.load(f)
+    emode_dir = config["emode_dir"]
+    project_dir = config["project_dir"]
+
+    combs_valid = []
+    combs_all = pd.read_csv(Path(project_dir, "data", "csParamCombs_all.csv"))
+    for i in range(combs_all.shape[0]):
+        alpha = combs_all.loc[i, "alpha"]
+        beta = combs_all.loc[i, "beta"]
+        filename = (f"hetero-{hetero_label}_atlas-{config['atlas']}_"
+                    f"space-{config['space']}_den-{config['den']}_surf-{config['surf']}_"
+                    f"hemi-{config['hemi']}_n-{config['n_modes']}_alpha-{alpha}_beta-{beta}_"
+                    f"maskMed-{config['mask_medial']}_emodes.txt")
+        filepath = os.path.join(emode_dir, filename)
+        if os.path.isfile(filepath):
+                combs_valid.append((alpha, beta))
+    print(f"Number of valid combinations for {hetero_label} modes: {len(combs_valid)}")
+
+    # Create a DataFrame with the pairs and save
+    combs_valid_df = pd.DataFrame(combs_valid, columns=['alpha', 'beta'])
+    combs_valid_df.to_csv(Path(project_dir, "data", f"hetero-{hetero_label}_csParamCombs_valid.csv"), 
+                          index=None)
