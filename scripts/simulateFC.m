@@ -1,4 +1,4 @@
-function [simFC_avg, edgeFCcorr, nodeFCcorr, FCDks] = simulateFC(heteroLabel, alpha, beta, configFile, nRuns)
+function [simFC_avg, edgeFCcorr, nodeFCcorr, FCDks] = simulateFC(configFile, heteroLabel, alpha, beta, nRuns)
 %% Simulate FC for given alpha and beta values then calculate evaluation metrics.
 %
 % Inputs: 

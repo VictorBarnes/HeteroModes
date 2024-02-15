@@ -1,17 +1,18 @@
 #!/bin/bash
 #SBATCH --account=kg98
-#SBATCH --job-name=simFCopt
+#SBATCH --job-name=simFC
 #SBATCH --output=/fs03/kg98/vbarnes/slurm/simulateFC_optimise_%A_%a.out
-#SBATCH --time=1:00:00
-#SBATCH --ntasks=2
-#SBATCH --mem-per-cpu=8G
+#SBATCH --time=3:00:00
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem-per-cpu=16G
 #SBATCH --mail-user=victor.barnes@monash.edu
 #SBATCH --mail-type=FAIL
 #SBATCH --mail-type=END
-#SBATCH --array=1-222
+#SBATCH --array=1-13
 
 hetero_label="myelinmap"
-alpha_beta_file="/fs04/kg98/vbarnes/HeteroModes/data/hetero-${hetero_label}_csParamCombs_valid.csv"
+alpha_beta_file="/fs04/kg98/vbarnes/HeteroModes/data/hetero-${hetero_label}_csParamCombs_valid_timeout.csv"
 config_file="/fs04/kg98/vbarnes/HeteroModes/scripts/config.json"
 n_runs=50
 
@@ -28,4 +29,4 @@ cd /fs04/kg98/vbarnes/HeteroModes/scripts
 module load matlab/r2022b
 
 echo "===== Begin running script ====="
-matlab -nodisplay -nosplash -r "simulateFC('${hetero_label}', ${alpha}, ${beta}, '${config_file}', ${n_runs}); exit;"
+matlab -nodisplay -nosplash -r "simulateFC('${config_file}', '${hetero_label}', ${alpha}, ${beta}, ${n_runs}); exit;"
