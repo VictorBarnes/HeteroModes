@@ -18,6 +18,7 @@ function [simFC_avg, edgeFCcorr, nodeFCcorr, FCDks] = simulateFC(configFile, het
 
 %% Load data
 
+% TODO: change input to 'modes' and 'evals'
 % Setup project by loading necessary functions
 setupProject
 
@@ -105,7 +106,7 @@ fprintf('done. '); toc; fprintf('\n')
 
 %% Simulate FC using homogeneous and heterogeneous modes and compute evaluation metrics
 
-fprintf('Computing FC and evaluation metrics for simulated data... '); tic
+fprintf('Computing FC and evaluation metrics for simulated data (%i runs)... ', nRuns); tic
 % Calculate upper triangle indices (without diagonal values)
 triuInds = find(triu(ones(nParcels, nParcels), 1));
 
