@@ -65,13 +65,12 @@ def calc_modes(config_file, hetero_label, alpha=0.0, beta=0.0):
     scaler = MinMaxScaler(feature_range=(0, 1))
     rho = scaler.fit_transform(hetero_map).flatten()
     cs = CMEAN * (1 + alpha*(rho - np.mean(rho)))**beta
-    # Ensure C doesn't have negative values
-    if np.min(cs) < 1.0:
-        print("Cannot compute eigenmodes because values of cs less than 1.0 can lead to infinity "\
-              "problems.")
+    # Ensure cs is between 0.1 and 150 m/s (inclusive)
+    if np.min(cs)/1e3 < 0.1 or np.max(cs)/1e3 > 150:
+        print("cs values are not within a physiological range of 0.1 to 150 m/s")
         return
-    print(f"cs range: {np.min(cs):.2f} mm/s to {np.max(cs):.2f} mm/s")
-    # Each term in C needs to be squared (according to the NFT equation)
+    print(f"cs range: {np.min(cs)/1e3:.1f} m/s to {np.max(cs)/1e3:.1f} m/s")
+    # Each term in cs needs to be squared (according to the NFT equation)
     cs **= 2
 
     # Calculate cs for each triangle by taking the average of the values at its vertices
@@ -102,6 +101,7 @@ def calc_modes(config_file, hetero_label, alpha=0.0, beta=0.0):
 
         evals_savefile = Path(config['emode_dir'], f"{desc}_evals.txt")
         emodes_savefile = Path(config['emode_dir'], f"{desc}_emodes.txt")
+        # TODO: remove 'n_modes' from cmap filename
         cmap_savefile = Path(config['emode_dir'], "cmaps", f"{desc}_cmap.txt")
         np.savetxt(evals_savefile, evals)
         np.savetxt(emodes_savefile, emodes)
