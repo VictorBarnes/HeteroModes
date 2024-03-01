@@ -1,4 +1,4 @@
-function [simFC_avg, edgeFCcorr, nodeFCcorr, FCDks] = simulateFC(configFile, heteroLabel, alpha, beta, nRuns)
+function [simFC_avg, edgeFCcorr, nodeFCcorr, FCDks] = simulateFC(configFile, heteroLabel, alpha, beta, nRuns, saveAll)
 %% Simulate FC for given alpha and beta values then calculate evaluation metrics.
 %
 % Inputs: 
@@ -7,6 +7,7 @@ function [simFC_avg, edgeFCcorr, nodeFCcorr, FCDks] = simulateFC(configFile, het
 %       alpha : alpha scaling value (float)
 %       beta : beta scaling value (float)
 %       nRuns : number of model FC simulations to run
+%       saveAll : whether to save all FC data or just the evaluation metrics
 %
 % Outputs:
 %       simFC_avg : simulated FC averaged over runs
@@ -157,11 +158,19 @@ nodeFCcorr = corr(simNodeFC, empNodeFC, 'rows', 'complete');
 [~, ~, FCDks] = kstest2(empFCDs(:), simFCDs(:));
 fprintf('done. '); toc; fprintf('\n')
 
-fprintf('Saving results... '); tic
-outputFolder = fullfile(config.project_dir, 'results', 'simulateFC', 'optimise', 'temp');
-outputDesc = 'hetero-%s_alpha-%.1f_beta-%.1f_empDset-hcp_nRuns-%i_nSubj-50_crossVal-False_simulateFCresults.mat';
-save(fullfile(outputFolder, sprintf(outputDesc, heteroLabel, alpha, beta, nRuns)), 'alpha', 'beta', ...
-    'edgeFCcorr', 'nodeFCcorr', 'FCDks', 'simFC_avg');
+if saveAll
+    fprintf('Saving ALL results... '); tic
+    outputFolder = fullfile(config.project_dir, 'results', 'simulateFC', 'optimise');
+    outputDesc = 'hetero-%s_alpha-%.1f_beta-%.1f_empDset-hcp_nRuns-%i_nSubj-50_crossVal-False_simulateFCresults_saveAll.mat';
+    save(fullfile(outputFolder, sprintf(outputDesc, heteroLabel, alpha, beta, nRuns)), ...
+        'edgeFCcorr', 'nodeFCcorr', 'FCDks', 'simFC_avg', 'empFC_avg', 'simFCDs', 'empFCDs');
+else
+    fprintf('Saving ONLY evaluation metric results... '); tic
+    outputFolder = fullfile(config.project_dir, 'results', 'simulateFC', 'optimise', 'temp');
+    outputDesc = 'hetero-%s_alpha-%.1f_beta-%.1f_empDset-hcp_nRuns-%i_nSubj-50_crossVal-False_simulateFCresults.mat';
+    save(fullfile(outputFolder, sprintf(outputDesc, heteroLabel, alpha, beta, nRuns)), ...
+        'edgeFCcorr', 'nodeFCcorr', 'FCDks');
+end
 fprintf('done. '); toc; fprintf('\n')
 
 end
