@@ -2,10 +2,11 @@ function [simFC_avg, edgeFCcorr, nodeFCcorr, FCDks] = simulateFC(configFile, het
 %% Simulate FC for given alpha and beta values then calculate evaluation metrics.
 %
 % Inputs: 
+%       configFile : configuration file
 %       heteroLabel : label of heterogeneous map that the modes have been paramaterized by (str)
 %       alpha : alpha scaling value (float)
 %       beta : beta scaling value (float)
-%       configFile : configuration file
+%       nRuns : number of model FC simulations to run
 %
 % Outputs:
 %       simFC_avg : simulated FC averaged over runs
@@ -33,7 +34,12 @@ modes = readmatrix(fullfile(config.emode_dir, sprintf(desc, heteroLabel, config.
 evals = readmatrix(fullfile(config.emode_dir, sprintf(desc, heteroLabel, config.atlas, config.space, ...
     config.den, config.surf, config.hemi, config.n_modes, alpha, beta) + "_evals.txt")); 
 fprintf("done. "); toc; fprintf('\n')
-nVertices = size(modes, 1);
+
+% Load cortical mask
+medialMask = dlmread(sprintf('%s/atlas-%s_space-%s_den-%s_hemi-%s_medialMask.txt', ...
+    config.surface_dir, config.atlas, config.space, config.den, config.hemi));
+cortexInds = find(medialMask);
+nVertices = size(modes(cortexInds), 1);
 
 % TODO: add empBOLD as an input variable
 % Load empirical BOLD data
@@ -58,7 +64,7 @@ waveParams.tmax = tpre + waveParams.tstep + tpost;
 waveParams.tspan = [0, waveParams.tmax];
 waveParams.T = 0:waveParams.tstep:waveParams.tmax;
 
-waveParams.is_time_ms = 0;
+waveParams.is_time_ms = false;
 method = 'Fourier';
 
 waveParams.r_s = 28.9;      % (default) in mm
@@ -83,7 +89,7 @@ time_steady_ind = dsearchn(waveParams.T', tpre);
 fprintf('done. '); toc; fprintf('\n')
 
 %% Compute FC and evaluation metrics of empirical data 
-
+% TODO: compute empirical FC and metrics in a separate function
 fprintf('Computing FC and evaluation metrics for empirical data... '); tic
 empFCs = nan(nParcels, nParcels, nSubjects);
 empFCDs = nan(694431, nSubjects);       % TODO: make the first dim generalisable
@@ -119,16 +125,16 @@ for run=1:nRuns
     extInput = randn(nVertices, length(waveParams.T));
     
     % simulate neural activity
-    [~, simNeural] = model_neural_waves(modes, evals, extInput, waveParams, method);
+    [~, simNeural] = model_neural_waves(modes(cortexInds, :), evals, extInput, waveParams, method);
     % simulate BOLD activity from the neural activity
-    [~, simBOLD] = model_BOLD_balloon(modes, simNeural, balloonParams, method);
+    [~, simBOLD] = model_BOLD_balloon(modes(cortexInds, :), simNeural, balloonParams, method);
     
     % Calculate FC of simulated BOLD data
     simBOLD = simBOLD(:,time_steady_ind:end);                        
     % downsample time series to match TR
     simBOLD = downsample(simBOLD', floor(TR/(balloonParams.tstep)))';
     % parcellate BOLD-fMRI time series
-    simBOLD_parc = calc_parcellate(parc, simBOLD);
+    simBOLD_parc = calc_parcellate(parc(cortexInds), simBOLD);
     % construct FC matrix (detrending the signal first)
     simBOLD_parc = detrend(simBOLD_parc', 'constant');
     simBOLD_parc = simBOLD_parc./repmat(std(simBOLD_parc),T,1);
