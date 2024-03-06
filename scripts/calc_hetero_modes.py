@@ -64,7 +64,13 @@ def calc_modes(config_file, hetero_label, alpha=0.0, beta=0.0):
     # Scale propagation speed
     scaler = MinMaxScaler(feature_range=(0, 1))
     rho = scaler.fit_transform(hetero_map).flatten()
-    cs = CMEAN * (1 + alpha*(rho - np.mean(rho)))**beta
+    # Calculate the values within the brackets in the cs equation
+    density = 1 + alpha*(rho - np.mean(rho))
+    # Ensure density > 0. If density < 0 and beta < 1.0 this will result in imaginary numbers
+    if np.min(density) < 0:
+        print("The current density values may lead to imaginary numbers")
+        return
+    cs = CMEAN * density**beta
     # Ensure cs is between 0.1 and 150 m/s (inclusive)
     if np.min(cs)/1e3 < 0.1 or np.max(cs)/1e3 > 150:
         print("cs values are not within a physiological range of 0.1 to 150 m/s")
