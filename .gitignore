@@ -1,7 +1,7 @@
 .vscode/
 data/
 heteromodes/__pycache__/
-hetermodes.egg-info/
+heteromodes.egg-info/
 results/
 scripts/.ipynb_checkpoints/
 scripts/.__pycache__/
