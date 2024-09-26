@@ -1,0 +1,14 @@
+README.md
+setup.py
+heteromodes/__init__.py
+heteromodes/eigentools.py
+heteromodes/models.py
+heteromodes/params.py
+heteromodes/restingstate.py
+heteromodes/solver.py
+heteromodes/utils.py
+heteromodes/wave.py
+heteromodes.egg-info/PKG-INFO
+heteromodes.egg-info/SOURCES.txt
+heteromodes.egg-info/dependency_links.txt
+heteromodes.egg-info/top_level.txt

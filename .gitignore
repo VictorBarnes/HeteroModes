@@ -1,0 +1,11 @@
+.vscode/
+data/
+heteromodes/__pycache__/
+hetermodes.egg-info/
+results/
+scripts/.ipynb_checkpoints/
+scripts/.__pycache__/
+scripts/sandbox/
+scripts/_console.ipynb
+.env
+HeteroModes_py38.yml

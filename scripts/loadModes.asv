@@ -1,0 +1,16 @@
+function [modes, evals] = loadModes(config, heteroLabel, alpha, beta)
+%% Load eigenmodes and eigenvalues
+%
+% Inputs: 
+%       configFile : configuration file
+%       heteroLabel : label of heterogeneous map that the modes have been paramaterized by (str)
+%       alpha : alpha scaling value (float)
+%       beta : beta scaling value (float)  
+%
+% Outputs:
+%       modes: eigenmodes [nVertices x nModes]
+%       evals: eigenvalues [1 x nModes]
+%
+% Original: Victor Barnes, Monash University, 2024
+
+end
