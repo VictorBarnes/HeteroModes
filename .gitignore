@@ -4,7 +4,7 @@ heteromodes/__pycache__/
 heteromodes.egg-info/
 results/
 scripts/.ipynb_checkpoints/
-scripts/.__pycache__/
+scripts/__pycache__/
 scripts/sandbox/
 scripts/_console.ipynb
 .env
