@@ -6,50 +6,17 @@ import numpy as np
 import nibabel as nib
 from joblib import Parallel, delayed
 from dotenv import load_dotenv
-from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import KFold
 from neuromaps.datasets import fetch_atlas
 from brainspace.utils.parcellation import reduce_by_labels
-from heteromodes.utils import calc_phase_fcd, filter_bold, load_hmap
-from heteromodes.restingstate import ModelBOLD, evaluate_model
+from heteromodes.utils import load_hmap, pad_sequences
+from heteromodes.restingstate import ModelBOLD, calc_fc_fcd, evaluate_model
 # from memory_profiler import profile
 
 load_dotenv()
 PROJ_DIR = os.getenv("PROJ_DIR")
 SURF_LH = os.getenv("SURF_LH")
 GLASSER360_LH = os.getenv("GLASSER360_LH")
-
-
-def pad_sequences(sequences, val=-1):
-    """
-    Pads a list of sequences to the length of the longest sequence.
-    """
-
-    # Find the length of the longest sequence
-    max_length = max(len(seq) for seq in sequences)
-    # Pad sequences
-    padded_sequences = [
-        np.pad(seq, pad_width=(0, max_length - len(seq)), mode='constant', constant_values=val)
-        if len(seq) < max_length else seq
-        for seq in sequences
-    ]
-
-    return np.array(padded_sequences)
-
-def calc_fc_fcd(bold, filter=False):
-    # Ensure data is standardised
-    if not np.isclose(np.mean(bold, axis=1), 0).all() or not np.isclose(np.std(bold, axis=1), 1.0).all():
-        scaler = StandardScaler()
-        bold = scaler.fit_transform(bold.T).T
-    # Bandpass filter the data
-    if filter:
-        bold = filter_bold(bold, tr=0.72)
-    
-    # Caculate FC and FCD
-    fc = np.corrcoef(bold)
-    fcd = calc_phase_fcd(bold, tr=0.72)
-
-    return fc, fcd
 
 def run_model(surf, hmap, parc, medmask, params, args, emp_results):
     model_rs = ModelBOLD(surf_file=surf, medmask=medmask, hmap=hmap,
@@ -67,11 +34,11 @@ def run_model(surf, hmap, parc, medmask, params, args, emp_results):
         bold_model = model_rs.run_rest(ext_input=ext_input)
         bold_model = reduce_by_labels(bold_model, parc[medmask], axis=1)
         # Compute model FC and FCD
-        fc_model, fcd_model = calc_fc_fcd(bold_model, filter=False)
+        fc_model, fcd_model = calc_fc_fcd(bold_model, tr=0.72, filter=False)
         model_results = {"fc": fc_model, "fcd": fcd_model}
 
         # Evaluate model
-        edge_fc, node_fc, fcd, fc, fcd_dist = evaluate_model(emp_results, model_results, TR=0.72)
+        edge_fc, node_fc, fcd, fc, fcd_dist = evaluate_model(emp_results, model_results)
         edge_fcs[run] = edge_fc
         node_fcs[run] = node_fc
         fcds[run] = fcd
@@ -141,7 +108,7 @@ def main():
     # Parallelize the calculation of FC and FCD
     print("Calculating empirical FC and FCD...")
     results = Parallel(n_jobs=args.n_jobs, verbose=1)(
-        delayed(calc_fc_fcd)(bold=bold_emp[:, :, subj], filter=False)
+        delayed(calc_fc_fcd)(bold=bold_emp[:, :, subj], tr=0.72, filter=False)
         for subj in range(nsubjs)
     )
     fc_emp_all, fcd_emp_all = zip(*results)

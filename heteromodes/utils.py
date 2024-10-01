@@ -6,8 +6,6 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from pathlib import Path
 from dotenv import load_dotenv
-from scipy.signal import butter, filtfilt, detrend, hilbert
-from scipy.linalg import norm
 from scipy.special import erf
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from surfplot import Plot
@@ -99,113 +97,7 @@ def standardise_modes(emodes):
     
     return standardized_modes
 
-def filter_bold(bold, tr=0.72, lowcut=0.04, highcut=0.07):
-    """Filter the BOLD signal using a bandpass filter.
 
-    Parameters
-    ----------
-    bold : numpy.ndarray
-        The BOLD signal data of shape (N, T), where N is the number of regions and T is the number of time points.
-    tr : float
-        The repetition time (TR) in seconds.
-    lowcut : float
-        The lowcut frequency for the bandpass filter.
-    highcut : float
-        The highcut frequency for the bandpass filter.
-
-    Returns
-    -------
-    numpy.ndarray
-        The filtered BOLD signal data.
-    """
-    # Define parameters
-    k = 2  # 2nd order butterworth filter
-    fnq = 0.5 * 1/tr  # nyquist frequency
-    Wn = [lowcut/fnq, highcut/fnq]  # butterworth bandpass non-dimensional frequency
-    bfilt2, afilt2 = butter(k, Wn, btype="bandpass")  # construct the filter
-
-    # Standardise and detrend the data if it isn't already
-    if not np.allclose(np.mean(bold, axis=1), 0) or not np.allclose(np.std(bold, axis=1), 1.0):
-        scaler = StandardScaler()
-        bold = scaler.fit_transform(bold.T).T
-    bold = detrend(bold, axis=1, type='constant')
-    # Apply the filter to the data
-    bold_filtered = filtfilt(bfilt2, afilt2, bold, axis=1)
-
-    return bold_filtered
-
-def calc_phase_fcd(bold, tr=0.72):
-    """Calculate phase-based functional connectivity dynamics (phFCD).
-
-    This function calculates the phase-based functional connectivity dynamics (phFCD) 
-    between regions of interest using the given bold signal and repetition time (TR).
-
-    Parameters
-    ----------
-    bold : numpy.ndarray
-        The bold signal data of shape (N, T), where N is the number of regions and T is the number of time points.
-    tr : float
-        The repetition time (TR) in seconds.
-
-    Returns
-    -------
-    numpy.ndarray
-        The phFCD matrix of shape (M,), where M is the number of unique pairs of regions.
-    """
-
-    # Define parameters
-    # k = 2  # 2nd order butterworth filter
-    # fnq = 0.5 * 1/tr  # nyquist frequency
-    # flp = 0.04  # low-pass frequency of filter
-    # fhi = 0.07  # high-pass frequency of the filter
-    # Wn = [flp/fnq, fhi/fnq]  # butterworth bandpass non-dimensional frequency
-    # bfilt2, afilt2 = butter(k, Wn, btype="bandpass")  # construct the filter
-
-    # # Standardise and detrend the data if it isn't already
-    # if not np.allclose(np.mean(bold, axis=1), 0) or not np.allclose(np.std(bold, axis=1), 1.0):
-    #     scaler = StandardScaler()
-    #     bold = scaler.fit_transform(bold.T).T
-    # bold = detrend(bold, axis=1, type='constant')
-    # Apply the filter to the data
-
-    n_regions, t = np.shape(bold)  
-    # Bandpass filter the BOLD signal
-    bold_filtered = filter_bold(bold, tr=tr)
-    # Calculate phase for each region
-    phase_bold = np.angle(hilbert(bold_filtered))
-
-    # Remove first 9 and last 9 time points to avoid edge effects from filtering, as the bandpass 
-    # filter may introduce distortions near the boundaries of the time series. The cutoff is 
-    # arbitrarily chosen
-    t_trunc = np.arange(9, t - 9)  
-
-    # Calculate synchrony
-    tril_ind = np.tril_indices(n_regions, -1)
-    nt = len(t_trunc)
-    synchrony_vec = np.zeros((nt, len(tril_ind[0])))
-    for t_ind, t in enumerate(t_trunc):
-        phase_diff = phase_bold[:, t][:, None] - phase_bold[:, t]
-        synchrony_mat = np.cos(phase_diff)
-        synchrony_vec[t_ind, :] = synchrony_mat[tril_ind]
-    # for t_ind in range(nt):
-    #     t = t_trunc[t_ind]
-    #     phase_bold_current = np.tile(phase_bold[:, t], (n_regions, 1))
-    #     synchrony_mat = np.cos(phase_bold_current - phase_bold_current.T)
-    #     synchrony_vec[t_ind, :] = synchrony_mat[tril_ind]
-
-    # Calculate phase from synchrony at each time point
-    p_mat = np.zeros((nt - 2, synchrony_vec.shape[1]))
-    for t_ind in range(nt - 2):
-        p_mat[t_ind, :] = np.mean(synchrony_vec[t_ind:t_ind + 3, :], axis=0)
-        p_mat[t_ind, :] = p_mat[t_ind, :] / norm(p_mat[t_ind, :])
-
-    # Calculate phase for every time pair
-    fcd_mat = p_mat @ p_mat.T
-
-    triu_ind = np.triu_indices(fcd_mat.shape[0], k=1)
-    fcd = fcd_mat[triu_ind]
-
-    return fcd
 
 def scale_hmap(hmap, alpha=1.0, beta=1.0, r=28.9, gamma=0.116, sigma=0, method="zscore", verbose=True):
     """Scale the heterogeneity map using the given parameters.
@@ -420,14 +312,18 @@ def plot_brain(surf, data, labels=None, layout="row", views=["lateral", "medial"
 
     return fig
 
-def load_parc(parc_file):
-    # Get parc_file extension
-    ext = parc_file.split('.')[-1]
-    if ext == 'gii':
-        parc = nib.load(parc_file).darrays[0].data
-    elif ext == 'txt':
-        parc = np.loadtxt(parc_file).astype(int)
-    else:
-        raise ValueError("Parcellation file must be a .gii or .txt file")
-    
-    return parc
+def pad_sequences(sequences, val=-1):
+    """
+    Pads a list of sequences to the length of the longest sequence.
+    """
+
+    # Find the length of the longest sequence
+    max_length = max(len(seq) for seq in sequences)
+    # Pad sequences
+    padded_sequences = [
+        np.pad(seq, pad_width=(0, max_length - len(seq)), mode='constant', constant_values=val)
+        if len(seq) < max_length else seq
+        for seq in sequences
+    ]
+
+    return np.array(padded_sequences)
