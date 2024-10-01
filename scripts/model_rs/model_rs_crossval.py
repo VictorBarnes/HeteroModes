@@ -100,10 +100,7 @@ def main():
     fslr = fetch_atlas(atlas='fsLR', density=args.den)
     surf = str(fslr['midthickness'][0])
 
-    # Create output directory if it doesn't exist
     out_dir = f'{PROJ_DIR}/results/model_rs/crossval/id-{args.id}'
-    if not os.path.exists(out_dir):
-        os.makedirs(out_dir)
 
     # Get hmap and alpha values
     if args.hmap_label is None:
@@ -257,7 +254,10 @@ def main():
     print(f"Best node-level FC: {np.mean(node_fc_test):.3g}")
     print(f"Best FCD: {np.mean(fcd_test):.3g}")
 
-    # Save results
+    # Create output directory if it doesn't exist
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+
     out_file = f"{args.hmap_label}_results.hdf5"
     # If file exists: append number to folder name to avoid overwriting
     if os.path.exists(f"{out_dir}/{out_file}"):
@@ -268,6 +268,7 @@ def main():
     out_path = f"{out_dir}/{out_file}"
     print(f"Output path: {out_path}")
 
+    # Save results
     with h5py.File(out_path, 'w') as f:
         # Write metadata to file
         for key, value in vars(args).items():
