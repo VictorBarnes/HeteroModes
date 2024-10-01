@@ -7,5 +7,6 @@ scripts/.ipynb_checkpoints/
 scripts/__pycache__/
 scripts/sandbox/
 scripts/_console.ipynb
+scripts/model_rs/*.sh
 .env
 HeteroModes_py38.yml
