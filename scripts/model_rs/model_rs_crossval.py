@@ -77,7 +77,7 @@ def main():
         # If hmap_label is null, load null map
         if args.hmap_label[:4] == "null":
             null_id = int(args.hmap_label.split('-')[1])
-            hmap = np.load(f"{PROJ_DIR}/data/nulls/data-myelinmap_space-fsLR_den-{args.den}_hemi-L_nmodes-500_nnulls-5000_nulls.npy")
+            hmap = np.load(f"{PROJ_DIR}/data/nulls/data-myelinmap_space-fsLR_den-{args.den}_hemi-L_nmodes-500_nnulls-5000_nulls_resample-True.npy")
             hmap = hmap[null_id, :]
 
             out_dir = out_dir + "/nulls"
