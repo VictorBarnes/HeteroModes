@@ -1,11 +1,12 @@
 import pathlib
 import numpy as np
 from lapy import Solver, TriaMesh
+from sklearn.preprocessing import StandardScaler
 from brainspace.vtk_interface.wrappers import BSPolyData
 from brainspace.mesh.mesh_operations import mask_points
 from brainspace.mesh.mesh_io import read_surface
 from brainspace.mesh.mesh_elements import get_cells, get_points
-from heteromodes.utils import standardise_modes, scale_hmap
+from heteromodes.utils import standardise_modes
 
 # Turn off VTK warning when using importing brainspace.mesh_operations:  
 # "vtkThreshold.cxx:99 WARN| vtkThreshold::ThresholdBetween was deprecated for VTK 9.1 and will be removed in a future version."
@@ -33,27 +34,14 @@ def _check_hmap(surf, hmap):
         hmap[np.isnan(hmap)] = np.nanmean(hmap)
         
         return hmap
-
-# def _check_scaling(mesh, rho):
-#     """Check if scaling is valid."""
-#     CMEAN = 3.3524
-
-#     rho_tri = mesh.map_vfunc_to_tfunc(rho)
-#     _, _, c1, c2 = mesh.curvature_tria(smoothit=10)
-#     aniso_mat = np.empty((mesh.t.shape[0], 2))
-#     aniso_mat[:, 0] = np.exp(rho_tri * np.abs(c1))
-#     aniso_mat[:, 1] = np.exp(rho_tri * np.abs(c2))
-    
-#     c_s = CMEAN * np.sqrt(aniso_mat)
-#     if np.min(c_s) < 0.01 or np.max(c_s) > 300:
-#         raise ValueError("c_s values should be in the range [0.01, 300] m/s")
+    else:
+        raise ValueError("Heterogeneity map must be a numpy array or None")
 
 class HeteroSolver(Solver):
     """
     Class to solve the heterogeneous Helmholtz equation on a surface mesh.
     """
-    def __init__(self, surf, hmap=None, medmask=None, alpha=1.0, sigma=0, method="hetero", 
-                 scale_method="norm", verbose=False, **lapy_kwargs):  
+    def __init__(self, surf, hmap=None, medmask=None, alpha=1.0, verbose=False, **lapy_kwargs):  
         """
         Initialize the HeteroSolver object.
 
@@ -79,18 +67,13 @@ class HeteroSolver(Solver):
 
         # Check and scale heterogeneity map
         hmap = _check_hmap(surf, hmap)
-        rho = scale_hmap(hmap, alpha=alpha, method=scale_method, sigma=sigma, verbose=verbose)       
+        rho = scale_hmap(hmap, alpha=alpha)       
 
         # Map hmap from vertices to triangles
         rho_tri = mesh.map_vfunc_to_tfunc(rho)
 
         # Initialise the Solver object
-        if method == "hetero":
-            super().__init__(mesh, aniso=(0, 0), hetero=rho_tri, **lapy_kwargs)
-        elif method == "aniso":
-            super().__init__(mesh, aniso=np.tile(rho_tri, (2, 1)).T, hetero=None, **lapy_kwargs)
-        else:
-            raise ValueError("Method must be either `hetero` or `aniso`")
+        super().__init__(mesh, aniso=(0, 0), hetero=rho_tri, **lapy_kwargs)
         
         # Store the parameters
         self.mesh = mesh
@@ -138,3 +121,25 @@ class HeteroSolver(Solver):
 
         return evals, emodes
     
+def scale_hmap(hmap, alpha=1.0):
+    """
+    Scale the heterogeneity map using the given parameters.
+
+    Parameters
+    ----------
+    hmap : numpy.ndarray
+        The heterogeneity map to be scaled.
+    alpha : float
+        The scaling factor.
+
+    Returns
+    -------
+    rho : numpy.ndarray
+        The scaled heterogeneity map.
+    """
+
+    # z-score the heterogeneity map
+    scaler = StandardScaler()
+    rho = np.exp(alpha * scaler.fit_transform(hmap.reshape(-1, 1)).flatten())
+
+    return rho
