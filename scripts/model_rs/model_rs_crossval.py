@@ -1,6 +1,5 @@
 import h5py
 import os
-import copy
 import argparse
 import itertools
 import numpy as np
@@ -10,8 +9,9 @@ from dotenv import load_dotenv
 from sklearn.model_selection import KFold
 from neuromaps.datasets import fetch_atlas
 from brainspace.utils.parcellation import reduce_by_labels
+from heteromodes import HeteroSolver
 from heteromodes.utils import load_hmap, pad_sequences
-from heteromodes.restingstate import ModelBOLD, calc_fc_fcd, evaluate_model
+from heteromodes.restingstate import simulate_bold, calc_fc_fcd, evaluate_model
 # from memory_profiler import profile
 
 load_dotenv()
@@ -19,13 +19,11 @@ PROJ_DIR = os.getenv("PROJ_DIR")
 SURF_LH = os.getenv("SURF_LH")
 GLASSER360_LH = os.getenv("GLASSER360_LH")
 
-def run_iteration(run, model, parc, medmask, args, emp_results):
-    # Make a deepcopy of the provided model to allow for parallelization
-    model = copy.deepcopy(model)
-
+def run_iteration(run, evals, emodes, parc, medmask, args, params, emp_results, B=None):
     # Load external input, run model and parcellate
     ext_input = np.load(f"{PROJ_DIR}/data/resting_state/extInput_den-{args.den}_randseed-{run}.npy")
-    bold_model = model.run_rest(ext_input=ext_input)
+    bold_model = simulate_bold(evals, emodes, ext_input, solver_method='Fourier', 
+                               eig_method='orthonormal', r=params[1], gamma=params[2], B=B)
     bold_model = reduce_by_labels(bold_model, parc[medmask], axis=1)
     
     # Compute model FC and FCD
@@ -37,22 +35,25 @@ def run_iteration(run, model, parc, medmask, args, emp_results):
 
     return edge_fc, node_fc, fcd, fc, fcd_dist
 
+# TODO: combine params and args into a single object
 def run_model(surf, hmap, parc, medmask, params, args, emp_results):
-    # Initialize the model once
-    model_rs = ModelBOLD(surf=surf, medmask=medmask, hmap=hmap, alpha=params[0], r=params[1], 
-                         gamma=params[2], scale_method=args.scale_method)
-    model_rs.calc_modes(args.n_modes, method=args.aniso_method)
+    # Calculate modes
+    solver = HeteroSolver(
+        surf=surf,
+        medmask=medmask,
+        hmap=hmap,
+        alpha=params[0],
+        scale_method=args.scale_method
+    )
+    evals, emodes = solver.solve(k=args.n_modes, fix_mode1=True, standardise=True)
 
-    # Use joblib to parallelize the iterations
+    # Parallelize the iterations
     results = Parallel(n_jobs=args.n_jobs)(
-        delayed(run_iteration)(run, model_rs, parc, medmask, args, emp_results)
+        delayed(run_iteration)(run, evals, emodes, parc, medmask, args, params, emp_results, B=solver.mass)
         for run in range(args.n_runs)
     )
-
-    # Unpack results
     edge_fcs, node_fcs, fcds, fcs, fcd_dists = zip(*results)
 
-    # Convert lists of results to numpy arrays
     edge_fcs = np.array(edge_fcs)
     node_fcs = np.array(node_fcs)
     fcds = np.array(fcds)
@@ -75,6 +76,7 @@ def main():
     parser.add_argument("--n_jobs", type=int, default=-1, help="The number of CPUs for parallelization. Defaults to -1")
     parser.add_argument("--alpha_step", type=float, default=0.2, help="The step size for alpha values. Defaults to 0.5.")
     parser.add_argument("--den", type=str, default="32k", help="The density of the surface. Defaults to `32k`.")
+    parser.add_argument("--parc", type=str, default="hcpmmp1", help="The parcellation to use to downsample the BOLD data.")
     args = parser.parse_args()
 
     # Get surface, medial mask and parcellation files
@@ -197,25 +199,33 @@ def main():
             best_alpha = 0
             best_r = 28.9
             best_gamma = 0.116
-        
         best_combs.append((best_alpha, best_r, best_gamma))
+        
         # Evaluate on test set
         print(f"\nTesting (using alpha = {best_alpha:.1f}, r = {best_r:.1f})...\n=====================")
-        model_rs = ModelBOLD(surf=surf, medmask=medmask, hmap=hmap, alpha=best_alpha, r=best_r,
-                             gamma=best_gamma, scale_method=args.scale_method)
-        model_rs.calc_modes(args.n_modes, method=args.aniso_method)
+        # Calculate modes
+        solver = HeteroSolver(
+            surf=surf,
+            medmask=medmask,
+            hmap=hmap,
+            alpha=best_alpha,
+            scale_method=args.scale_method
+        )
+        evals, emodes = solver.solve(k=args.n_modes, fix_mode1=True, standardise=True)
         # Run model
         results_test = Parallel(n_jobs=args.n_runs)(
             delayed(run_iteration)(
                 run=run, 
-                model=model_rs,
+                evals=evals,
+                emodes=emodes,
                 parc=parc, 
                 medmask=medmask, 
-                args=args, 
-                emp_results={"fc": fc_emp_test, "fcd": fcd_emp_test})
+                args=args,
+                params=(best_alpha, best_r, best_gamma),
+                emp_results={"fc": fc_emp_test, "fcd": fcd_emp_test},
+                B=solver.mass)
             for run in range(args.n_runs)
         )
-        # Unpack results
         edge_fcs, node_fcs, fcds, fcs, fcd_dists = zip(*results_test)
 
         edge_fc_test[i, :] = edge_fcs

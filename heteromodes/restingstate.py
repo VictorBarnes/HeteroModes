@@ -3,97 +3,32 @@ from scipy.stats import ks_2samp
 from scipy.linalg import norm
 from scipy.signal import butter, filtfilt, detrend, hilbert
 from sklearn.preprocessing import StandardScaler
-from brainspace.mesh import mesh_io
-from heteromodes.solver import HeteroSolver
 from heteromodes.models import WaveModel, BalloonModel
 
-class ModelBOLD(object):
-    def __init__(self, surf, medmask, hmap=None, alpha=1.0, sigma=0,
-                 r=28.9, gamma=0.116, scale_method="zscore"):
-        
-        # Load surface template
-        self.surf = surf
-        self.medmask = medmask
-        self.hmap = hmap
+def simulate_bold(evals, emodes, ext_input, solver_method, eig_method, r=28.9, gamma=0.116, B=None, tstep=0.09 * 1e3):
+    """
+    Function that simulates resting-state fMRI BOLD data.
+    """
+    # Set simulation parameters
+    tr = 0.72 * 1e3 # HCP data TR in ms
+    tpre = 50 * 1e3 # burn time to remove transient
+    tmax = tpre + 1199 * tr # match number of timepoints in empirical data
 
-        self.scale_method = scale_method
-        self.alpha = alpha
-        self.sigma = sigma
-        self.r = r
-        self.gamma = gamma
+    # Wave model to simulate neural activity
+    wave = WaveModel(emodes, evals, r=r, gamma=gamma, tstep=tstep, tmax=tmax)
+    ntsteps_tr = int(tr // wave.tstep)
+    tsteady_ind = np.abs(wave.t - tpre).argmin()
 
-    def calc_modes(self, n_modes=500, method="hetero"):
-        """Calculate heterogeneous modes."""
-        self.solver = HeteroSolver(
-            surf=self.surf, 
-            medmask=self.medmask, 
-            hmap=self.hmap, 
-            alpha=self.alpha, 
-            method=method, 
-            sigma=self.sigma, 
-            scale_method=self.scale_method
-        )
-        self.evals, self.emodes = self.solver.solve(k=n_modes, fix_mode1=True, standardise=True)
+    # Balloon model to simulate BOLD activity
+    balloon = BalloonModel(emodes, tstep=tstep, tmax=tmax)
 
-    # def run(self, sim_seed=None, solver_method='Fourier', eig_method='orthonormal'):
-    def run_rest(self, ext_input=None, sim_seed=None, solver_method='Fourier', 
-                 eig_method='orthonormal', tstep=0.09*1e3):
-        """Model resting-state fMRI BOLD data."""
-
-        # Calculate simulated BOLD data
-        TR = 0.72 * 1e3     # HCP data TR in ms
-
-        # Set wave model parameters (all time units are in ms)
-        tpre = 50 * 1e3         # burn time to remove transient
-        tmax = tpre + 1199*TR  # match number of timepoints in empirical data
-        wave = WaveModel(self.emodes, self.evals, r=self.r, gamma=self.gamma, tstep=tstep,
-                         tmax=tmax)
-        ntsteps_tr = int(TR // wave.tstep)        # Number of time steps in a TR
-        # Get steady-state index
-        tsteady_ind = np.abs(wave.t - tpre).argmin()
-
-        # Set balloon model parameters
-        balloon = BalloonModel(self.emodes, tstep=tstep, tmax=tmax)
-
-        # random external input (to mimic resting state)
-        if ext_input is None:
-            sim_seed = np.random.randint(0, 2**32-1) if sim_seed is None else sim_seed
-            np.random.seed(sim_seed)
-            ext_input = np.random.randn(np.shape(self.emodes)[0], len(wave.t))
-        else:
-            # Check shape of external input
-            if np.shape(ext_input) != (np.shape(self.emodes)[0], len(wave.t)):
-                raise ValueError("External input must have shape (n_vertices, n_timepoints)")
-
-        # simulate neural activity
-        _, neural_activity = wave.solve(ext_input, solver_method, eig_method, B=self.solver.mass)
-        # simulate BOLD activity from the neural activity
-        _, bold_activity = balloon.solve(neural_activity, solver_method, eig_method,
-                                        B=self.solver.mass)
-
-        bold_activity_out = bold_activity[:, tsteady_ind::ntsteps_tr]
-
-        return bold_activity_out
+    # Simulate neural activity
+    _, neural_activity = wave.solve(ext_input, solver_method, eig_method, B=B)
     
-    def run_stimulate(self, solver_method='Fourier', eig_method='orthonormal'):
-        # Get V1 indices
-        roi_labels = [roi.label for roi in self.parc.labeltable.labels]
-        v1_inds = np.where(self.parc.darrays[0].data == roi_labels.index("L_V1_ROI"), True, False)[self.medmask]
+    # Simulate BOLD activity
+    _, bold_activity = balloon.solve(neural_activity, solver_method, eig_method, B=B)
 
-        # Initialise wave model
-        wave = WaveModel(self.emodes, self.evals)
-
-        # Create a 1 ms external input with amplitude = 20 to V1 (results are robust to amplitude)
-        ext_trange = [1, 2]     # in ms
-        ext_amp = 20
-        ext_inds = np.where((wave.t >= ext_trange[0]) & (wave.t <= ext_trange[1]))[0]
-        ext_input = np.zeros((np.shape(self.emodes)[0], len(wave.t)))
-        ext_input[np.ix_(v1_inds, ext_inds)] = ext_amp
-
-        # Simulate neural activity
-        _, neural_sim = wave.solve(ext_input, solver_method, eig_method, B=self.solver.mass)
-
-        return neural_sim
+    return bold_activity[:, tsteady_ind::ntsteps_tr]
 
 def filter_bold(bold, tr, lowcut=0.04, highcut=0.07):
     """Filter the BOLD signal using a bandpass filter.
