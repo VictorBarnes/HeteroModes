@@ -94,7 +94,6 @@ class HeteroSolver(Solver):
         
         # Store the parameters
         self.mesh = mesh
-        self.surf = surf
         self.rho = rho
         
     def solve(self, k=10, fix_mode1=False, standardise=False):

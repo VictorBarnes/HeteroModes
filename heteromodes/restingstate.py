@@ -7,13 +7,12 @@ from brainspace.mesh import mesh_io
 from heteromodes.solver import HeteroSolver
 from heteromodes.models import WaveModel, BalloonModel
 
-
 class ModelBOLD(object):
-    def __init__(self, surf_file, medmask, hmap=None, alpha=1.0, sigma=0,
+    def __init__(self, surf, medmask, hmap=None, alpha=1.0, sigma=0,
                  r=28.9, gamma=0.116, scale_method="zscore"):
         
         # Load surface template
-        self.surf = mesh_io.read_surface(surf_file)
+        self.surf = surf
         self.medmask = medmask
         self.hmap = hmap
 
@@ -25,13 +24,20 @@ class ModelBOLD(object):
 
     def calc_modes(self, n_modes=500, method="hetero"):
         """Calculate heterogeneous modes."""
-        self.solver = HeteroSolver(surf=self.surf, medmask=self.medmask, hmap=self.hmap, alpha=self.alpha, 
-                                   method=method, sigma=self.sigma, scale_method=self.scale_method)
+        self.solver = HeteroSolver(
+            surf=self.surf, 
+            medmask=self.medmask, 
+            hmap=self.hmap, 
+            alpha=self.alpha, 
+            method=method, 
+            sigma=self.sigma, 
+            scale_method=self.scale_method
+        )
         self.evals, self.emodes = self.solver.solve(k=n_modes, fix_mode1=True, standardise=True)
 
     # def run(self, sim_seed=None, solver_method='Fourier', eig_method='orthonormal'):
-    def run_rest(self, ext_input=None, sim_seed=None, solver_method='Fourier', eig_method='orthonormal',
-            tstep=0.09*1e3):
+    def run_rest(self, ext_input=None, sim_seed=None, solver_method='Fourier', 
+                 eig_method='orthonormal', tstep=0.09*1e3):
         """Model resting-state fMRI BOLD data."""
 
         # Calculate simulated BOLD data
@@ -163,7 +169,7 @@ def calc_phase_fcd(bold, tr=0.72):
         synchrony_mat = np.cos(phase_diff)
         synchrony_vec[t_ind, :] = synchrony_mat[tril_ind]
 
-    # Calculate phase from synchrony at each time point
+    # Pre-calculate phase vectors
     p_mat = np.zeros((nt - 2, synchrony_vec.shape[1]))
     for t_ind in range(nt - 2):
         p_mat[t_ind, :] = np.mean(synchrony_vec[t_ind:t_ind + 3, :], axis=0)

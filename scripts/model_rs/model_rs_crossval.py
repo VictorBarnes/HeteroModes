@@ -1,5 +1,6 @@
 import h5py
 import os
+import copy
 import argparse
 import itertools
 import numpy as np
@@ -18,34 +19,47 @@ PROJ_DIR = os.getenv("PROJ_DIR")
 SURF_LH = os.getenv("SURF_LH")
 GLASSER360_LH = os.getenv("GLASSER360_LH")
 
+def run_iteration(run, model, parc, medmask, args, emp_results):
+    # Make a deepcopy of the provided model to allow for parallelization
+    model = copy.deepcopy(model)
+
+    # Load external input, run model and parcellate
+    ext_input = np.load(f"{PROJ_DIR}/data/resting_state/extInput_den-{args.den}_randseed-{run}.npy")
+    bold_model = model.run_rest(ext_input=ext_input)
+    bold_model = reduce_by_labels(bold_model, parc[medmask], axis=1)
+    
+    # Compute model FC and FCD
+    fc_model, fcd_model = calc_fc_fcd(bold_model, tr=0.72, filter=False)
+    model_results = {"fc": fc_model, "fcd": fcd_model}
+
+    # Evaluate model
+    edge_fc, node_fc, fcd, fc, fcd_dist = evaluate_model(emp_results, model_results)
+
+    return edge_fc, node_fc, fcd, fc, fcd_dist
+
 def run_model(surf, hmap, parc, medmask, params, args, emp_results):
-    model_rs = ModelBOLD(surf_file=surf, medmask=medmask, hmap=hmap,
-                    alpha=params[0], r=params[1], gamma=params[2], scale_method=args.scale_method)
+    # Initialize the model once
+    model_rs = ModelBOLD(surf=surf, medmask=medmask, hmap=hmap, alpha=params[0], r=params[1], 
+                         gamma=params[2], scale_method=args.scale_method)
     model_rs.calc_modes(args.n_modes, method=args.aniso_method)
 
-    edge_fcs = np.empty(args.n_runs)
-    node_fcs = np.empty(args.n_runs)
-    fcds = np.empty(args.n_runs)
-    # combined_metrics = np.empty(args.n_runs)
-    fcs, fcd_dists = [], []
-    for run in range(args.n_runs):
-        # Load external input, run model and parcellate
-        ext_input = np.load(f"{PROJ_DIR}/data/resting_state/extInput_den-{args.den}_randseed-{run}.npy")
-        bold_model = model_rs.run_rest(ext_input=ext_input)
-        bold_model = reduce_by_labels(bold_model, parc[medmask], axis=1)
-        # Compute model FC and FCD
-        fc_model, fcd_model = calc_fc_fcd(bold_model, tr=0.72, filter=False)
-        model_results = {"fc": fc_model, "fcd": fcd_model}
+    # Use joblib to parallelize the iterations
+    results = Parallel(n_jobs=args.n_jobs)(
+        delayed(run_iteration)(run, model_rs, parc, medmask, args, emp_results)
+        for run in range(args.n_runs)
+    )
 
-        # Evaluate model
-        edge_fc, node_fc, fcd, fc, fcd_dist = evaluate_model(emp_results, model_results)
-        edge_fcs[run] = edge_fc
-        node_fcs[run] = node_fc
-        fcds[run] = fcd
-        fcs.append(fc)
-        fcd_dists.append(fcd_dist)
+    # Unpack results
+    edge_fcs, node_fcs, fcds, fcs, fcd_dists = zip(*results)
 
-    return edge_fcs, node_fcs, fcds, np.dstack(fcs), np.array(fcd_dists)
+    # Convert lists of results to numpy arrays
+    edge_fcs = np.array(edge_fcs)
+    node_fcs = np.array(node_fcs)
+    fcds = np.array(fcds)
+    fcs = np.dstack(fcs)
+    fcd_dists = np.array(fcd_dists)
+
+    return edge_fcs, node_fcs, fcds, fcs, fcd_dists
 
 # @profile
 def main():
@@ -158,8 +172,6 @@ def main():
                     params=params,
                     args=args,
                     emp_results={"fc": fc_emp_train, "fcd": fcd_emp_train},
-                    # fc_emp=fc_emp_train,
-                    # fcd_emp=fcd_emp_train,
                 )
                 for params in param_combs
             )
@@ -189,17 +201,23 @@ def main():
         best_combs.append((best_alpha, best_r, best_gamma))
         # Evaluate on test set
         print(f"\nTesting (using alpha = {best_alpha:.1f}, r = {best_r:.1f})...\n=====================")
-        edge_fcs, node_fcs, fcds, fcs, fcd_dists = run_model(
-            surf=surf,
-            hmap=hmap,
-            parc=parc,
-            medmask=medmask,
-            params=(best_alpha, best_r, best_gamma),
-            args=args,
-            emp_results={"fc": fc_emp_test, "fcd": fcd_emp_test},
-            # fc_emp=fc_emp_test,
-            # fcd_emp=fcd_emp_test
+        model_rs = ModelBOLD(surf=surf, medmask=medmask, hmap=hmap, alpha=best_alpha, r=best_r,
+                             gamma=best_gamma, scale_method=args.scale_method)
+        model_rs.calc_modes(args.n_modes, method=args.aniso_method)
+        # Run model
+        results_test = Parallel(n_jobs=args.n_runs)(
+            delayed(run_iteration)(
+                run=run, 
+                model=model_rs,
+                parc=parc, 
+                medmask=medmask, 
+                args=args, 
+                emp_results={"fc": fc_emp_test, "fcd": fcd_emp_test})
+            for run in range(args.n_runs)
         )
+        # Unpack results
+        edge_fcs, node_fcs, fcds, fcs, fcd_dists = zip(*results_test)
+
         edge_fc_test[i, :] = edge_fcs
         node_fc_test[i, :] = node_fcs
         fcd_test[i, :] = fcds
