@@ -12,7 +12,6 @@ from brainspace.utils.parcellation import reduce_by_labels
 from heteromodes import HeteroSolver
 from heteromodes.utils import load_hmap, pad_sequences
 from heteromodes.restingstate import simulate_bold, calc_fc_fcd, evaluate_model
-from memory_profiler import profile
 
 load_dotenv()
 PROJ_DIR = os.getenv("PROJ_DIR")
@@ -60,7 +59,6 @@ def training_job(surf, hmap, parc, medmask, params, args, emp_results):
 
     return np.array(edge_fcs), np.array(node_fcs), np.array(fcds)
 
-@profile
 def main():
     parser = argparse.ArgumentParser(description="Model resting-state fMRI BOLD data and evaluate against empirical data.")
     parser.add_argument("--hmap_label", type=str, default=None, help="The label of the heterogeneity map. Defaults to None (indicating homogeneity)")
