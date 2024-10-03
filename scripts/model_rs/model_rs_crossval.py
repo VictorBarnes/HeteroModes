@@ -19,7 +19,7 @@ PROJ_DIR = os.getenv("PROJ_DIR")
 SURF_LH = os.getenv("SURF_LH")
 GLASSER360_LH = os.getenv("GLASSER360_LH")
 
-def run_iteration(run, evals, emodes, parc, medmask, args, params, emp_results, B=None):
+def run_model(run, evals, emodes, parc, medmask, args, params, emp_results, B=None, return_all=False):
     # Load external input, run model and parcellate
     ext_input = np.load(f"{PROJ_DIR}/data/resting_state/extInput_den-{args.den}_randseed-{run}.npy")
     bold_model = simulate_bold(evals, emodes, ext_input, solver_method='Fourier', 
@@ -33,10 +33,14 @@ def run_iteration(run, evals, emodes, parc, medmask, args, params, emp_results, 
     # Evaluate model
     edge_fc, node_fc, fcd, fc, fcd_dist = evaluate_model(emp_results, model_results)
 
-    return edge_fc, node_fc, fcd, fc, fcd_dist
+    # Allow option to only return edge_fc, node_fc, fcd for memory efficiency
+    if return_all:
+        return edge_fc, node_fc, fcd, fc, fcd_dist
+    else:
+        return edge_fc, node_fc, fcd
 
 # TODO: combine params and args into a single object
-def run_model(surf, hmap, parc, medmask, params, args, emp_results):
+def training_job(surf, hmap, parc, medmask, params, args, emp_results):
     # Calculate modes
     solver = HeteroSolver(
         surf=surf,
@@ -48,18 +52,13 @@ def run_model(surf, hmap, parc, medmask, params, args, emp_results):
 
     # Parallelize the iterations
     results = Parallel(n_jobs=args.n_jobs)(
-        delayed(run_iteration)(run, evals, emodes, parc, medmask, args, params, emp_results, B=solver.mass)
+        delayed(run_model)(run, evals, emodes, parc, medmask, args, params, emp_results, 
+                           B=solver.mass, return_all=False)
         for run in range(args.n_runs)
     )
-    edge_fcs, node_fcs, fcds, fcs, fcd_dists = zip(*results)
+    edge_fcs, node_fcs, fcds = zip(*results)
 
-    edge_fcs = np.array(edge_fcs)
-    node_fcs = np.array(node_fcs)
-    fcds = np.array(fcds)
-    fcs = np.dstack(fcs)
-    fcd_dists = np.array(fcd_dists)
-
-    return edge_fcs, node_fcs, fcds, fcs, fcd_dists
+    return np.array(edge_fcs), np.array(node_fcs), np.array(fcds)
 
 @profile
 def main():
@@ -115,20 +114,20 @@ def main():
 
     # Load empirical BOLD data
     # TODO: make this generalizable to different parcellations (parc_name = os.path.basename(args.parc_lh).split('_')[0])
-    bold_data = h5py.File(f"{PROJ_DIR}/data/empirical/HCP_unrelated-445_rfMRI_hemi-L_nsubj-{args.n_subjs}_parc-glasser360_BOLD.hdf5", 'r')
-    bold_emp = bold_data['bold']
-    subj_ids = bold_data['subj_ids']
-    _, _, nsubjs = np.shape(bold_emp)
+    # bold_data = h5py.File(f"{PROJ_DIR}/data/empirical/HCP_unrelated-445_rfMRI_hemi-L_nsubj-{args.n_subjs}_parc-glasser360_BOLD.hdf5", 'r')
+    # bold_emp = bold_data['bold']
+    # subj_ids = bold_data['subj_ids']
+    # _, _, nsubjs = np.shape(bold_emp)
 
-    # Parallelize the calculation of FC and FCD
-    print("Calculating empirical FC and FCD...")
-    results = Parallel(n_jobs=args.n_jobs, verbose=1)(
-        delayed(calc_fc_fcd)(bold=bold_emp[:, :, subj], tr=0.72, filter=False)
-        for subj in range(nsubjs)
-    )
-    fc_emp_all, fcd_emp_all = zip(*results)
-    fc_emp_all = np.dstack(fc_emp_all)
-    fcd_emp_all = np.array(fcd_emp_all)
+    # # Parallelize the calculation of FC and FCD
+    # print("Calculating empirical FC and FCD...")
+    # results = Parallel(n_jobs=args.n_jobs, verbose=1)(
+    #     delayed(calc_fc_fcd)(bold=bold_emp[:, :, subj], tr=0.72, filter=False)
+    #     for subj in range(nsubjs)
+    # )
+    # fc_emp_all, fcd_emp_all = zip(*results)
+    # fc_emp_all = np.dstack(fc_emp_all)
+    # fcd_emp_all = np.array(fcd_emp_all)
 
     # Initialise output arrays
     best_combs = []
@@ -148,24 +147,27 @@ def main():
     test_subjs_split = []
     
     kf = KFold(n_splits=args.n_splits, shuffle=False)
-    for i, (train_index, test_index) in enumerate(kf.split(np.arange(nsubjs))):
+    for i, (train_index, test_index) in enumerate(kf.split(np.arange(args.n_subjs))):
         print(f"\n==========\nSplit {i+1}/{args.n_splits}\n==========")
 
         # Select train and test bold data
-        fc_emp_train = np.mean(fc_emp_all[:, :, train_index], axis=2)
-        fc_emp_test = np.mean(fc_emp_all[:, :, test_index], axis=2)
-        fcd_emp_train = fcd_emp_all[train_index, :]
-        fcd_emp_test = fcd_emp_all[test_index, :]
+        emp_file = f"{PROJ_DIR}/data/empirical/HCP_unrelated-445_rfMRI_hemi-L_nsubj-{args.n_subjs}_parc-glasser360_FC_FCD.hdf5"
+        with h5py.File(emp_file, "r") as f:
+            # Load empirical FC and FCD
+            fc_emp_train = np.mean(f["fc_matrices"][:, :, train_index], axis=2)
+            fc_emp_test = np.mean(f["fc_matrices"][:, :, test_index], axis=2)
+            fcd_emp_train = f["fcd_distributions"][train_index, :]
+            fcd_emp_test = f["fcd_distributions"][test_index, :]
 
-        # Get subject ids
-        train_subjs_split.append(subj_ids[train_index])
-        test_subjs_split.append(subj_ids[test_index])
+            # Get subject ids
+            train_subjs_split.append(f["subj_ids"][train_index])
+            test_subjs_split.append(f["subj_ids"][test_index])
 
         if args.hmap_label is not None:
             print(f"\nTraining...\n=====================")
             
             results_train = Parallel(n_jobs=args.n_jobs, verbose=1)(
-                delayed(run_model)(
+                delayed(training_job)(
                     surf=surf,
                     hmap=hmap,
                     parc=parc,
@@ -176,11 +178,12 @@ def main():
                 )
                 for params in param_combs
             )
-            edge_fcs, node_fcs, fcds, _, _ = zip(*results_train)
-            edge_fc_train[i, :, :] = edge_fcs
-            node_fc_train[i, :, :] = node_fcs
-            fcd_train[i, :, :] = fcds
-            combined_metric_train[i, :, :] = np.array(edge_fcs) + np.array(node_fcs) + (1 - np.array(fcds))
+            edge_fc_train[i, :, :], node_fc_train[i, :, :], fcd_train[i, :, :] = zip(*results_train)
+            combined_metric_train[i, :, :] = (
+                np.array(edge_fc_train[i, :, :]) + 
+                np.array(node_fc_train[i, :, :]) + 
+                (1 - np.array(fcd_train[i, :, :]))
+            )
 
             # Get best training results (average across runs)
             best_combs_ind = np.argmax(np.mean(combined_metric_train[i, :, :], axis=1))
@@ -212,7 +215,7 @@ def main():
         evals, emodes = solver.solve(n_modes=args.n_modes, fix_mode1=True, standardise=True)
         # Run model
         results_test = Parallel(n_jobs=args.n_runs)(
-            delayed(run_iteration)(
+            delayed(run_model)(
                 run=run, 
                 evals=evals,
                 emodes=emodes,
@@ -221,17 +224,18 @@ def main():
                 args=args,
                 params=(best_alpha, best_r, best_gamma),
                 emp_results={"fc": fc_emp_test, "fcd": fcd_emp_test},
-                B=solver.mass)
+                B=solver.mass,
+                return_all=True)
             for run in range(args.n_runs)
         )
-        edge_fcs, node_fcs, fcds, fcs, fcd_dists = zip(*results_test)
-
-        edge_fc_test[i, :] = edge_fcs
-        node_fc_test[i, :] = node_fcs
-        fcd_test[i, :] = fcds
+        edge_fc_test[i, :], node_fc_test[i, :], fcd_test[i, :], fcs, fcd_dists = zip(*results_test)
         fc_test.append(fcs)
         fcd_dist_test.append(fcd_dists)
-        combined_metric_test[i, :] = np.array(edge_fcs) + np.array(node_fcs) + (1 - np.array(fcds))
+        combined_metric_test[i, :] = (
+            np.array(edge_fc_test[i, :]) + 
+            np.array(node_fc_test[i, :]) + 
+            (1 - np.array(fcd_test[i, :]))
+        )
 
         print(f"\nTest results:\n--------------")
         print(f"    Combined metric: {np.mean(combined_metric_test[i, :]):.4g}")
