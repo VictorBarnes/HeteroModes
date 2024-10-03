@@ -1,5 +1,5 @@
-import h5py
 import os
+import h5py
 import argparse
 import itertools
 import numpy as np
@@ -12,7 +12,7 @@ from brainspace.utils.parcellation import reduce_by_labels
 from heteromodes import HeteroSolver
 from heteromodes.utils import load_hmap, pad_sequences
 from heteromodes.restingstate import simulate_bold, calc_fc_fcd, evaluate_model
-# from memory_profiler import profile
+from memory_profiler import profile
 
 load_dotenv()
 PROJ_DIR = os.getenv("PROJ_DIR")
@@ -40,12 +40,11 @@ def run_model(surf, hmap, parc, medmask, params, args, emp_results):
     # Calculate modes
     solver = HeteroSolver(
         surf=surf,
-        medmask=medmask,
         hmap=hmap,
+        medmask=medmask,
         alpha=params[0],
-        scale_method=args.scale_method
     )
-    evals, emodes = solver.solve(k=args.n_modes, fix_mode1=True, standardise=True)
+    evals, emodes = solver.solve(n_modes=args.n_modes, fix_mode1=True, standardise=True)
 
     # Parallelize the iterations
     results = Parallel(n_jobs=args.n_jobs)(
@@ -62,7 +61,7 @@ def run_model(surf, hmap, parc, medmask, params, args, emp_results):
 
     return edge_fcs, node_fcs, fcds, fcs, fcd_dists
 
-# @profile
+@profile
 def main():
     parser = argparse.ArgumentParser(description="Model resting-state fMRI BOLD data and evaluate against empirical data.")
     parser.add_argument("--hmap_label", type=str, default=None, help="The label of the heterogeneity map. Defaults to None (indicating homogeneity)")
@@ -209,9 +208,8 @@ def main():
             medmask=medmask,
             hmap=hmap,
             alpha=best_alpha,
-            scale_method=args.scale_method
         )
-        evals, emodes = solver.solve(k=args.n_modes, fix_mode1=True, standardise=True)
+        evals, emodes = solver.solve(n_modes=args.n_modes, fix_mode1=True, standardise=True)
         # Run model
         results_test = Parallel(n_jobs=args.n_runs)(
             delayed(run_iteration)(

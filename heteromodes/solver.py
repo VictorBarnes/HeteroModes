@@ -52,9 +52,16 @@ class HeteroSolver(Solver):
             See `brainspace.mesh.mesh_io.read_surface` for acceptable file types.
         hmap : np.ndarray, optional
             Array of the heterogeneity map, by default None. If None, hmap will be set to an array
-            of ones of length (n_vertices,) and this will results in homogeneous modes.
+            of zeros of length (n_vertices,) and this will results in homogeneous modes.
             If hmap is a numpy array, then it must contain the same number of elements as the number
             of vertices in `surf`.
+        medmask : np.ndarray, optional
+            Mask to apply to the surface vertices, by default None. If None, no mask will be 
+            applied.
+        alpha : float, optional
+            Scaling factor for the heterogeneity map, by default 1.0.
+        verbose : bool, optional
+            Flag indicating whether to print the solver information, by default False.
         """
 
         # Initialise surface and convert to TriaMesh object
@@ -73,19 +80,19 @@ class HeteroSolver(Solver):
         rho_tri = mesh.map_vfunc_to_tfunc(rho)
 
         # Initialise the Solver object
-        super().__init__(mesh, aniso=(0, 0), hetero=rho_tri, **lapy_kwargs)
+        super().__init__(mesh, aniso=(0, 0), hetero=rho_tri, verbose=verbose, **lapy_kwargs)
         
         # Store the parameters
         self.mesh = mesh
         self.rho = rho
         
-    def solve(self, k=10, fix_mode1=False, standardise=False):
+    def solve(self, n_modes=10, fix_mode1=False, standardise=False):
         """
         Solve for eigenvalues and eigenmodes of the HeteroModes problem.
 
         Parameters
         ----------
-        n : int, optional
+        n_modes : int, optional
             The number of eigenmodes to compute. Defaults to 10.
         fix_mode1 : bool, optional
             Flag indicating whether to set the first eigenmode to be constant (mean of the first
@@ -105,7 +112,7 @@ class HeteroSolver(Solver):
         AssertionError
             Raised if the cortical indices of the eigenmodes contain NaNs.
         """
-        evals, emodes = self.eigs(k=k)
+        evals, emodes = self.eigs(k=n_modes)
         
         # Set first mode to be constant (mean of first column)
         if fix_mode1:
