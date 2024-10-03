@@ -10,3 +10,4 @@ scripts/_console.ipynb
 scripts/model_rs/*.sh
 .env
 HeteroModes_py38.yml
+.DS_Store
