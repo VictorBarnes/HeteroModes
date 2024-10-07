@@ -167,4 +167,4 @@ def evaluate_model(empirical, model):
     # Calculate FCD of model BOLD data
     fcd_ks = ks_2samp(np.hstack(fcd_emp), np.hstack(fcd_model))[0]
 
-    return edge_fc, node_fc, fcd_ks, fc_model, fcd_model
+    return edge_fc, node_fc, fcd_ks

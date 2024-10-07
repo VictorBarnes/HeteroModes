@@ -30,11 +30,11 @@ def run_model(run, evals, emodes, parc, medmask, args, params, emp_results, B=No
     model_results = {"fc": fc_model, "fcd": fcd_model}
 
     # Evaluate model
-    edge_fc, node_fc, fcd, fc, fcd_dist = evaluate_model(emp_results, model_results)
+    edge_fc, node_fc, fcd = evaluate_model(emp_results, model_results)
 
     # Allow option to only return edge_fc, node_fc, fcd for memory efficiency
     if return_all:
-        return edge_fc, node_fc, fcd, fc, fcd_dist
+        return edge_fc, node_fc, fcd, fc_model, fcd_model
     else:
         return edge_fc, node_fc, fcd
 
@@ -49,15 +49,23 @@ def training_job(surf, hmap, parc, medmask, params, args, emp_results):
     )
     evals, emodes = solver.solve(n_modes=args.n_modes, fix_mode1=True, standardise=True)
 
-    # Parallelize the iterations
-    results = Parallel(n_jobs=args.n_jobs)(
-        delayed(run_model)(run, evals, emodes, parc, medmask, args, params, emp_results, 
-                           B=solver.mass, return_all=False)
-        for run in range(args.n_runs)
-    )
-    edge_fcs, node_fcs, fcds = zip(*results)
+    # Run model but only return evaluation metrics
+    edge_fcs, node_fcs, fcds = np.empty(args.n_runs), np.empty(args.n_runs), np.empty(args.n_runs)
+    for run in range(args.n_runs):
+        edge_fcs[run], node_fcs[run], fcds[run] = run_model(
+            run=run, 
+            evals=evals, 
+            emodes=emodes, 
+            parc=parc, 
+            medmask=medmask, 
+            args=args, 
+            params=params, 
+            emp_results=emp_results, 
+            B=solver.mass,
+            return_all=False
+        )
 
-    return np.array(edge_fcs), np.array(node_fcs), np.array(fcds)
+    return edge_fcs, node_fcs, fcds
 
 def main():
     parser = argparse.ArgumentParser(description="Model resting-state fMRI BOLD data and evaluate against empirical data.")
@@ -110,23 +118,6 @@ def main():
     parc = nib.load(parc_file).darrays[0].data.astype(int)
     medmask = np.where(parc != 0, True, False)
 
-    # Load empirical BOLD data
-    # TODO: make this generalizable to different parcellations (parc_name = os.path.basename(args.parc_lh).split('_')[0])
-    # bold_data = h5py.File(f"{PROJ_DIR}/data/empirical/HCP_unrelated-445_rfMRI_hemi-L_nsubj-{args.n_subjs}_parc-glasser360_BOLD.hdf5", 'r')
-    # bold_emp = bold_data['bold']
-    # subj_ids = bold_data['subj_ids']
-    # _, _, nsubjs = np.shape(bold_emp)
-
-    # # Parallelize the calculation of FC and FCD
-    # print("Calculating empirical FC and FCD...")
-    # results = Parallel(n_jobs=args.n_jobs, verbose=1)(
-    #     delayed(calc_fc_fcd)(bold=bold_emp[:, :, subj], tr=0.72, filter=False)
-    #     for subj in range(nsubjs)
-    # )
-    # fc_emp_all, fcd_emp_all = zip(*results)
-    # fc_emp_all = np.dstack(fc_emp_all)
-    # fcd_emp_all = np.array(fcd_emp_all)
-
     # Initialise output arrays
     best_combs = []
 
@@ -152,6 +143,7 @@ def main():
         emp_file = f"{PROJ_DIR}/data/empirical/HCP_unrelated-445_rfMRI_hemi-L_nsubj-{args.n_subjs}_parc-glasser360_FC_FCD.hdf5"
         with h5py.File(emp_file, "r") as f:
             # Load empirical FC and FCD
+            # TODO: make this generalizable to different parcellations (parc_name = os.path.basename(args.parc_lh).split('_')[0])
             fc_emp_train = np.mean(f["fc_matrices"][:, :, train_index], axis=2)
             fc_emp_test = np.mean(f["fc_matrices"][:, :, test_index], axis=2)
             fcd_emp_train = f["fcd_distributions"][train_index, :]
