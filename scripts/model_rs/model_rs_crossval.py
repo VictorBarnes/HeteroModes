@@ -15,8 +15,6 @@ from heteromodes.restingstate import simulate_bold, calc_fc_fcd, evaluate_model
 
 load_dotenv()
 PROJ_DIR = os.getenv("PROJ_DIR")
-SURF_LH = os.getenv("SURF_LH")
-GLASSER360_LH = os.getenv("GLASSER360_LH")
 
 def run_model(run, evals, emodes, parc, medmask, args, params, emp_results, B=None, return_all=False):
     # Load external input, run model and parcellate
@@ -26,7 +24,7 @@ def run_model(run, evals, emodes, parc, medmask, args, params, emp_results, B=No
     bold_model = reduce_by_labels(bold_model, parc[medmask], axis=1)
     
     # Compute model FC and FCD
-    fc_model, fcd_model = calc_fc_fcd(bold_model, tr=0.72, filter=False)
+    fc_model, fcd_model = calc_fc_fcd(bold_model, tr=0.72, filter=False, )
     model_results = {"fc": fc_model, "fcd": fcd_model}
 
     # Evaluate model
@@ -78,7 +76,7 @@ def main():
     parser.add_argument("--n_splits", type=int, default=5, help="The number of splits for cross-validation. Defaults to 5.")
     parser.add_argument("--n_subjs", type=int, default=384, help="The number of subjects in the empirical data. Defaults to 384.")
     parser.add_argument("--n_jobs", type=int, default=-1, help="The number of CPUs for parallelization. Defaults to -1")
-    parser.add_argument("--alpha_step", type=float, default=0.2, help="The step size for alpha values. Defaults to 0.5.")
+    parser.add_argument('--alpha', type=float, nargs=3, metavar=('alpha_min', 'alpha_max', 'alpha_step'), help='The alpha_min, alpha_max, and alpha_step values for scaling the heterogeneity map.')
     parser.add_argument("--den", type=str, default="32k", help="The density of the surface. Defaults to `32k`.")
     parser.add_argument("--parc", type=str, default="hcpmmp1", help="The parcellation to use to downsample the BOLD data.")
     args = parser.parse_args()
@@ -105,7 +103,8 @@ def main():
         else:
             hmap = load_hmap(args.hmap_label, den=args.den)
 
-        alpha_vals = np.arange(-2, 2 + args.alpha_step, args.alpha_step)
+        alpha_min, alpha_max, alpha_step = args.alpha
+        alpha_vals = np.arange(alpha_min, alpha_max + alpha_step, alpha_step)
         alpha_vals = alpha_vals[alpha_vals != 0] # Remove 0 since that is the homogeneous case
         r_vals = [28.9] #np.arange(10, 60, 10)
         gamma_vals = [0.116]
@@ -236,6 +235,7 @@ def main():
     print("\n==========\nFinal results\n==========")
     print(f"Best alpha: {np.mean(best_combs, axis=0)[0]}")
     print(f"Best r: {np.mean(best_combs, axis=0)[1]}")
+    print(f"Best gamma: {np.mean(best_combs, axis=0)[2]}")
     print(f"Best combined metric: {np.max(np.mean(combined_metric_test, axis=1)):.4g}") 
     print(f"Best edge-level FC: {np.mean(edge_fc_test):.3g}")
     print(f"Best node-level FC: {np.mean(node_fc_test):.3g}")
