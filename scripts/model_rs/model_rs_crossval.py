@@ -24,7 +24,7 @@ def run_model(run, evals, emodes, parc, medmask, args, params, emp_results, B=No
     bold_model = reduce_by_labels(bold_model, parc[medmask], axis=1)
     
     # Compute model FC and FCD
-    fc_model, fcd_model = calc_fc_fcd(bold_model, tr=0.72, filter=False, )
+    fc_model, fcd_model = calc_fc_fcd(bold_model, tr=0.72, filter=False)
     model_results = {"fc": fc_model, "fcd": fcd_model}
 
     # Evaluate model
@@ -193,7 +193,7 @@ def main():
         best_combs.append((best_alpha, best_r, best_gamma))
         
         # Evaluate on test set
-        print(f"\nTesting (using alpha = {best_alpha:.1f}, r = {best_r:.1f})...\n=====================")
+        print(f"\nTesting (alpha = {best_alpha:.1f}, r = {best_r:.1f}, gamma = {best_gamma:.3f})...\n=====================")
         # Calculate modes
         solver = HeteroSolver(
             surf=surf,
