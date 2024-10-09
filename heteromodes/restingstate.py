@@ -135,7 +135,7 @@ def calc_fc_fcd(bold, tr, band_freq=(0.04, 0.07)):
     
     # Caculate FC and FCD
     fc = np.corrcoef(bold)
-    fcd = calc_phase_fcd(bold, tr=tr, n_avg=10)
+    fcd = calc_phase_fcd(bold, tr=tr)
 
     return fc, fcd
 
