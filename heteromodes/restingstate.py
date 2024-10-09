@@ -65,7 +65,7 @@ def filter_bold(bold, tr, lowcut=0.04, highcut=0.07):
 
     return bold_filtered
 
-def calc_phase_fcd(bold, tr=0.72):
+def calc_phase_fcd(bold, tr=0.72, n_avg=3):
     """Calculate phase-based functional connectivity dynamics (phFCD).
 
     This function calculates the phase-based functional connectivity dynamics (phFCD) 
@@ -83,6 +83,9 @@ def calc_phase_fcd(bold, tr=0.72):
     numpy.ndarray
         The phFCD matrix of shape (M,), where M is the number of unique pairs of regions.
     """
+    # Ensure n_avg > 0
+    if n_avg < 1:
+        raise ValueError("n_avg must be greater than 0")
 
     n_regions, t = np.shape(bold)  
     # Bandpass filter the BOLD signal
@@ -91,8 +94,7 @@ def calc_phase_fcd(bold, tr=0.72):
     phase_bold = np.angle(hilbert(bold_filtered))
 
     # Remove first 9 and last 9 time points to avoid edge effects from filtering, as the bandpass 
-    # filter may introduce distortions near the boundaries of the time series. The cutoff is 
-    # arbitrarily chosen
+    # filter may introduce distortions near the boundaries of the time series.
     t_trunc = np.arange(9, t - 9)  
 
     # Calculate synchrony
@@ -105,9 +107,9 @@ def calc_phase_fcd(bold, tr=0.72):
         synchrony_vec[t_ind, :] = synchrony_mat[tril_ind]
 
     # Pre-calculate phase vectors
-    p_mat = np.zeros((nt - 2, synchrony_vec.shape[1]))
-    for t_ind in range(nt - 2):
-        p_mat[t_ind, :] = np.mean(synchrony_vec[t_ind:t_ind + 3, :], axis=0)
+    p_mat = np.zeros((nt - n_avg-1, synchrony_vec.shape[1]))
+    for t_ind in range(nt - n_avg-1):
+        p_mat[t_ind, :] = np.mean(synchrony_vec[t_ind : t_ind+n_avg, :], axis=0)
         p_mat[t_ind, :] = p_mat[t_ind, :] / norm(p_mat[t_ind, :])
 
     # Calculate phase for every time pair
@@ -118,18 +120,22 @@ def calc_phase_fcd(bold, tr=0.72):
 
     return fcd
 
-def calc_fc_fcd(bold, tr, filter=False):
+def calc_fc_fcd(bold, tr, band_freq=(0.04, 0.07)):
     # Ensure data is standardised
     if not np.isclose(np.mean(bold, axis=1), 0).all() or not np.isclose(np.std(bold, axis=1), 1.0).all():
         scaler = StandardScaler()
         bold = scaler.fit_transform(bold.T).T
     # Bandpass filter the data
-    if filter:
-        bold = filter_bold(bold, tr=tr)
+    if band_freq is None:
+        bold = bold
+    elif len(band_freq) == 2:
+        bold = filter_bold(bold, tr=tr, lowcut=band_freq[0], highcut=band_freq[1])
+    else:
+        raise ValueError("Filter must be a tuple of length 2")
     
     # Caculate FC and FCD
     fc = np.corrcoef(bold)
-    fcd = calc_phase_fcd(bold, tr=tr)
+    fcd = calc_phase_fcd(bold, tr=tr, n_avg=10)
 
     return fc, fcd
 

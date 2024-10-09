@@ -24,7 +24,11 @@ def run_model(run, evals, emodes, parc, medmask, args, params, emp_results, B=No
     bold_model = reduce_by_labels(bold_model, parc[medmask], axis=1)
     
     # Compute model FC and FCD
-    fc_model, fcd_model = calc_fc_fcd(bold_model, tr=0.72, filter=False)
+    fc_model, fcd_model = calc_fc_fcd(
+        bold_model, 
+        tr=0.72, 
+        band_freq=(args.band_freq[0], args.band_freq[1])
+    )
     model_results = {"fc": fc_model, "fcd": fcd_model}
 
     # Evaluate model
@@ -67,8 +71,8 @@ def training_job(surf, hmap, parc, medmask, params, args, emp_results):
 
 def main():
     parser = argparse.ArgumentParser(description="Model resting-state fMRI BOLD data and evaluate against empirical data.")
-    parser.add_argument("--hmap_label", type=str, default=None, help="The label of the heterogeneity map. Defaults to None (indicating homogeneity)")
     parser.add_argument("--id", type=int, help="The id of the run for saving outputs.")
+    parser.add_argument("--hmap_label", type=str, default=None, help="The label of the heterogeneity map. Defaults to None (indicating homogeneity)")
     parser.add_argument("--scale_method", type=str, default="zscore", help="The scaling method for the heterogeneity map. Defaults to `zscore`.")
     parser.add_argument("--aniso_method", type=str, default="hetero", help="The method to calculate the modes. Defaults to `aniso`.")
     parser.add_argument("--n_runs", type=int, default=5, help="The number of runs to simulate. Defaults to 50.")
@@ -79,6 +83,7 @@ def main():
     parser.add_argument('--alpha', type=float, nargs=3, metavar=('alpha_min', 'alpha_max', 'alpha_step'), help='The alpha_min, alpha_max, and alpha_step values for scaling the heterogeneity map.')
     parser.add_argument("--den", type=str, default="32k", help="The density of the surface. Defaults to `32k`.")
     parser.add_argument("--parc", type=str, default="hcpmmp1", help="The parcellation to use to downsample the BOLD data.")
+    parser.add_argument("--band_freq", type=float, nargs=2, default=[0.04, 0.07], metavar=('low', 'high'), help="The low and high bandpass frequencies for filtering the BOLD data. Defaults to [0.04, 0.07].")
     args = parser.parse_args()
 
     # Get surface, medial mask and parcellation files
@@ -92,7 +97,7 @@ def main():
         hmap = None
         param_combs = [(0, 28.9, 0.116)]
     else:
-        # If hmap_label is null, load null map
+        # If hmap_label is null, load null mapg
         if args.hmap_label[:4] == "null":
             null_id = int(args.hmap_label.split('-')[1])
             hmap = np.load(f"{PROJ_DIR}/data/nulls/data-myelinmap_space-fsLR_den-{args.den}_hemi-L_nmodes-500_nnulls-5000_nulls_resample-True.npy")
