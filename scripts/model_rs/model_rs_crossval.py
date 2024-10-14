@@ -118,9 +118,32 @@ def main():
 
     print(f"Number of parameter combinations: {len(param_combs)}")
 
-    parc_file = f"{PROJ_DIR}/data/parcellations/Q1-Q6_RelatedParcellation210.L.CorticalAreas_dil_Colors.{args.den}_fs_LR.label.gii"
-    parc = nib.load(parc_file).darrays[0].data.astype(int)
+    # Load parcellation
+    try:
+        parc_file = f"{PROJ_DIR}/data/parcellations/parc-{args.parc}_space-fsLR_den-{args.den}_hemi-L.label.gii"
+        parc = nib.load(parc_file).darrays[0].data.astype(int)
+    except:
+        raise ValueError(f"Parcellation '{args.parc}' with den '{args.den}' not found.")
     medmask = np.where(parc != 0, True, False)
+
+    bold_data = h5py.File(f"{PROJ_DIR}/data/empirical/HCP_unrelated-445_rfMRI_hemi-L_nsubj-{args.n_subjs}_parc-{args.parc}_hemi-L_BOLD.hdf5", 'r')
+    bold_emp = bold_data['bold']
+    subj_ids = bold_data['subj_ids']
+    _, _, nsubjs = np.shape(bold_emp)
+
+    # Parallelize the calculation of FC and FCD
+    print("Calculating empirical FC and FCD...")
+    results = Parallel(n_jobs=args.n_jobs, verbose=1)(
+        delayed(calc_fc_fcd)(
+            bold=bold_emp[:, :, subj], 
+            tr=0.72, 
+            band_freq=(args.band_freq[0], args.band_freq[1])
+        )
+        for subj in range(nsubjs)
+    )
+    fc_emp_all, fcd_emp_all = zip(*results)
+    fc_emp_all = np.dstack(fc_emp_all)
+    fcd_emp_all = np.array(fcd_emp_all)
 
     # Initialise output arrays
     best_combs = []
@@ -144,21 +167,17 @@ def main():
         print(f"\n==========\nSplit {i+1}/{args.n_splits}\n==========")
 
         # Select train and test bold data
-        emp_file = f"{PROJ_DIR}/data/empirical/HCP_unrelated-445_rfMRI_hemi-L_nsubj-{args.n_subjs}_parc-glasser360_FC_FCD.hdf5"
-        with h5py.File(emp_file, "r") as f:
-            # Load empirical FC and FCD
-            # TODO: make this generalizable to different parcellations (parc_name = os.path.basename(args.parc_lh).split('_')[0])
-            fc_emp_train = np.mean(f["fc_matrices"][:, :, train_index], axis=2)
-            fc_emp_test = np.mean(f["fc_matrices"][:, :, test_index], axis=2)
-            fcd_emp_train = f["fcd_distributions"][train_index, :]
-            fcd_emp_test = f["fcd_distributions"][test_index, :]
+        fc_emp_train = np.mean(fc_emp_all[:, :, train_index], axis=2)
+        fc_emp_test = np.mean(fc_emp_all[:, :, test_index], axis=2)
+        fcd_emp_train = fcd_emp_all[train_index, :]
+        fcd_emp_test = fcd_emp_all[test_index, :]
 
-            # Get subject ids
-            train_subjs_split.append(f["subj_ids"][train_index])
-            test_subjs_split.append(f["subj_ids"][test_index])
+        # Get subject ids
+        train_subjs_split.append(subj_ids[train_index])
+        test_subjs_split.append(subj_ids[test_index])
 
         if args.hmap_label is not None:
-            print(f"\nTraining...\n=====================")
+            print(f"\nTraining...\n=============")
             
             results_train = Parallel(n_jobs=args.n_jobs, verbose=1)(
                 delayed(training_job)(

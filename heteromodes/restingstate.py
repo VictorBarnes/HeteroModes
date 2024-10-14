@@ -124,12 +124,12 @@ def calc_fc_fcd(bold, tr, band_freq=(0.04, 0.07)):
     # Ensure data is standardised
     if not np.isclose(np.mean(bold, axis=1), 0).all() or not np.isclose(np.std(bold, axis=1), 1.0).all():
         scaler = StandardScaler()
-        bold_s = scaler.fit_transform(bold.T).T
+        bold = scaler.fit_transform(bold.T).T
 
     # Caculate FC
-    fc = np.corrcoef(bold_s)
+    fc = np.corrcoef(bold)
     # Calculate FCD
-    fcd = calc_phase_fcd(bold_s, tr=tr, lowcut=band_freq[0], highcut=band_freq[1])
+    fcd = calc_phase_fcd(bold, tr=tr, lowcut=band_freq[0], highcut=band_freq[1])
 
     return fc, fcd
 
