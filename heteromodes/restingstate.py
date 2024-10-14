@@ -65,7 +65,7 @@ def filter_bold(bold, tr, lowcut=0.04, highcut=0.07):
 
     return bold_filtered
 
-def calc_phase_fcd(bold, tr=0.72, n_avg=3):
+def calc_phase_fcd(bold, tr=0.72, lowcut=0.04, highcut=0.07, n_avg=3):
     """Calculate phase-based functional connectivity dynamics (phFCD).
 
     This function calculates the phase-based functional connectivity dynamics (phFCD) 
@@ -89,7 +89,7 @@ def calc_phase_fcd(bold, tr=0.72, n_avg=3):
 
     n_regions, t = np.shape(bold)  
     # Bandpass filter the BOLD signal
-    bold_filtered = filter_bold(bold, tr=tr)
+    bold_filtered = filter_bold(bold, tr=tr, lowcut=lowcut, highcut=highcut)
     # Calculate phase for each region
     phase_bold = np.angle(hilbert(bold_filtered))
 
@@ -124,18 +124,12 @@ def calc_fc_fcd(bold, tr, band_freq=(0.04, 0.07)):
     # Ensure data is standardised
     if not np.isclose(np.mean(bold, axis=1), 0).all() or not np.isclose(np.std(bold, axis=1), 1.0).all():
         scaler = StandardScaler()
-        bold = scaler.fit_transform(bold.T).T
-    # Bandpass filter the data
-    if band_freq is None:
-        bold = bold
-    elif len(band_freq) == 2:
-        bold = filter_bold(bold, tr=tr, lowcut=band_freq[0], highcut=band_freq[1])
-    else:
-        raise ValueError("Filter must be a tuple of length 2")
-    
-    # Caculate FC and FCD
-    fc = np.corrcoef(bold)
-    fcd = calc_phase_fcd(bold, tr=tr)
+        bold_s = scaler.fit_transform(bold.T).T
+
+    # Caculate FC
+    fc = np.corrcoef(bold_s)
+    # Calculate FCD
+    fcd = calc_phase_fcd(bold_s, tr=tr, lowcut=band_freq[0], highcut=band_freq[1])
 
     return fc, fcd
 
