@@ -1,13 +1,19 @@
 import os
 import numpy as np
+import nibabel as nib
 from dotenv import load_dotenv
 
 load_dotenv()
-DESNITIES = {"4k": 3619, "32k": 29696}  # Number of cortical vertices
+PROJ_DIR = os.getenv("PROJ_DIR")
 
-nruns = 50
 den = "4k"
-nverts = DESNITIES[den]
+parc_name = "schaefer400"
+parc_file = f"{PROJ_DIR}/data/parcellations/parc-{parc_name}_space-fsLR_den-{den}_hemi-L.label.gii"
+parc = nib.load(parc_file).darrays[0].data.astype(int)
+medmask = np.where(parc != 0, True, False)
+
+nruns = 5
+nverts = np.sum(medmask)
 
 dt = 0.09
 tmax = 50 + 1199 * 0.72
@@ -16,7 +22,7 @@ n_timepoints = len(t)
 
 for i in range(nruns):
     print(f"Generating external input {i}. Shape: {nverts} x {n_timepoints}")
-    file = f"{os.getenv('PROJ_DIR')}/data/resting_state/extInput_den-{den}_randseed-{i}.npy"
+    file = f"{PROJ_DIR}/data/resting_state/extInput_parc-{parc_name}_den-{den}_hemi-L_randseed-{i}.npy"
 
     np.random.seed(i)
     ext_input = np.random.randn(nverts, n_timepoints)

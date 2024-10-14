@@ -18,7 +18,7 @@ PROJ_DIR = os.getenv("PROJ_DIR")
 
 def run_model(run, evals, emodes, parc, medmask, args, params, emp_results, B=None, return_all=False):
     # Load external input, run model and parcellate
-    ext_input = np.load(f"{PROJ_DIR}/data/resting_state/extInput_den-{args.den}_randseed-{run}.npy")
+    ext_input = np.load(f"{PROJ_DIR}/data/resting_state/extInput_parc-{args.parc}_den-{args.den}_hemi-L_randseed-{run}.npy")
     bold_model = simulate_bold(evals, emodes, ext_input, solver_method='Fourier', 
                                eig_method='orthonormal', r=params[1], gamma=params[2], B=B)
     bold_model = reduce_by_labels(bold_model, parc[medmask], axis=1)
