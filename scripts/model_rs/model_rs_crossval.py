@@ -84,6 +84,7 @@ def main():
     parser.add_argument("--den", type=str, default="32k", help="The density of the surface. Defaults to `32k`.")
     parser.add_argument("--parc", type=str, default="hcpmmp1", help="The parcellation to use to downsample the BOLD data.")
     parser.add_argument("--band_freq", type=float, nargs=2, default=[0.04, 0.07], metavar=('low', 'high'), help="The low and high bandpass frequencies for filtering the BOLD data. Defaults to [0.04, 0.07].")
+    parser.add_argument("--metrics", type=str, nargs='+', default=["edge_fc", "node_fc", "fcd"], help="The metrics to use for evaluation. Defaults to ['edge_fc', 'node_fc', 'fcd']")
     args = parser.parse_args()
 
     # Get surface, medial mask and parcellation files
@@ -151,7 +152,7 @@ def main():
     edge_fc_train = np.empty((args.n_splits, len(param_combs), args.n_runs))
     node_fc_train = np.empty((args.n_splits, len(param_combs), args.n_runs))
     fcd_train = np.empty((args.n_splits, len(param_combs), args.n_runs))
-    combined_metric_train = np.empty((args.n_splits, len(param_combs), args.n_runs))
+    combined_train = np.empty((args.n_splits, len(param_combs), args.n_runs))
     train_subjs_split = []
 
     edge_fc_test = np.empty((args.n_splits, args.n_runs))
@@ -159,7 +160,7 @@ def main():
     fcd_test = np.empty((args.n_splits, args.n_runs))
     fc_test = []
     fcd_dist_test = []
-    combined_metric_test = np.empty((args.n_splits, args.n_runs))
+    combined_test = np.empty((args.n_splits, args.n_runs))
     test_subjs_split = []
     
     kf = KFold(n_splits=args.n_splits, shuffle=False)
@@ -192,21 +193,25 @@ def main():
                 for params in param_combs
             )
             edge_fc_train[i, :, :], node_fc_train[i, :, :], fcd_train[i, :, :] = zip(*results_train)
-            combined_metric_train[i, :, :] = (
-                np.array(edge_fc_train[i, :, :]) + 
-                np.array(node_fc_train[i, :, :]) + 
-                (1 - np.array(fcd_train[i, :, :]))
-            )
+
+            # Calculate combined metric
+            combined_train = np.empty((args.n_splits, len(param_combs), args.n_runs))
+            if "edge_fc" in args.metrics:
+                combined_train += np.array(edge_fc_train[i, :, :])
+            if "node_fc" in args.metrics:
+                combined_train += np.array(node_fc_train[i, :, :])
+            if "fcd" in args.metrics:
+                combined_train += 1 - np.array(fcd_train[i, :, :])
 
             # Get best training results (average across runs)
-            best_combs_ind = np.argmax(np.mean(combined_metric_train[i, :, :], axis=1))
+            best_combs_ind = np.argmax(np.mean(combined_train[i, :, :], axis=1))
             best_alpha, best_r, best_gamma = param_combs[best_combs_ind]
 
             print("\nTraining results:\n-----------------")
             print(f"    Best alpha: {best_alpha:.3g}")
             print(f"    Best r: {best_r:.3g}")
             print(f"    Best gamma: {best_gamma:.3g}")
-            print(f"    Best combined metric: {np.max(np.mean(combined_metric_train[i, :, :], axis=1)):.4g}")
+            print(f"    Best combined metric: {np.max(np.mean(combined_train[i, :, :], axis=1)):.4g}")
             print(f"    Best edge-level FC: {np.mean(edge_fc_train[i, best_combs_ind, :]):.3g}")
             print(f"    Best node-level FC: {np.mean(node_fc_train[i, best_combs_ind, :]):.3g}")
             print(f"    Best FCD: {np.mean(fcd_train[i, best_combs_ind, :]):.3g}")
@@ -244,14 +249,18 @@ def main():
         edge_fc_test[i, :], node_fc_test[i, :], fcd_test[i, :], fcs, fcd_dists = zip(*results_test)
         fc_test.append(fcs)
         fcd_dist_test.append(fcd_dists)
-        combined_metric_test[i, :] = (
-            np.array(edge_fc_test[i, :]) + 
-            np.array(node_fc_test[i, :]) + 
-            (1 - np.array(fcd_test[i, :]))
-        )
+
+        # Calculate combined metric
+        combined_test = np.empty((args.n_splits, args.n_runs))
+        if "edge_fc" in args.metrics:
+            combined_test += np.array(edge_fc_test[i, :])
+        if "node_fc" in args.metrics:
+            combined_test += np.array(node_fc_test[i, :])
+        if "fcd" in args.metrics:
+            combined_test += 1 - np.array(fcd_test[i, :])
 
         print(f"\nTest results:\n--------------")
-        print(f"    Combined metric: {np.mean(combined_metric_test[i, :]):.4g}")
+        print(f"    Combined metric: {np.mean(combined_test[i, :]):.4g}")
         print(f"    Edge-level FC: {np.mean(edge_fc_test[i, :]):.3g}")
         print(f"    Node-level FC: {np.mean(node_fc_test[i, :]):.3g}")
         print(f"    FCD: {np.mean(fcd_test[i, :]):.3g}")
@@ -260,7 +269,7 @@ def main():
     print(f"Best alpha: {np.mean(best_combs, axis=0)[0]}")
     print(f"Best r: {np.mean(best_combs, axis=0)[1]}")
     print(f"Best gamma: {np.mean(best_combs, axis=0)[2]}")
-    print(f"Best combined metric: {np.max(np.mean(combined_metric_test, axis=1)):.4g}") 
+    print(f"Best combined metric: {np.max(np.mean(combined_test, axis=1)):.4g}") 
     print(f"Best edge-level FC: {np.mean(edge_fc_test):.3g}")
     print(f"Best node-level FC: {np.mean(node_fc_test):.3g}")
     print(f"Best FCD: {np.mean(fcd_test):.3g}")
@@ -292,17 +301,20 @@ def main():
         f.create_dataset('edge_fc_train', data=edge_fc_train)
         f.create_dataset('node_fc_train', data=node_fc_train)
         f.create_dataset('fcd_train', data=fcd_train)
-        f.create_dataset('combined_metric_train', data=combined_metric_train)
+        f.create_dataset('combined_train', data=combined_train)
 
         f.create_dataset('edge_fc_test', data=edge_fc_test)
         f.create_dataset('node_fc_test', data=node_fc_test)
         f.create_dataset('fcd_test', data=fcd_test)
-        f.create_dataset('combined_metric_test', data=combined_metric_test)
+        f.create_dataset('combined_test', data=combined_test)
         f.create_dataset('fc_test', data=np.dstack(fc_test))
         f.create_dataset('fcd_dist_test', data=np.vstack(fcd_dist_test).T)
 
         f.create_dataset('combs', data=param_combs)
         f.create_dataset('best_combs', data=best_combs)
+        f.create_dataset('best_alpha', data=np.mean(best_combs, axis=0)[0])
+        f.create_dataset('best_r', data=np.mean(best_combs, axis=0)[1])
+        f.create_dataset('best_gamma', data=np.mean(best_combs, axis=0)[2])
 
         # Pad train_subjs_split and test_subjs_split with -1 to have the same length
         f.create_dataset('train_subjs_split', data=pad_sequences(train_subjs_split))
