@@ -152,7 +152,7 @@ def main():
     edge_fc_train = np.empty((args.n_splits, len(param_combs), args.n_runs))
     node_fc_train = np.empty((args.n_splits, len(param_combs), args.n_runs))
     fcd_train = np.empty((args.n_splits, len(param_combs), args.n_runs))
-    combined_train = np.empty((args.n_splits, len(param_combs), args.n_runs))
+    combined_train = np.zeros((args.n_splits, len(param_combs), args.n_runs))
     train_subjs_split = []
 
     edge_fc_test = np.empty((args.n_splits, args.n_runs))
@@ -160,7 +160,7 @@ def main():
     fcd_test = np.empty((args.n_splits, args.n_runs))
     fc_test = []
     fcd_dist_test = []
-    combined_test = np.empty((args.n_splits, args.n_runs))
+    combined_test = np.zeros((args.n_splits, args.n_runs))
     test_subjs_split = []
     
     kf = KFold(n_splits=args.n_splits, shuffle=False)
@@ -195,13 +195,12 @@ def main():
             edge_fc_train[i, :, :], node_fc_train[i, :, :], fcd_train[i, :, :] = zip(*results_train)
 
             # Calculate combined metric
-            combined_train = np.empty((args.n_splits, len(param_combs), args.n_runs))
             if "edge_fc" in args.metrics:
-                combined_train += np.array(edge_fc_train[i, :, :])
+                combined_train[i, :, :] += np.array(edge_fc_train[i, :, :])
             if "node_fc" in args.metrics:
-                combined_train += np.array(node_fc_train[i, :, :])
+                combined_train[i, :, :] += np.array(node_fc_train[i, :, :])
             if "fcd" in args.metrics:
-                combined_train += 1 - np.array(fcd_train[i, :, :])
+                combined_train[i, :, :] += 1 - np.array(fcd_train[i, :, :])
 
             # Get best training results (average across runs)
             best_combs_ind = np.argmax(np.mean(combined_train[i, :, :], axis=1))
@@ -251,13 +250,12 @@ def main():
         fcd_dist_test.append(fcd_dists)
 
         # Calculate combined metric
-        combined_test = np.empty((args.n_splits, args.n_runs))
         if "edge_fc" in args.metrics:
-            combined_test += np.array(edge_fc_test[i, :])
+            combined_test[i, :] += np.array(edge_fc_test[i, :])
         if "node_fc" in args.metrics:
-            combined_test += np.array(node_fc_test[i, :])
+            combined_test[i, :] += np.array(node_fc_test[i, :])
         if "fcd" in args.metrics:
-            combined_test += 1 - np.array(fcd_test[i, :])
+            combined_test[i, :] += 1 - np.array(fcd_test[i, :])
 
         print(f"\nTest results:\n--------------")
         print(f"    Combined metric: {np.mean(combined_test[i, :]):.4g}")
