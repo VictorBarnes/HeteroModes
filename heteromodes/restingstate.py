@@ -95,21 +95,21 @@ def calc_phase_fcd(bold, tr=0.72, lowcut=0.04, highcut=0.07, n_avg=3):
 
     # Remove first 9 and last 9 time points to avoid edge effects from filtering, as the bandpass 
     # filter may introduce distortions near the boundaries of the time series.
-    t_trunc = np.arange(9, t - 9)  
+    t_trunc = np.arange(9, t - 9)
 
     # Calculate synchrony
-    tril_ind = np.tril_indices(n_regions, -1)
     nt = len(t_trunc)
-    synchrony_vec = np.zeros((nt, len(tril_ind[0])))
+    triu_inds = np.triu_indices(n_regions, k=1)
+    synchrony_vecs = np.zeros((nt, len(triu_inds[0])))
     for t_ind, t in enumerate(t_trunc):
-        phase_diff = phase_bold[:, t][:, None] - phase_bold[:, t]
+        phase_diff = np.subtract.outer(phase_bold[:, t], phase_bold[:, t])
         synchrony_mat = np.cos(phase_diff)
-        synchrony_vec[t_ind, :] = synchrony_mat[tril_ind]
+        synchrony_vecs[t_ind, :] = synchrony_mat[triu_inds]
 
     # Pre-calculate phase vectors
-    p_mat = np.zeros((nt - n_avg-1, synchrony_vec.shape[1]))
+    p_mat = np.zeros((nt - n_avg-1, synchrony_vecs.shape[1]))
     for t_ind in range(nt - n_avg-1):
-        p_mat[t_ind, :] = np.mean(synchrony_vec[t_ind : t_ind+n_avg, :], axis=0)
+        p_mat[t_ind, :] = np.mean(synchrony_vecs[t_ind : t_ind+n_avg, :], axis=0)
         p_mat[t_ind, :] = p_mat[t_ind, :] / norm(p_mat[t_ind, :])
 
     # Calculate phase for every time pair
