@@ -11,7 +11,7 @@ from neuromaps.datasets import fetch_atlas
 from brainspace.utils.parcellation import reduce_by_labels
 from heteromodes import HeteroSolver
 from heteromodes.utils import load_hmap, pad_sequences
-from heteromodes.restingstate import simulate_bold, calc_fc_fcd, evaluate_model
+from heteromodes.restingstate import simulate_bold, calc_fc_phase, evaluate_model
 
 load_dotenv()
 PROJ_DIR = os.getenv("PROJ_DIR")
@@ -24,7 +24,7 @@ def run_model(run, evals, emodes, parc, medmask, args, params, emp_results, B=No
     bold_model = reduce_by_labels(bold_model, parc[medmask], axis=1)
     
     # Compute model FC and FCD
-    fc_model, fcd_model = calc_fc_fcd(
+    fc_model, fcd_model = calc_fc_phase(
         bold_model, 
         tr=0.72, 
         band_freq=(args.band_freq[0], args.band_freq[1])
@@ -55,14 +55,14 @@ def training_job(surf, hmap, parc, medmask, params, args, emp_results):
     edge_fcs, node_fcs, fcds = np.empty(args.n_runs), np.empty(args.n_runs), np.empty(args.n_runs)
     for run in range(args.n_runs):
         edge_fcs[run], node_fcs[run], fcds[run] = run_model(
-            run=run, 
-            evals=evals, 
-            emodes=emodes, 
-            parc=parc, 
-            medmask=medmask, 
-            args=args, 
-            params=params, 
-            emp_results=emp_results, 
+            run=run,
+            evals=evals,
+            emodes=emodes,
+            parc=parc,
+            medmask=medmask,
+            args=args,
+            params=params,
+            emp_results=emp_results,
             B=solver.mass,
             return_all=False
         )
@@ -135,16 +135,16 @@ def main():
     # Parallelize the calculation of FC and FCD
     print("Calculating empirical FC and FCD...")
     results = Parallel(n_jobs=args.n_jobs, verbose=1)(
-        delayed(calc_fc_fcd)(
+        delayed(calc_fc_phase)(
             bold=bold_emp[:, :, subj], 
             tr=0.72, 
             band_freq=(args.band_freq[0], args.band_freq[1])
         )
         for subj in range(nsubjs)
     )
-    fc_emp_all, fcd_emp_all = zip(*results)
+    fc_emp_all, phase_emp_all = zip(*results)
     fc_emp_all = np.dstack(fc_emp_all)
-    fcd_emp_all = np.array(fcd_emp_all)
+    phase_emp_all = np.dstack(phase_emp_all)
 
     # Initialise output arrays
     best_combs = []
@@ -170,8 +170,8 @@ def main():
         # Select train and test bold data
         fc_emp_train = np.mean(fc_emp_all[:, :, train_index], axis=2)
         fc_emp_test = np.mean(fc_emp_all[:, :, test_index], axis=2)
-        fcd_emp_train = fcd_emp_all[train_index, :]
-        fcd_emp_test = fcd_emp_all[test_index, :]
+        phase_emp_train = phase_emp_all[:, :, train_index]
+        phase_emp_test = phase_emp_all[:, :, test_index]
 
         # Get subject ids
         train_subjs_split.append(subj_ids[train_index])
@@ -188,20 +188,19 @@ def main():
                     medmask=medmask,
                     params=params,
                     args=args,
-                    emp_results={"fc": fc_emp_train, "fcd": fcd_emp_train},
+                    emp_results={"fc": fc_emp_train, "fcd": phase_emp_train},
                 )
                 for params in param_combs
             )
             edge_fc_train[i, :, :], node_fc_train[i, :, :], fcd_train[i, :, :] = zip(*results_train)
 
             # Calculate combined metric
-            combined_train = np.empty((args.n_splits, len(param_combs), args.n_runs))
             if "edge_fc" in args.metrics:
-                combined_train += np.array(edge_fc_train[i, :, :])
+                combined_train[i, :, :] += np.array(edge_fc_train[i, :, :])
             if "node_fc" in args.metrics:
-                combined_train += np.array(node_fc_train[i, :, :])
+                combined_train[i, :, :] += np.array(node_fc_train[i, :, :])
             if "fcd" in args.metrics:
-                combined_train += 1 - np.array(fcd_train[i, :, :])
+                combined_train[i, :, :] += np.array(fcd_train[i, :, :])
 
             # Get best training results (average across runs)
             best_combs_ind = np.argmax(np.mean(combined_train[i, :, :], axis=1))
@@ -241,7 +240,7 @@ def main():
                 medmask=medmask, 
                 args=args,
                 params=(best_alpha, best_r, best_gamma),
-                emp_results={"fc": fc_emp_test, "fcd": fcd_emp_test},
+                emp_results={"fc": fc_emp_test, "fcd": phase_emp_test},
                 B=solver.mass,
                 return_all=True)
             for run in range(args.n_runs)
@@ -251,13 +250,12 @@ def main():
         fcd_dist_test.append(fcd_dists)
 
         # Calculate combined metric
-        combined_test = np.empty((args.n_splits, args.n_runs))
         if "edge_fc" in args.metrics:
-            combined_test += np.array(edge_fc_test[i, :])
+            combined_test[i, :] += np.array(edge_fc_test[i, :])
         if "node_fc" in args.metrics:
-            combined_test += np.array(node_fc_test[i, :])
+            combined_test[i, :] += np.array(node_fc_test[i, :])
         if "fcd" in args.metrics:
-            combined_test += 1 - np.array(fcd_test[i, :])
+            combined_test[i, :] += np.array(fcd_test[i, :])
 
         print(f"\nTest results:\n--------------")
         print(f"    Combined metric: {np.mean(combined_test[i, :]):.4g}")

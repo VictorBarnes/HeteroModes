@@ -2,6 +2,7 @@ import numpy as np
 from scipy.stats import ks_2samp
 from scipy.linalg import norm
 from scipy.signal import butter, filtfilt, detrend, hilbert
+from scipy.optimize import linear_sum_assignment
 from sklearn.preprocessing import StandardScaler
 from heteromodes.models import WaveModel, BalloonModel
 
@@ -133,6 +134,29 @@ def calc_fc_fcd(bold, tr, band_freq=(0.04, 0.07)):
 
     return fc, fcd
 
+def calc_fc_phase(bold, tr, band_freq=(0.04, 0.07)):
+    # Ensure data is standardised
+    if not np.isclose(np.mean(bold, axis=1), 0).all() or not np.isclose(np.std(bold, axis=1), 1.0).all():
+        scaler = StandardScaler()
+        bold = scaler.fit_transform(bold.T).T
+
+    _, t = np.shape(bold)  
+
+    # Caculate FC
+    fc = np.corrcoef(bold)
+
+    # Bandpass filter the BOLD signal
+    bold_filtered = filter_bold(bold, tr=tr, lowcut=band_freq[0], highcut=band_freq[1])
+    # Calculate instantaneous phase for each region
+    phase_bold = np.angle(hilbert(bold_filtered))
+
+    # Remove first 9 and last 9 time points to avoid edge effects from filtering, as the bandpass 
+    # filter may introduce distortions near the boundaries of the time series.
+    t_trunc = np.arange(9, t - 9) 
+    phase_bold = phase_bold[:, t_trunc] 
+
+    return fc, phase_bold
+
 def evaluate_model(empirical, model):
     """
     Evaluate accuracy of model by calculating functional connectivity metrics on BOLD data.
@@ -144,8 +168,8 @@ def evaluate_model(empirical, model):
 
     fc_emp = empirical["fc"]
     fc_model = model["fc"]
-    fcd_emp = empirical["fcd"]
-    fcd_model = model["fcd"]
+    phase_emp = empirical["fcd"]
+    phase_model = model["fcd"]
 
     if np.shape(fc_emp)[0] != np.shape(fc_model)[0]:
         raise ValueError("Empirical and model data do not have the same number of regions")
@@ -164,7 +188,17 @@ def evaluate_model(empirical, model):
     node_fc = np.corrcoef(np.nanmean(np.arctanh(fc_model_run_nandiag), axis=1), 
                           np.nanmean(np.arctanh(fc_emp_nandiag), axis=1))[0, 1]
 
-    # Calculate FCD of model BOLD data
-    fcd_ks = ks_2samp(np.hstack(fcd_emp), np.hstack(fcd_model))[0]
+    # Calculate spatial FCD as the cosine similarity between the empirical and model FCD phase matrices
+    fcds = np.zeros(np.shape(phase_emp)[2])
+    for i in range(np.shape(phase_emp)[2]):
+        norm_emp = phase_emp[:, :, i] / np.linalg.norm(phase_emp[:, :, i], axis=0, keepdims=True)
+        norm_model = phase_model / np.linalg.norm(phase_model, axis=0, keepdims=True)
+        phase_similarity = np.dot(norm_emp.T, norm_model)
 
-    return edge_fc, node_fc, fcd_ks
+        # Find the optimal assignment between each empirical timepoint and each model timepoint
+        row_indices, col_indices = linear_sum_assignment(-phase_similarity)
+        # Extract the mean of the optimal assignments
+        fcds[i] = np.mean(phase_similarity[row_indices, col_indices])
+    fcd = np.mean(fcds)
+
+    return edge_fc, node_fc, fcd
