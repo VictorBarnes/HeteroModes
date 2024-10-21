@@ -189,10 +189,10 @@ def evaluate_model(empirical, model):
                           np.nanmean(np.arctanh(fc_emp_nandiag), axis=1))[0, 1]
 
     # Calculate spatial FCD as the cosine similarity between the empirical and model FCD phase matrices
+    norm_model = phase_model / np.linalg.norm(phase_model, axis=0, keepdims=True)
     fcds = np.zeros(np.shape(phase_emp)[2])
     for i in range(np.shape(phase_emp)[2]):
         norm_emp = phase_emp[:, :, i] / np.linalg.norm(phase_emp[:, :, i], axis=0, keepdims=True)
-        norm_model = phase_model / np.linalg.norm(phase_model, axis=0, keepdims=True)
         phase_similarity = np.dot(norm_emp.T, norm_model)
 
         # Find the optimal assignment between each empirical timepoint and each model timepoint
