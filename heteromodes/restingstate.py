@@ -65,7 +65,7 @@ def filter_bold(bold, tr, lowcut=0.04, highcut=0.07):
 
     return bold_filtered
 
-def calc_phase_fcd(bold, tr=0.72, lowcut=0.04, highcut=0.07, n_avg=3):
+def calc_fcd(bold, tr=0.72, lowcut=0.04, highcut=0.07, n_avg=3):
     """Calculate phase-based functional connectivity dynamics (phFCD).
 
     This function calculates the phase-based functional connectivity dynamics (phFCD) 
@@ -83,6 +83,7 @@ def calc_phase_fcd(bold, tr=0.72, lowcut=0.04, highcut=0.07, n_avg=3):
     numpy.ndarray
         The phFCD matrix of shape (M,), where M is the number of unique pairs of regions.
     """
+
     # Ensure n_avg > 0
     if n_avg < 1:
         raise ValueError("n_avg must be greater than 0")
@@ -119,19 +120,6 @@ def calc_phase_fcd(bold, tr=0.72, lowcut=0.04, highcut=0.07, n_avg=3):
     fcd = fcd_mat[triu_ind]
 
     return fcd
-
-def calc_fc_fcd(bold, tr, band_freq=(0.04, 0.07)):
-    # Ensure data is standardised
-    if not np.isclose(np.mean(bold, axis=1), 0).all() or not np.isclose(np.std(bold, axis=1), 1.0).all():
-        scaler = StandardScaler()
-        bold = scaler.fit_transform(bold.T).T
-
-    # Caculate FC
-    fc = np.corrcoef(bold)
-    # Calculate FCD
-    fcd = calc_phase_fcd(bold, tr=tr, lowcut=band_freq[0], highcut=band_freq[1])
-
-    return fc, fcd
 
 def evaluate_model(empirical, model):
     """

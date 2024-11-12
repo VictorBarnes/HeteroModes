@@ -7,27 +7,50 @@ import nibabel as nib
 from joblib import Parallel, delayed
 from dotenv import load_dotenv
 from sklearn.model_selection import KFold
+from sklearn.preprocessing import StandardScaler
 from neuromaps.datasets import fetch_atlas
 from brainspace.utils.parcellation import reduce_by_labels
 from heteromodes import HeteroSolver
 from heteromodes.utils import load_hmap, pad_sequences
-from heteromodes.restingstate import simulate_bold, calc_fc_fcd, evaluate_model
+from heteromodes.restingstate import simulate_bold, calc_fcd, evaluate_model
 
 load_dotenv()
 PROJ_DIR = os.getenv("PROJ_DIR")
+
+
+def calc_fc_and_fcd(bold, tr, band_freq, parc=None, parc_fcd=True):
+    # Z-score bold data
+    scaler = StandardScaler()
+    bold = scaler.fit_transform(bold.T).T
+
+    # Compute FC on parcellated data
+    bold_parc = reduce_by_labels(bold, parc, axis=1)
+    fc = np.corrcoef(bold_parc)
+
+    # Compute FCD on vertex data
+    if parc_fcd:
+        fcd = calc_fcd(bold_parc, tr=tr, lowcut=band_freq[0], highcut=band_freq[1])
+    else:
+        fcd = calc_fcd(bold, tr=tr, lowcut=band_freq[0], highcut=band_freq[1])
+
+    return fc, fcd
 
 def run_model(run, evals, emodes, parc, medmask, args, params, emp_results, B=None, return_all=False):
     # Load external input, run model and parcellate
     ext_input = np.load(f"{PROJ_DIR}/data/resting_state/extInput_parc-{args.parc}_den-{args.den}_hemi-L_randseed-{run}.npy")
     bold_model = simulate_bold(evals, emodes, ext_input, solver_method='Fourier', 
                                eig_method='orthonormal', r=params[1], gamma=params[2], B=B)
-    bold_model = reduce_by_labels(bold_model, parc[medmask], axis=1)
+
+    # Z-score bold data
+    scaler = StandardScaler()
+    bold_model = scaler.fit_transform(bold_model.T).T
     
     # Compute model FC and FCD
-    fc_model, fcd_model = calc_fc_fcd(
-        bold_model, 
+    fc_model, fcd_model = calc_fc_and_fcd(
+        bold=bold_model, 
         tr=0.72, 
-        band_freq=(args.band_freq[0], args.band_freq[1])
+        band_freq=(args.band_freq[0], args.band_freq[1]),
+        parc=parc[medmask]
     )
     model_results = {"fc": fc_model, "fcd": fcd_model}
 
@@ -127,18 +150,19 @@ def main():
         raise ValueError(f"Parcellation '{args.parc}' with den '{args.den}' not found.")
     medmask = np.where(parc != 0, True, False)
 
-    bold_data = h5py.File(f"{PROJ_DIR}/data/empirical/HCP_unrelated-445_rfMRI_hemi-L_nsubj-{args.n_subjs}_parc-{args.parc}_hemi-L_BOLD.hdf5", 'r')
-    bold_emp = bold_data['bold']
+    bold_data = h5py.File(f"{PROJ_DIR}/data/empirical/HCP_unrelated-445_rfMRI_hemi-L_nsubj-{args.n_subjs}_parc-None_fsLR{args.den}_hemi-L_BOLD.hdf5", 'r')
+    bold_emp = bold_data['bold'][medmask, :, :]
     subj_ids = bold_data['subj_ids']
     _, _, nsubjs = np.shape(bold_emp)
 
     # Parallelize the calculation of FC and FCD
     print("Calculating empirical FC and FCD...")
     results = Parallel(n_jobs=args.n_jobs, verbose=1)(
-        delayed(calc_fc_fcd)(
+        delayed(calc_fc_and_fcd)(
             bold=bold_emp[:, :, subj], 
             tr=0.72, 
-            band_freq=(args.band_freq[0], args.band_freq[1])
+            band_freq=(args.band_freq[0], args.band_freq[1]),
+            parc=parc[medmask]
         )
         for subj in range(nsubjs)
     )
