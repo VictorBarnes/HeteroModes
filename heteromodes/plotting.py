@@ -5,7 +5,8 @@ import tempfile
 from surfplot import Plot
 
 def plot_brain(surf, data, labels=None, layout="row", views=["lateral", "medial"], clim_q=None, 
-               cmap="viridis", cbar=False, cbar_label=None, cbar_kws=None, outline=False, dpi=100):
+               cmap="viridis", cbar=False, cbar_label=None, cbar_kws=None, label_kws=None,
+               outline=False, dpi=100):
     """Plot multiple surfaces with associated data.
 
     Parameters
@@ -35,6 +36,10 @@ def plot_brain(surf, data, labels=None, layout="row", views=["lateral", "medial"
     # Set default colorbar keyword arguments and update with user-specified values
     cbar_kws_default = dict(pad=0.01, fontsize=15, shrink=1, decimals=2)
     cbar_kws_default.update(cbar_kws or {})
+
+    # Set default label keyword arguments and update with user-specified values
+    label_kws_default = dict(fontsize=10)
+    label_kws_default.update(label_kws or {})
 
     # Check if the data is 1D or 2D
     data = np.squeeze(data)
@@ -87,8 +92,9 @@ def plot_brain(surf, data, labels=None, layout="row", views=["lateral", "medial"
             # Plot labels
             if labels is not None:
                 if layout == "row":
-                    ax.set_title(labels[i], pad=0)
+                    ax.set_title(labels[i], pad=0, fontsize=label_kws_default["fontsize"])
                 elif layout == "col":
-                    ax.set_ylabel(labels[i], labelpad=0, rotation=0, ha="right")
+                    ax.set_ylabel(labels[i], labelpad=0, rotation=0, ha="right", 
+                                  fontsize=label_kws_default["fontsize"])
 
     return fig
