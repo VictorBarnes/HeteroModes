@@ -26,7 +26,7 @@ def _check_surf(surf):
 def _check_hmap(surf, hmap):
     """Validate the heterogeneity map and return as a numpy array."""
     if hmap is None:
-        return np.ones(surf.n_points)
+        return np.zeros(surf.n_points)
     elif isinstance(hmap, np.ndarray):
         if len(hmap) != surf.n_points:
             raise ValueError("Heterogeneity map must have the same number of elements as the number of vertices in the surface template")
@@ -73,6 +73,8 @@ class HeteroSolver(Solver):
         mesh = TriaMesh(get_points(surf), get_cells(surf))
 
         # Check and scale heterogeneity map
+        if hmap is None:
+            alpha = 0
         hmap = _check_hmap(surf, hmap)
         rho = scale_hmap(hmap, alpha=alpha)       
 
