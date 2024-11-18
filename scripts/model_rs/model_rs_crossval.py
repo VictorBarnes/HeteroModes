@@ -53,7 +53,7 @@ def run_model(run, evals, emodes, parc, medmask, args, params, B=None):
     return fc_model, phase_model
 
 # TODO: combine params and args into a single object
-def run_and_evaluate(surf, medmask, hmap, parc, params, args, emp_results):
+def run_and_evaluate(surf, medmask, hmap, parc, params, args, emp_results, return_all=False):
     # Calculate modes
     solver = HeteroSolver(
         surf=surf,
@@ -81,9 +81,17 @@ def run_and_evaluate(surf, medmask, hmap, parc, params, args, emp_results):
         )
     model_results = {"fc": fc_model, "phase": phase_model}
 
-    edge_fc_corr, node_fc_corr, phase_corr = evaluate_model(emp_results, model_results)
+    edge_fc_corr, node_fc_corr, phase_corr, phase_map_model = evaluate_model(
+        empirical=emp_results, 
+        model=model_results, 
+        return_all=True
+    )
 
-    return edge_fc_corr, node_fc_corr, phase_corr
+    if return_all:
+        return edge_fc_corr, node_fc_corr, phase_corr, fc_model, phase_map_model
+    else:
+        return edge_fc_corr, node_fc_corr, phase_corr
+
 
 def main():
     parser = argparse.ArgumentParser(description="Model resting-state fMRI BOLD data and evaluate against empirical data.")
@@ -146,7 +154,7 @@ def main():
     bold_data = h5py.File(f"{PROJ_DIR}/data/empirical/HCP_unrelated-445_rfMRI_hemi-L_nsubj-{args.n_subjs}_parc-None_fsLR{args.den}_hemi-L_BOLD.hdf5", 'r')
     bold_emp = bold_data['bold'][medmask, :, :]
     subj_ids = bold_data['subj_ids']
-    nverts, _, nsubjs = np.shape(bold_emp)
+    _, _, nsubjs = np.shape(bold_emp)
 
     # Parallelize the calculation of FC and phase_delay
     print("Calculating empirical FC and Phase Delay...")
@@ -175,9 +183,9 @@ def main():
     node_fc_test = np.empty((args.n_splits))
     phase_test = np.empty((args.n_splits))
     combined_test = np.zeros((args.n_splits))
-    
-    train_subjs_split = []
-    test_subjs_split = []
+
+    fc_matrices, phase_maps = [], []
+    train_subjs_split, test_subjs_split = [], []
     
     kf = KFold(n_splits=args.n_splits, shuffle=False)
     for i, (train_index, test_index) in enumerate(kf.split(np.arange(args.n_subjs))):
@@ -205,6 +213,7 @@ def main():
                     params=params,
                     args=args,
                     emp_results={"fc": fc_emp_train, "phase": phase_emp_train},
+                    return_all=False,
                 )
                 for params in param_combs
             )
@@ -239,15 +248,18 @@ def main():
         # Evaluate on test set
         print(f"\nTesting (alpha = {best_alpha:.1f}, r = {best_r:.1f}, gamma = {best_gamma:.3f})...\n=====================")
         # Run model
-        edge_fc_test[i], node_fc_test[i], phase_test[i] = run_and_evaluate(
+        edge_fc_test[i], node_fc_test[i], phase_test[i], fc, phase_map = run_and_evaluate(
             surf=surf,
             medmask=medmask,
             hmap=hmap,
             parc=parc,
             params=(best_alpha, best_r, best_gamma),
             args=args,
-            emp_results={"fc": fc_emp_test, "phase": phase_emp_test}
+            emp_results={"fc": fc_emp_test, "phase": phase_emp_test},
+            return_all=True
         )
+        fc_matrices.append(fc)
+        phase_maps.append(phase_map)
 
         # Calculate combined metric
         if "edge_fc" in args.metrics:
@@ -311,6 +323,9 @@ def main():
         f.create_dataset('best_alpha', data=np.mean(best_combs, axis=0)[0])
         f.create_dataset('best_r', data=np.mean(best_combs, axis=0)[1])
         f.create_dataset('best_gamma', data=np.mean(best_combs, axis=0)[2])
+
+        f.create_dataset('fc_matrices', data=np.dstack(fc_matrices))
+        f.create_dataset('phase_maps', data=np.vstack(phase_maps).T)
 
         # Pad train_subjs_split and test_subjs_split with -1 to have the same length
         f.create_dataset('train_subjs_split', data=pad_sequences(train_subjs_split))

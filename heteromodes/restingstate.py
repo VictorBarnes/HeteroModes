@@ -242,7 +242,7 @@ def calc_phase_delay_combined(phase, n_components=4):
 
     return combined_phase_map
 
-def evaluate_model(empirical, model):
+def evaluate_model(empirical, model, return_all=False):
     """_summary_
 
     Parameters
@@ -306,4 +306,7 @@ def evaluate_model(empirical, model):
 
     phase_corr = np.corrcoef(phase_emp_combined, phase_model_combined)[0, 1]
 
-    return edge_fc_corr, node_fc_corr, phase_corr
+    if return_all:
+        return edge_fc_corr, node_fc_corr, phase_corr, phase_model_combined
+    else:
+        return edge_fc_corr, node_fc_corr, phase_corr
