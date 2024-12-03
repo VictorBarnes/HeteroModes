@@ -12,7 +12,7 @@ from neuromaps.datasets import fetch_atlas
 from brainspace.utils.parcellation import reduce_by_labels
 from heteromodes import HeteroSolver
 from heteromodes.utils import load_hmap, pad_sequences
-from heteromodes.restingstate import simulate_bold, calc_phase, evaluate_model
+from heteromodes.restingstate import simulate_bold, calc_phase, calc_edge_and_node, calc_phase_delay_combined
 
 load_dotenv()
 PROJ_DIR = os.getenv("PROJ_DIR")
@@ -79,16 +79,27 @@ def run_and_evaluate(surf, medmask, hmap, parc, params, args, emp_results, retur
             params=params, 
             B=solver.mass,
         )
+    # Concatenate subjects/runs
+    phase_model = phase_model.reshape(n_verts, -1)
     model_results = {"fc": fc_model, "phase": phase_model}
 
-    edge_fc_corr, node_fc_corr, phase_corr, phase_map_model = evaluate_model(
+    # Calculate edge and node FC metric
+    edge_fc_corr, node_fc_corr = calc_edge_and_node(
         empirical=emp_results, 
         model=model_results, 
         return_all=True
     )
 
+    # Calculate phase metric
+    phase_emp_combined = calc_phase_delay_combined(emp_results["phase"], n_components=4)
+    phase_model_combined = calc_phase_delay_combined(phase_model, n_components=4)
+    phase_emp_combined = reduce_by_labels(phase_emp_combined, parc[medmask], axis=0)
+    phase_model_combined = reduce_by_labels(phase_model_combined, parc[medmask], axis=0)
+
+    phase_corr = np.corrcoef(phase_emp_combined, phase_model_combined)[0, 1]
+
     if return_all:
-        return edge_fc_corr, node_fc_corr, phase_corr, fc_model, phase_map_model
+        return edge_fc_corr, node_fc_corr, phase_corr, np.mean(fc_model, axis=2), phase_model_combined
     else:
         return edge_fc_corr, node_fc_corr, phase_corr
 
@@ -107,8 +118,8 @@ def main():
     parser.add_argument('--alpha', type=float, nargs=3, metavar=('alpha_min', 'alpha_max', 'alpha_step'), help='The alpha_min, alpha_max, and alpha_step values for scaling the heterogeneity map.')
     parser.add_argument("--den", type=str, default="32k", help="The density of the surface. Defaults to `32k`.")
     parser.add_argument("--parc", type=str, default="hcpmmp1", help="The parcellation to use to downsample the BOLD data.")
-    parser.add_argument("--band_freq", type=float, nargs=2, default=[0.01, 0.1], metavar=('low', 'high'), help="The low and high bandpass frequencies for filtering the BOLD data. Defaults to [0.04, 0.07].")
-    parser.add_argument("--metrics", type=str, nargs='+', default=["edge_fc", "node_fc", "phase_delay"], help="The metrics to use for evaluation. Defaults to ['edge_fc', 'node_fc', 'phase_delay']")
+    parser.add_argument("--band_freq", type=float, nargs=2, default=[0.01, 0.1], metavar=('low', 'high'), help="The low and high bandpass frequencies for filtering the BOLD data. Defaults to [0.01, 0.1].")
+    parser.add_argument("--metrics", type=str, nargs='+', default=["edge_fc", "node_fc", "phase"], help="The metrics to use for evaluation. Defaults to ['edge_fc', 'node_fc', 'phase']")
     args = parser.parse_args()
 
     # Get surface, medial mask and parcellation files
@@ -151,10 +162,11 @@ def main():
         raise ValueError(f"Parcellation '{args.parc}' with den '{args.den}' not found.")
     medmask = np.where(parc != 0, True, False)
 
+    # Load empirical BOLD data
     bold_data = h5py.File(f"{PROJ_DIR}/data/empirical/HCP_unrelated-445_rfMRI_hemi-L_nsubj-{args.n_subjs}_parc-None_fsLR{args.den}_hemi-L_BOLD.hdf5", 'r')
     bold_emp = bold_data['bold'][medmask, :, :]
     subj_ids = bold_data['subj_ids']
-    _, _, nsubjs = np.shape(bold_emp)
+    nverts, _, nsubjs = np.shape(bold_emp)
 
     # Parallelize the calculation of FC and phase_delay
     print("Calculating empirical FC and Phase Delay...")
@@ -194,8 +206,8 @@ def main():
         # Select train and test bold data
         fc_emp_train = np.mean(fc_emp_all[:, :, train_index], axis=2)
         fc_emp_test = np.mean(fc_emp_all[:, :, test_index], axis=2)
-        phase_emp_train = phase_delay_emp_all[:, :, train_index]
-        phase_emp_test = phase_delay_emp_all[:, :, test_index]
+        phase_emp_train = phase_delay_emp_all[:, :, train_index].reshape(nverts, -1)
+        phase_emp_test = phase_delay_emp_all[:, :, test_index].reshape(nverts, -1)
 
         # Get subject ids
         train_subjs_split.append(subj_ids[train_index])
@@ -224,7 +236,7 @@ def main():
                 combined_train[i, :] += np.array(edge_fc_train[i, :])
             if "node_fc" in args.metrics:
                 combined_train[i, :] += np.array(node_fc_train[i, :])
-            if "phase_delay" in args.metrics:
+            if "phase" in args.metrics:
                 combined_train[i, :] += np.array(phase_train[i, :])
 
             # Get best training results (average across runs)
@@ -247,7 +259,7 @@ def main():
         
         # Evaluate on test set
         print(f"\nTesting (alpha = {best_alpha:.1f}, r = {best_r:.1f}, gamma = {best_gamma:.3f})...\n=====================")
-        # Run model
+        # Run model and evaluate
         edge_fc_test[i], node_fc_test[i], phase_test[i], fc, phase_map = run_and_evaluate(
             surf=surf,
             medmask=medmask,
@@ -266,7 +278,7 @@ def main():
             combined_test[i] += np.array(edge_fc_test[i])
         if "node_fc" in args.metrics:
             combined_test[i] += np.array(node_fc_test[i])
-        if "phase_delay" in args.metrics:
+        if "phase" in args.metrics:
             combined_test[i] += np.array(phase_test[i])
 
         print(f"\nTest results:\n--------------")

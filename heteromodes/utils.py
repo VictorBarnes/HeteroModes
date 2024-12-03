@@ -108,7 +108,8 @@ def load_hmap(hmap_label, den="32k"):
         _description_
     """
     hmap_file = list(Path(PROJ_DIR, "data", "heteromaps").glob(f"*desc-{hmap_label}_*den-32k_*.func.gii"))
-    medial = nib.load(fetch_atlas("fsLR", den)["medial"][0]).darrays[0].data.astype(bool)
+    if len(hmap_file) == 0:
+        raise FileNotFoundError(f"No heterogeneity map found for label '{hmap_label}'.")
     
     # Load the heterogeneity map and transform it to the desired density if necessary
     if den == "32k":

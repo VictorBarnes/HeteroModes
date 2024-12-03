@@ -103,8 +103,8 @@ def calc_fcd(bold, tr=0.72, lowcut=0.04, highcut=0.07, n_avg=3):
     t_trunc = np.arange(9, t - 9)
 
     # Calculate synchrony
-    nt = len(t_trunc)
     triu_inds = np.triu_indices(n_regions, k=1)
+    nt = len(t_trunc)
     synchrony_vecs = np.zeros((nt, len(triu_inds[0])))
     for t_ind, t in enumerate(t_trunc):
         phase_diff = np.subtract.outer(phase_bold[:, t], phase_bold[:, t])
@@ -242,7 +242,7 @@ def calc_phase_delay_combined(phase, n_components=4):
 
     return combined_phase_map
 
-def evaluate_model(empirical, model, return_all=False):
+def calc_edge_and_node(empirical, model, return_all=False):
     """_summary_
 
     Parameters
@@ -267,18 +267,10 @@ def evaluate_model(empirical, model, return_all=False):
 
     fc_emp = empirical["fc"]
     fc_model = model["fc"]
-    phase_emp = empirical["phase"]
-    phase_model = model["phase"]
-    nverts, _, nruns = np.shape(phase_model)
-
-    # Concatenate subjects/runs
-    phase_emp = phase_emp.reshape(nverts, -1)
-    phase_model = phase_model.reshape(nverts, -1)
+    nruns = np.shape(fc_model)[2]
 
     if np.shape(fc_emp)[0] != np.shape(fc_model)[0]:
         raise ValueError("Empirical and model FC data do not have the same number of regions")
-    if np.shape(phase_emp)[0] != np.shape(phase_model)[0]:
-        raise ValueError("Empirical and model phase data do not have the same number of vertices")
     
     nparcels = np.shape(fc_emp)[0]
     triu_inds = np.triu_indices(nparcels, k=1)
@@ -300,13 +292,4 @@ def evaluate_model(empirical, model, return_all=False):
     edge_fc_corr = np.mean(edge_fc_corr)
     node_fc_corr = np.mean(node_fc_corr)
 
-    # Calculate phase delay evaluation
-    phase_emp_combined = calc_phase_delay_combined(phase_emp, n_components=4)
-    phase_model_combined = calc_phase_delay_combined(phase_model, n_components=4)
-
-    phase_corr = np.corrcoef(phase_emp_combined, phase_model_combined)[0, 1]
-
-    if return_all:
-        return edge_fc_corr, node_fc_corr, phase_corr, phase_model_combined
-    else:
-        return edge_fc_corr, node_fc_corr, phase_corr
+    return edge_fc_corr, node_fc_corr
