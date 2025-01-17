@@ -21,18 +21,19 @@ PROJ_DIR = os.getenv("PROJ_DIR")
 def calc_fc_and_phase(bold, tr, band_freq, parc=None):
     # Z-score bold data
     scaler = StandardScaler()
-    bold = scaler.fit_transform(bold.T).T
-
-    # Compute FC on parcellated data
-    bold_parc = reduce_by_labels(bold, parc, axis=1)
-    fc = np.corrcoef(bold_parc)
+    bold_z = scaler.fit_transform(bold.T).T
 
     # Compute combined phase delay on vertex data
-    phase = calc_phase(bold, tr=tr, lowcut=band_freq[0], highcut=band_freq[1])
+    phase = calc_phase(bold_z, tr=tr, lowcut=band_freq[0], highcut=band_freq[1])
+
+    # Compute FC on parcellated data
+    if parc is not None:
+        bold_z = reduce_by_labels(bold_z, parc, axis=1)
+    fc = np.corrcoef(bold_z)
 
     return fc, phase
 
-def run_model(run, evals, emodes, parc, medmask, args, params, B=None):
+def run_model(run, evals, emodes, parc, args, params, B=None):
     # Load external input, run model and parcellate
     ext_input = np.load(f"{PROJ_DIR}/data/resting_state/extInput_parc-{args.parc}_den-{args.den}_hemi-L_randseed-{run}.npy")
     bold_model = simulate_bold(evals, emodes, ext_input, solver_method='Fourier', 
@@ -47,7 +48,7 @@ def run_model(run, evals, emodes, parc, medmask, args, params, B=None):
         bold=bold_model, 
         tr=0.72, 
         band_freq=(args.band_freq[0], args.band_freq[1]),
-        parc=parc[medmask]
+        parc=parc
     )
 
     return fc_model, phase_model
@@ -64,17 +65,19 @@ def run_and_evaluate(surf, medmask, hmap, parc, params, args, emp_results, retur
     evals, emodes = solver.solve(n_modes=args.n_modes, fix_mode1=True, standardise=True)
 
     # Run model but only return evaluation metrics
-    n_parcels = len(np.unique(parc[medmask]))
-    fc_model = np.empty((n_parcels, n_parcels, args.n_runs))
-    n_verts = np.shape(emp_results["phase"])[0]
+    if parc is not None:
+        n_regions = len(np.unique(parc))
+    else:
+        n_regions = np.sum(medmask)
+    fc_model = np.empty((n_regions, n_regions, args.n_runs))
+    n_verts = np.sum(medmask)
     phase_model = np.empty((n_verts, 1200, args.n_runs))    # 1200 time points in HCP data
     for run in range(args.n_runs):
         fc_model[:, :, run], phase_model[:, :, run] = run_model(
             run=run, 
             evals=evals, 
             emodes=emodes, 
-            parc=parc, 
-            medmask=medmask, 
+            parc=parc,
             args=args, 
             params=params, 
             B=solver.mass,
@@ -87,14 +90,14 @@ def run_and_evaluate(surf, medmask, hmap, parc, params, args, emp_results, retur
     edge_fc_corr, node_fc_corr = calc_edge_and_node(
         empirical=emp_results, 
         model=model_results, 
-        return_all=True
     )
 
     # Calculate phase metric
     phase_emp_combined = calc_phase_delay_combined(emp_results["phase"], n_components=4)
     phase_model_combined = calc_phase_delay_combined(phase_model, n_components=4)
-    phase_emp_combined = reduce_by_labels(phase_emp_combined, parc[medmask], axis=0)
-    phase_model_combined = reduce_by_labels(phase_model_combined, parc[medmask], axis=0)
+    if parc is not None:
+        phase_emp_combined = reduce_by_labels(phase_emp_combined, parc, axis=0)
+        phase_model_combined = reduce_by_labels(phase_model_combined, parc, axis=0)
 
     phase_corr = np.corrcoef(phase_emp_combined, phase_model_combined)[0, 1]
 
@@ -117,7 +120,7 @@ def main():
     parser.add_argument("--n_jobs", type=int, default=-1, help="The number of CPUs for parallelization. Defaults to -1")
     parser.add_argument('--alpha', type=float, nargs=3, metavar=('alpha_min', 'alpha_max', 'alpha_step'), help='The alpha_min, alpha_max, and alpha_step values for scaling the heterogeneity map.')
     parser.add_argument("--den", type=str, default="32k", help="The density of the surface. Defaults to `32k`.")
-    parser.add_argument("--parc", type=str, default="hcpmmp1", help="The parcellation to use to downsample the BOLD data.")
+    parser.add_argument("--parc", type=str, default=None, help="The parcellation to use to downsample the BOLD data.")
     parser.add_argument("--band_freq", type=float, nargs=2, default=[0.01, 0.1], metavar=('low', 'high'), help="The low and high bandpass frequencies for filtering the BOLD data. Defaults to [0.01, 0.1].")
     parser.add_argument("--metrics", type=str, nargs='+', default=["edge_fc", "node_fc", "phase"], help="The metrics to use for evaluation. Defaults to ['edge_fc', 'node_fc', 'phase']")
     args = parser.parse_args()
@@ -154,18 +157,25 @@ def main():
 
     print(f"Number of parameter combinations: {len(param_combs)}")
 
-    # Load parcellation
-    try:
-        parc_file = f"{PROJ_DIR}/data/parcellations/parc-{args.parc}_space-fsLR_den-{args.den}_hemi-L.label.gii"
-        parc = nib.load(parc_file).darrays[0].data.astype(int)
-    except:
-        raise ValueError(f"Parcellation '{args.parc}' with den '{args.den}' not found.")
-    medmask = np.where(parc != 0, True, False)
-
     # Load empirical BOLD data
     bold_data = h5py.File(f"{PROJ_DIR}/data/empirical/HCP_unrelated-445_rfMRI_hemi-L_nsubj-{args.n_subjs}_parc-None_fsLR{args.den}_hemi-L_BOLD.hdf5", 'r')
-    bold_emp = bold_data['bold'][medmask, :, :]
+    bold_emp = bold_data['bold'][:]
     subj_ids = bold_data['subj_ids']
+    
+    # Load parcellation
+    if args.parc is not None:
+        try:
+            parc_file = f"{PROJ_DIR}/data/parcellations/parc-{args.parc}_space-fsLR_den-{args.den}_hemi-L.label.gii"
+            parc = nib.load(parc_file).darrays[0].data.astype(int)
+        except:
+            raise ValueError(f"Parcellation '{args.parc}' with den '{args.den}' not found.")
+        medmask = np.where(parc != 0, True, False)
+        parc = parc[medmask]
+    else:
+        parc = None
+        medmask = np.where(bold_emp[:, 0, 0] != 0, True, False)
+
+    bold_emp = bold_emp[medmask, :, :]
     nverts, _, nsubjs = np.shape(bold_emp)
 
     # Parallelize the calculation of FC and phase_delay
@@ -175,7 +185,7 @@ def main():
             bold=bold_emp[:, :, subj], 
             tr=0.72, 
             band_freq=(args.band_freq[0], args.band_freq[1]),
-            parc=parc[medmask]
+            parc=parc
         )
         for subj in range(nsubjs)
     )
@@ -214,7 +224,7 @@ def main():
         test_subjs_split.append(subj_ids[test_index])
 
         if args.hmap_label is not None:
-            print(f"\nTraining...\n=============")
+            print(f"\nTraining...\n===========")
             
             results_train = Parallel(n_jobs=args.n_jobs, verbose=1)(
                 delayed(run_and_evaluate)(
@@ -281,7 +291,7 @@ def main():
         if "phase" in args.metrics:
             combined_test[i] += np.array(phase_test[i])
 
-        print(f"\nTest results:\n--------------")
+        print(f"\nTest results:\n-------------")
         print(f"    Combined metric: {combined_test[i]:.4g}")
         print(f"    Edge-level FC: {edge_fc_test[i]:.3g}")
         print(f"    Node-level FC: {node_fc_test[i]:.3g}")

@@ -242,7 +242,7 @@ def calc_phase_delay_combined(phase, n_components=4):
 
     return combined_phase_map
 
-def calc_edge_and_node(empirical, model, return_all=False):
+def calc_edge_and_node(empirical, model):
     """_summary_
 
     Parameters

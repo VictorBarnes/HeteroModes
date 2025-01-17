@@ -152,3 +152,6 @@ def pad_sequences(sequences, val=-1):
     ]
 
     return np.array(padded_sequences)
+
+def unparcellate(data, parc):
+    return np.array([data[x-1] for x in parc if x > 0])
