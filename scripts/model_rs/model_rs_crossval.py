@@ -53,7 +53,6 @@ def run_model(run, evals, emodes, parc, args, params, B=None):
 
     return fc_model, phase_model
 
-# TODO: combine params and args into a single object
 def run_and_evaluate(surf, medmask, hmap, parc, params, args, emp_results, return_all=False):
     # Calculate modes
     solver = HeteroSolver(
@@ -111,8 +110,6 @@ def main():
     parser = argparse.ArgumentParser(description="Model resting-state fMRI BOLD data and evaluate against empirical data.")
     parser.add_argument("--id", type=int, help="The id of the run for saving outputs.")
     parser.add_argument("--hmap_label", type=str, default=None, help="The label of the heterogeneity map. Defaults to None (indicating homogeneity)")
-    parser.add_argument("--scale_method", type=str, default="zscore", help="The scaling method for the heterogeneity map. Defaults to `zscore`.")
-    parser.add_argument("--aniso_method", type=str, default="hetero", help="The method to calculate the modes. Defaults to `aniso`.")
     parser.add_argument("--n_runs", type=int, default=5, help="The number of runs to simulate. Defaults to 50.")
     parser.add_argument("--n_modes", type=int, default=500, help="The number of modes to calculate. Defaults to 500.")
     parser.add_argument("--n_splits", type=int, default=5, help="The number of splits for cross-validation. Defaults to 5.")
