@@ -169,7 +169,7 @@ def main():
         parc = parc[medmask]
     else:
         parc = None
-        medmask = nib.load(fslr['medial'][0]).darrays[0].data.astype(bool)
+        medmask = np.where(bold_emp[:, 0, 0] != 0, True, False)
 
     bold_emp = bold_emp[medmask, :, :]
     nverts, _, nsubjs = np.shape(bold_emp)
