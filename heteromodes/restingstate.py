@@ -233,7 +233,7 @@ def calc_phase(bold, tr=0.72, lowcut=0.01, highcut=0.1):
 
     return np.angle(phase_delay)
 
-def calc_phase_delay_combined(phase, n_components=4):
+def calc_phase_map(phase, n_components=4):
     # Compute SVD
     U, s, _ = fbpca.pca(phase, k=n_components, n_iter=20, l=20)
 
@@ -242,7 +242,7 @@ def calc_phase_delay_combined(phase, n_components=4):
 
     return combined_phase_map
 
-def calc_edge_and_node(empirical, model):
+def calc_edge_and_node_fc(empirical, model):
     """_summary_
 
     Parameters

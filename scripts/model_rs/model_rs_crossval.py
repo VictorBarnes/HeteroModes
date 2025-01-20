@@ -12,7 +12,7 @@ from neuromaps.datasets import fetch_atlas
 from brainspace.utils.parcellation import reduce_by_labels
 from heteromodes import HeteroSolver
 from heteromodes.utils import load_hmap, pad_sequences
-from heteromodes.restingstate import simulate_bold, calc_phase, calc_edge_and_node, calc_phase_delay_combined
+from heteromodes.restingstate import simulate_bold, calc_phase, calc_edge_and_node_fc, calc_phase_map
 
 load_dotenv()
 PROJ_DIR = os.getenv("PROJ_DIR")
@@ -23,7 +23,7 @@ def calc_fc_and_phase(bold, tr, band_freq, parc=None):
     scaler = StandardScaler()
     bold_z = scaler.fit_transform(bold.T).T
 
-    # Compute combined phase delay on vertex data
+    # Compute phase on vertex data
     phase = calc_phase(bold_z, tr=tr, lowcut=band_freq[0], highcut=band_freq[1])
 
     # Compute FC on parcellated data
@@ -43,7 +43,7 @@ def run_model(run, evals, emodes, parc, args, params, B=None):
     scaler = StandardScaler()
     bold_model = scaler.fit_transform(bold_model.T).T
     
-    # Compute model FC and combined phase delay
+    # Compute model FC and phase
     fc_model, phase_model = calc_fc_and_phase(
         bold=bold_model, 
         tr=0.72, 
@@ -85,23 +85,22 @@ def run_and_evaluate(surf, medmask, hmap, parc, params, args, emp_results, retur
     phase_model = phase_model.reshape(n_verts, -1)
     model_results = {"fc": fc_model, "phase": phase_model}
 
-    # Calculate edge and node FC metric
-    edge_fc_corr, node_fc_corr = calc_edge_and_node(
+    # Calculate edge and node FC
+    edge_fc_corr, node_fc_corr = calc_edge_and_node_fc(
         empirical=emp_results, 
         model=model_results, 
     )
 
-    # Calculate phase metric
-    phase_emp_combined = calc_phase_delay_combined(emp_results["phase"], n_components=4)
-    phase_model_combined = calc_phase_delay_combined(phase_model, n_components=4)
+    # Calculate phase corr
+    phase_map_emp = calc_phase_map(emp_results["phase"], n_components=4)
+    phase_map_model = calc_phase_map(phase_model, n_components=4)
     if parc is not None:
-        phase_emp_combined = reduce_by_labels(phase_emp_combined, parc, axis=0)
-        phase_model_combined = reduce_by_labels(phase_model_combined, parc, axis=0)
-
-    phase_corr = np.corrcoef(phase_emp_combined, phase_model_combined)[0, 1]
+        phase_map_emp = reduce_by_labels(phase_map_emp, parc, axis=0)
+        phase_map_model = reduce_by_labels(phase_map_model, parc, axis=0)
+    phase_corr = np.corrcoef(phase_map_emp, phase_map_model)[0, 1]
 
     if return_all:
-        return edge_fc_corr, node_fc_corr, phase_corr, np.mean(fc_model, axis=2), phase_model_combined
+        return edge_fc_corr, node_fc_corr, phase_corr, np.mean(fc_model, axis=2), phase_map_model
     else:
         return edge_fc_corr, node_fc_corr, phase_corr
 
@@ -133,7 +132,7 @@ def main():
         hmap = None
         param_combs = [(0, 28.9, 0.116)]
     else:
-        # If hmap_label is null, load null mapg
+        # If hmap_label is null, load null map
         if args.hmap_label[:4] == "null":
             null_id = int(args.hmap_label.split('-')[1])
             hmap = np.load(f"{PROJ_DIR}/data/nulls/data-myelinmap_space-fsLR_den-{args.den}_hemi-L_nmodes-500_nnulls-5000_nulls_resample-True.npy")
@@ -170,13 +169,13 @@ def main():
         parc = parc[medmask]
     else:
         parc = None
-        medmask = np.where(bold_emp[:, 0, 0] != 0, True, False)
+        medmask = nib.load(fslr['medial'][0]).darrays[0].data.astype(bool)
 
     bold_emp = bold_emp[medmask, :, :]
     nverts, _, nsubjs = np.shape(bold_emp)
 
-    # Parallelize the calculation of FC and phase_delay
-    print("Calculating empirical FC and Phase Delay...")
+    # Parallelize the calculation of FC and phase
+    print("Calculating empirical FC and Phase...")
     results = Parallel(n_jobs=args.n_jobs, verbose=1)(
         delayed(calc_fc_and_phase)(
             bold=bold_emp[:, :, subj], 
@@ -186,9 +185,9 @@ def main():
         )
         for subj in range(nsubjs)
     )
-    fc_emp_all, phase_delay_emp_all = zip(*results)
+    fc_emp_all, phase_emp_all = zip(*results)
     fc_emp_all = np.dstack(fc_emp_all)
-    phase_delay_emp_all = np.dstack(phase_delay_emp_all)
+    phase_emp_all = np.dstack(phase_emp_all)
 
     # Initialise output arrays
     best_combs = []
@@ -213,8 +212,8 @@ def main():
         # Select train and test bold data
         fc_emp_train = np.mean(fc_emp_all[:, :, train_index], axis=2)
         fc_emp_test = np.mean(fc_emp_all[:, :, test_index], axis=2)
-        phase_emp_train = phase_delay_emp_all[:, :, train_index].reshape(nverts, -1)
-        phase_emp_test = phase_delay_emp_all[:, :, test_index].reshape(nverts, -1)
+        phase_emp_train = phase_emp_all[:, :, train_index].reshape(nverts, -1)
+        phase_emp_test = phase_emp_all[:, :, test_index].reshape(nverts, -1)
 
         # Get subject ids
         train_subjs_split.append(subj_ids[train_index])
@@ -257,7 +256,7 @@ def main():
             print(f"    Best combined metric: {combined_train[i, best_combs_ind]:.4g}")
             print(f"    Best edge-level FC: {edge_fc_train[i, best_combs_ind]:.3g}")
             print(f"    Best node-level FC: {node_fc_train[i, best_combs_ind]:.3g}")
-            print(f"    Best phase delay: {phase_train[i, best_combs_ind]:.3g}")
+            print(f"    Best phase corr: {phase_train[i, best_combs_ind]:.3g}")
         else:
             best_alpha = 0
             best_r = 28.9
@@ -292,7 +291,7 @@ def main():
         print(f"    Combined metric: {combined_test[i]:.4g}")
         print(f"    Edge-level FC: {edge_fc_test[i]:.3g}")
         print(f"    Node-level FC: {node_fc_test[i]:.3g}")
-        print(f"    Phase Delay: {phase_test[i]:.3g}")
+        print(f"    Phase corr: {phase_test[i]:.3g}")
 
     print("\n==========\nFinal results\n==========")
     print(f"Best alpha: {np.mean(best_combs, axis=0)[0]}")
@@ -301,7 +300,7 @@ def main():
     print(f"Best combined metric: {np.mean(combined_test):.4g}") 
     print(f"Best edge-level FC: {np.mean(edge_fc_test):.3g}")
     print(f"Best node-level FC: {np.mean(node_fc_test):.3g}")
-    print(f"Best Phase Delay: {np.mean(phase_test):.3g}")
+    print(f"Best Phase corr: {np.mean(phase_test):.3g}")
 
     # Create output directory if it doesn't exist
     if not os.path.exists(out_dir):
@@ -329,12 +328,12 @@ def main():
         # Write outputs to file
         f.create_dataset('edge_fc_train', data=edge_fc_train)
         f.create_dataset('node_fc_train', data=node_fc_train)
-        f.create_dataset('phase_delay_train', data=phase_train)
+        f.create_dataset('phase_train', data=phase_train)
         f.create_dataset('combined_train', data=combined_train)
 
         f.create_dataset('edge_fc_test', data=edge_fc_test)
         f.create_dataset('node_fc_test', data=node_fc_test)
-        f.create_dataset('phase_delay_test', data=phase_test)
+        f.create_dataset('phase_test', data=phase_test)
         f.create_dataset('combined_test', data=combined_test)
 
         f.create_dataset('combs', data=param_combs)
