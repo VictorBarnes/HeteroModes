@@ -8,6 +8,7 @@ scripts/__pycache__/
 scripts/sandbox/
 scripts/_console.ipynb
 scripts/model_rs/*.sh
+scripts/model_rs/*.json
 .env
 HeteroModes_py38.yml
 .DS_Store
