@@ -1,5 +1,6 @@
 import os
 import h5py
+import time
 import argparse
 import itertools
 import numpy as np
@@ -13,6 +14,7 @@ from brainspace.utils.parcellation import reduce_by_labels
 from heteromodes import HeteroSolver
 from heteromodes.utils import load_hmap, pad_sequences
 from heteromodes.restingstate import simulate_bold, calc_phase, calc_edge_and_node_fc, calc_phase_map
+from heteromodes.solver import scale_hmap
 
 load_dotenv()
 PROJ_DIR = os.getenv("PROJ_DIR")
@@ -54,6 +56,8 @@ def run_model(run, evals, emodes, parc, args, params, B=None):
     return fc_model, phase_model
 
 def run_and_evaluate(surf, medmask, hmap, parc, params, args, emp_results, return_all=False):
+    t1 = time.time()
+
     # Calculate modes
     solver = HeteroSolver(
         surf=surf,
@@ -99,6 +103,9 @@ def run_and_evaluate(surf, medmask, hmap, parc, params, args, emp_results, retur
         phase_map_model = reduce_by_labels(phase_map_model, parc, axis=0)
     phase_corr = np.corrcoef(phase_map_emp, phase_map_model)[0, 1]
 
+    t2 = time.time()
+    print(f"alpha = {params[0]:.1f} | {t2 - t1:.2f} seconds")
+
     if return_all:
         return edge_fc_corr, node_fc_corr, phase_corr, np.mean(fc_model, axis=2), phase_map_model
     else:
@@ -127,6 +134,27 @@ def main():
 
     out_dir = f'{PROJ_DIR}/results/model_rs/crossval/id-{args.id}'
 
+    # Load empirical BOLD data
+    bold_data = h5py.File(f"{PROJ_DIR}/data/empirical/HCP_unrelated-445_rfMRI_hemi-L_nsubj-{args.n_subjs}_parc-None_fsLR{args.den}_hemi-L_BOLD.hdf5", 'r')
+    bold_emp = bold_data['bold'][:]
+    subj_ids = bold_data['subj_ids']
+
+    # Load parcellation and medial wall mask
+    if args.parc is not None:
+        try:
+            parc_file = f"{PROJ_DIR}/data/parcellations/parc-{args.parc}_space-fsLR_den-{args.den}_hemi-L.label.gii"
+            parc = nib.load(parc_file).darrays[0].data.astype(int)
+        except:
+            raise ValueError(f"Parcellation '{args.parc}' with den '{args.den}' not found.")
+        medmask = np.where(parc != 0, True, False)
+        parc = parc[medmask]
+    else:
+        parc = None
+        medmask = np.where(bold_emp[:, 0, 0] != 0, True, False)
+
+    bold_emp = bold_emp[medmask, :, :]
+    nverts, _, nsubjs = np.shape(bold_emp)
+
     # Get hmap and alpha values
     if args.hmap_label is None:
         hmap = None
@@ -144,35 +172,21 @@ def main():
             hmap = load_hmap(args.hmap_label, den=args.den)
 
         alpha_min, alpha_max, alpha_step = args.alpha
-        alpha_vals = np.arange(alpha_min, alpha_max + alpha_step, alpha_step)
-        alpha_vals = alpha_vals[alpha_vals != 0] # Remove 0 since that is the homogeneous case
+        alpha_num = int(abs(alpha_max - alpha_min) / alpha_step) + 1
+        alpha_vals = np.linspace(alpha_min, alpha_max, alpha_num)
+        if alpha_min < 0 < alpha_max:
+            alpha_vals = alpha_vals[alpha_vals != 0] # Remove 0 since that is the homogeneous case
+        # Discard non-valid alpha values
+        for i, alpha in enumerate(alpha_vals):
+            if np.max(3.3524*np.sqrt(scale_hmap(hmap[medmask], alpha=alpha)) > 150):
+                alpha_vals = alpha_vals[:i]
+
         r_vals = [28.9] #np.arange(10, 60, 10)
         gamma_vals = [0.116]
 
         param_combs = list(itertools.product(alpha_vals, r_vals, gamma_vals))
 
     print(f"Number of parameter combinations: {len(param_combs)}")
-
-    # Load empirical BOLD data
-    bold_data = h5py.File(f"{PROJ_DIR}/data/empirical/HCP_unrelated-445_rfMRI_hemi-L_nsubj-{args.n_subjs}_parc-None_fsLR{args.den}_hemi-L_BOLD.hdf5", 'r')
-    bold_emp = bold_data['bold'][:]
-    subj_ids = bold_data['subj_ids']
-    
-    # Load parcellation
-    if args.parc is not None:
-        try:
-            parc_file = f"{PROJ_DIR}/data/parcellations/parc-{args.parc}_space-fsLR_den-{args.den}_hemi-L.label.gii"
-            parc = nib.load(parc_file).darrays[0].data.astype(int)
-        except:
-            raise ValueError(f"Parcellation '{args.parc}' with den '{args.den}' not found.")
-        medmask = np.where(parc != 0, True, False)
-        parc = parc[medmask]
-    else:
-        parc = None
-        medmask = np.where(bold_emp[:, 0, 0] != 0, True, False)
-
-    bold_emp = bold_emp[medmask, :, :]
-    nverts, _, nsubjs = np.shape(bold_emp)
 
     # Parallelize the calculation of FC and phase
     print("Calculating empirical FC and Phase...")
@@ -264,7 +278,8 @@ def main():
         best_combs.append((best_alpha, best_r, best_gamma))
         
         # Evaluate on test set
-        print(f"\nTesting (alpha = {best_alpha:.1f}, r = {best_r:.1f}, gamma = {best_gamma:.3f})...\n=====================")
+        print(f"\nTesting (alpha = {best_alpha:.1f}, r = {best_r:.1f}, gamma = {best_gamma:.3f})..."
+              f"\n==================================================")
         # Run model and evaluate
         edge_fc_test[i], node_fc_test[i], phase_test[i], fc, phase_map = run_and_evaluate(
             surf=surf,
@@ -295,8 +310,8 @@ def main():
 
     print("\n==========\nFinal results\n==========")
     print(f"Best alpha: {np.mean(best_combs, axis=0)[0]}")
-    print(f"Best r: {np.mean(best_combs, axis=0)[1]}")
-    print(f"Best gamma: {np.mean(best_combs, axis=0)[2]}")
+    print(f"Best r: {np.mean(best_combs, axis=0)[1]:.3g}")
+    print(f"Best gamma: {np.mean(best_combs, axis=0)[2]:.3g}")
     print(f"Best combined metric: {np.mean(combined_test):.4g}") 
     print(f"Best edge-level FC: {np.mean(edge_fc_test):.3g}")
     print(f"Best node-level FC: {np.mean(node_fc_test):.3g}")
@@ -344,6 +359,8 @@ def main():
 
         f.create_dataset('fc_matrices', data=np.dstack(fc_matrices))
         f.create_dataset('phase_maps', data=np.vstack(phase_maps).T)
+
+        f.create_dataset('medmask', data=medmask)
 
         # Pad train_subjs_split and test_subjs_split with -1 to have the same length
         f.create_dataset('train_subjs_split', data=pad_sequences(train_subjs_split))

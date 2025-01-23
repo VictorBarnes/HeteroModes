@@ -30,8 +30,8 @@ def _check_hmap(surf, hmap):
     elif isinstance(hmap, np.ndarray):
         if len(hmap) != surf.n_points:
             raise ValueError("Heterogeneity map must have the same number of elements as the number of vertices in the surface template")
-        # Replace nan values with 1
-        hmap[np.isnan(hmap)] = np.nanmean(hmap)
+        if np.isnan(hmap).any():
+            raise ValueError("Heterogeneity map must not contain NaNs")
         
         return hmap
     else:
@@ -63,6 +63,7 @@ class HeteroSolver(Solver):
         verbose : bool, optional
             Flag indicating whether to print the solver information, by default False.
         """
+        CMEAN = 3.3524
 
         # Initialise surface and convert to TriaMesh object
         surf = _check_surf(surf)
@@ -76,7 +77,11 @@ class HeteroSolver(Solver):
         if hmap is None:
             alpha = 0
         hmap = _check_hmap(surf, hmap)
-        rho = scale_hmap(hmap, alpha=alpha)       
+        rho = scale_hmap(hmap, alpha=alpha)
+        # Check hmap values are physiologically plausible
+        if np.max(CMEAN * np.sqrt(rho) > 150):
+            raise ValueError("Alpha value results in non-physiological wave speeds (> 150 m/s). Try" 
+                             " using a smaller alpha value.")
 
         # Map hmap from vertices to triangles
         rho_tri = mesh.map_vfunc_to_tfunc(rho)
