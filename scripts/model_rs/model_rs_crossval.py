@@ -169,22 +169,27 @@ def main():
             out_dir = out_dir + "/nulls"
         # Otherwise assume hmap_label is a valid label
         else:
-            hmap = load_hmap(args.hmap_label, den=args.den)
+            hmap = load_hmap(args.hmap_label, trg_den=args.den)
+            num_nonmed_zeros = np.sum(np.where(hmap[medmask] == 0, True, False))
+            if num_nonmed_zeros > 0 and np.min(hmap[medmask]) == 0:
+                print(f"Warning: {num_nonmed_zeros} vertices on the heterogeneity maps have a "
+                      f"value of 0.")
 
         alpha_min, alpha_max, alpha_step = args.alpha
         alpha_num = int(abs(alpha_max - alpha_min) / alpha_step) + 1
         alpha_vals = np.linspace(alpha_min, alpha_max, alpha_num)
         if alpha_min < 0 < alpha_max:
             alpha_vals = alpha_vals[alpha_vals != 0] # Remove 0 since that is the homogeneous case
-        # Discard non-valid alpha values
+        # Only keep valid alpha values (i.e. max wave speed <= 150 m/s)
+        valid_alpha = []
         for i, alpha in enumerate(alpha_vals):
-            if np.max(3.3524*np.sqrt(scale_hmap(hmap[medmask], alpha=alpha)) > 150):
-                alpha_vals = alpha_vals[:i]
+            if np.max(3.3524*np.sqrt(scale_hmap(hmap[medmask], alpha=alpha)) <= 150):
+                valid_alpha.append(alpha)
 
         r_vals = [28.9] #np.arange(10, 60, 10)
         gamma_vals = [0.116]
 
-        param_combs = list(itertools.product(alpha_vals, r_vals, gamma_vals))
+        param_combs = list(itertools.product(valid_alpha, r_vals, gamma_vals))
 
     print(f"Number of parameter combinations: {len(param_combs)}")
 

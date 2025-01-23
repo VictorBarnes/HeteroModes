@@ -1,4 +1,5 @@
 import os
+import re
 import numpy as np
 import nibabel as nib
 from pathlib import Path
@@ -92,7 +93,7 @@ def standardise_modes(emodes):
     return standardized_modes
 
 
-def load_hmap(hmap_label, den="32k"):
+def load_hmap(hmap_label, trg_den="32k"):
     """Load heterogeneity map.
 
     Parameters
@@ -107,15 +108,18 @@ def load_hmap(hmap_label, den="32k"):
     _type_
         _description_
     """
-    hmap_file = list(Path(PROJ_DIR, "data", "heteromaps").glob(f"*desc-{hmap_label}_*den-32k_*.func.gii"))
+    hmap_file = list(Path(PROJ_DIR, "data", "heteromaps").glob(f"*desc-{hmap_label}_*.func.gii"))
     if len(hmap_file) == 0:
         raise FileNotFoundError(f"No heterogeneity map found for label '{hmap_label}'.")
-    
+
+    # Extract the source density from the file name    
+    src_den = re.search(r'den-(.*?)_', str(hmap_file)).group(1)
+
     # Load the heterogeneity map and transform it to the desired density if necessary
-    if den == "32k":
+    if src_den == trg_den:
         hmap = nib.load(hmap_file[0]).darrays[0].data
     else:
-        hmap = fslr_to_fslr(hmap_file[0], den, hemi="L")[0].darrays[0].data
+        hmap = fslr_to_fslr(hmap_file[0], trg_den, hemi="L")[0].darrays[0].data
 
     # hmap[~medial] = np.nan
 
