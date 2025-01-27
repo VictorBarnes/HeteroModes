@@ -183,10 +183,10 @@ def main():
         # Only keep valid alpha values (i.e. max wave speed <= 150 m/s)
         valid_alpha = []
         for i, alpha in enumerate(alpha_vals):
-            if np.max(3.3524*np.sqrt(scale_hmap(hmap[medmask], alpha=alpha)) <= 150):
+            if np.max(3.3524*np.sqrt(scale_hmap(hmap[medmask], alpha=alpha))) <= 150:
                 valid_alpha.append(alpha)
 
-        r_vals = [28.9] #np.arange(10, 60, 10)
+        r_vals = [28.9]
         gamma_vals = [0.116]
 
         param_combs = list(itertools.product(valid_alpha, r_vals, gamma_vals))
@@ -372,5 +372,8 @@ def main():
         f.create_dataset('test_subjs_split', data=pad_sequences(test_subjs_split))
 
 if __name__ == "__main__":
+    t1 = time.time()
     main()
+    t2 = time.time()
+    print(f"Total time: {t2 - t1:.2f} seconds")
     
