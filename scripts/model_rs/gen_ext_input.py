@@ -20,16 +20,17 @@ else:
     medmask = np.where(parc != 0, True, False)
 
 nruns = 5
+nT = 1200
 nverts = np.sum(medmask)
 
 dt = 0.09
-tmax = 50 + 1199 * 0.72
+tmax = 50 + (nT - 1) * 0.72
 t = np.arange(0, tmax + dt, dt)
 n_timepoints = len(t)
 
 for i in range(nruns):
     print(f"Generating external input {i}. Shape: {nverts} x {n_timepoints}")
-    file = f"{PROJ_DIR}/data/resting_state/extInput_parc-{parc_name}_den-{den}_hemi-L_randseed-{i}.npy"
+    file = f"{PROJ_DIR}/data/resting_state/extInput_parc-{parc_name}_den-{den}_nT-{nT}_randseed-{i}.npy"
 
     np.random.seed(i)
     ext_input = np.random.randn(nverts, n_timepoints)

@@ -37,7 +37,7 @@ def calc_fc_and_phase(bold, tr, band_freq, parc=None):
 
 def run_model(run, evals, emodes, parc, args, params, B=None):
     # Load external input, run model and parcellate
-    ext_input = np.load(f"{PROJ_DIR}/data/resting_state/extInput_parc-{args.parc}_den-{args.den}_hemi-L_randseed-{run}.npy")
+    ext_input = np.load(f"{PROJ_DIR}/data/resting_state/extInput_parc-{args.parc}_den-{args.den}_nT-1200_randseed-{run}.npy")
     bold_model = simulate_bold(evals, emodes, ext_input, solver_method='Fourier', 
                                eig_method='orthonormal', r=params[1], gamma=params[2], B=B)
 
@@ -127,7 +127,7 @@ def main():
     parser.add_argument("--band_freq", type=float, nargs=2, default=[0.01, 0.1], metavar=('low', 'high'), help="The low and high bandpass frequencies for filtering the BOLD data. Defaults to [0.01, 0.1].")
     parser.add_argument("--metrics", type=str, nargs='+', default=["edge_fc", "node_fc", "phase"], help="The metrics to use for evaluation. Defaults to ['edge_fc', 'node_fc', 'phase']")
     args = parser.parse_args()
-
+    
     # Get surface, medial mask and parcellation files
     fslr = fetch_atlas(atlas='fsLR', density=args.den)
     surf = str(fslr['midthickness'][0])
