@@ -83,6 +83,7 @@ if parc_name is None:
 with h5py.File(f"{PROJ_DIR}/data/empirical/HCP_unrelated-445_rfMRI_hemi-L_nsubj-{subj_count}_parc-{parc_name}_hemi-L_BOLD.hdf5", 'w') as f:
     f.create_dataset('bold', data=bold_all)
     f.create_dataset('subj_ids', data=subj_ids)
+    f.create_dataset('medmask', data=medmask)
 
 if fetch_sc:
     sc_all = np.dstack(sc_all)
