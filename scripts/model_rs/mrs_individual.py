@@ -103,13 +103,12 @@ def run_and_evaluate(surf, medmask, hmap, parc, params, args, emp_results, retur
     phase_corr = np.corrcoef(phase_map_emp, phase_map_model)[0, 1]
 
     t2 = time.time()
-    print(f"alpha = {params[0]:.1f} | {t2 - t1:.2f} seconds")
+    print(f"alpha = {params[0]:.1f} | {(t2 - t1)/60:.1f} mins | Edge FC: {edge_fc_corr:.3f} | Node FC: {node_fc_corr:.3f} | Phase: {phase_corr:.3f}")
 
     if return_all:
         return edge_fc_corr, node_fc_corr, phase_corr, np.mean(fc_model, axis=2), phase_map_model
     else:
         return edge_fc_corr, node_fc_corr, phase_corr
-
 
 def main():
     parser = argparse.ArgumentParser(description="Model resting-state fMRI BOLD data and evaluate against empirical data.")
@@ -118,11 +117,9 @@ def main():
     parser.add_argument("--metrics", type=str, nargs='+', default=["edge_fc", "node_fc", "phase"], help="The metrics to use for evaluation. Defaults to ['edge_fc', 'node_fc', 'phase']")
     parser.add_argument("--n_runs", type=int, default=5, help="The number of runs to simulate. Defaults to 50.")
     parser.add_argument("--n_modes", type=int, default=500, help="The number of modes to calculate. Defaults to 500.")
-    parser.add_argument("--n_splits", type=int, default=5, help="The number of splits for cross-validation. Defaults to 5.")
-    parser.add_argument("--n_subjs", type=int, default=384, help="The number of subjects in the empirical data. Defaults to 384.")
     parser.add_argument("--n_jobs", type=int, default=-1, help="The number of CPUs for parallelization. Defaults to -1")
     parser.add_argument('--alpha', type=float, nargs=3, metavar=('alpha_min', 'alpha_max', 'alpha_step'), help='The alpha_min, alpha_max, and alpha_step values for scaling the heterogeneity map.')
-    parser.add_argument("--den", type=str, default="4k", help="The density of the surface. Defaults to `32k`.")
+    parser.add_argument("--den", type=str, default="32k", help="The density of the surface. Defaults to `32k`.")
     parser.add_argument("--parc", type=str, default=None, help="The parcellation to use to downsample the BOLD data.")
     parser.add_argument("--band_freq", type=float, nargs=2, default=[0.01, 0.1], metavar=('low', 'high'), help="The low and high bandpass frequencies for filtering the BOLD data. Defaults to [0.01, 0.1].")
     parser.add_argument("--subj_id", type=int, help="The subject ID to run the model on")
@@ -131,7 +128,7 @@ def main():
     out_dir = f'{PROJ_DIR}/results/model_rs/individual/id-{args.id}/subj-{args.subj_id}'
 
     # Get surface, medial mask and parcellation files
-    hcp_dir = f"/Users/victorbarnes/phd_local/hcp/{args.subj_id}/MNINonLinear/Results"
+    hcp_dir = f"/fs03/kg98/vbarnes/HCP/{args.subj_id}/MNINonLinear/Results"
     surf_file = f"{args.subj_id}.L.midthickness_MSMAll.4k_fs_LR.surf.gii"
     surf = f"{hcp_dir}/{surf_file}"
 
@@ -139,12 +136,14 @@ def main():
     scaler = StandardScaler()
     bold_emp_train_path_lr = Path(
         hcp_dir, 
-        "rfMRI_REST1_LR", 
+        "rfMRI_REST1_LR",
+        "resampled",
         "rfMRI_REST1_LR_Atlas_hp2000_clean_4k.L.func.gii"
     )
     bold_emp_train_path_rl = Path(
         hcp_dir, 
-        "rfMRI_REST1_RL", 
+        "rfMRI_REST1_RL",
+        "resampled",
         "rfMRI_REST1_RL_Atlas_hp2000_clean_4k.L.func.gii"
     )
     bold_emp_train_lr = scaler.fit_transform(nib.load(bold_emp_train_path_lr).agg_data()).T
@@ -153,12 +152,14 @@ def main():
 
     bold_emp_test_path_lr = Path(
         hcp_dir, 
-        "rfMRI_REST2_LR", 
+        "rfMRI_REST2_LR",
+        "resampled",
         "rfMRI_REST2_LR_Atlas_hp2000_clean_4k.L.func.gii"
     )
     bold_emp_test_path_rl = Path(
         hcp_dir, 
-        "rfMRI_REST2_RL", 
+        "rfMRI_REST2_RL",
+        "resampled",
         "rfMRI_REST2_RL_Atlas_hp2000_clean_4k.L.func.gii"
     )
     bold_emp_test_lr = scaler.fit_transform(nib.load(bold_emp_test_path_lr).agg_data()).T
@@ -359,5 +360,5 @@ if __name__ == "__main__":
     t1 = time.time()
     main()
     t2 = time.time()
-    print(f"Total time: {t2 - t1:.2f} seconds")
+    print(f"Total time: {(t2 - t1)/60:.1f} mins")
     
