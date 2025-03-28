@@ -5,7 +5,6 @@ import nibabel as nib
 from pathlib import Path
 from dotenv import load_dotenv
 from neuromaps.transforms import fslr_to_fslr
-from neuromaps.datasets import fetch_atlas
 
 
 load_dotenv()
@@ -37,7 +36,6 @@ def check_orthogonal(matrix, tol=0.1):
     
     return True
 
-
 def check_normal(matrix, axis=0, tol=0.01):
     """
     Check if the columns of a matrix are normalized.
@@ -68,7 +66,6 @@ def check_normal(matrix, axis=0, tol=0.01):
     
     return True
 
-
 def standardise_modes(emodes):
     """
     Perform standardisation by flipping the modes such that the first element of each mode is 
@@ -92,22 +89,27 @@ def standardise_modes(emodes):
     
     return standardized_modes
 
-
 def load_hmap(hmap_label, trg_den="32k"):
-    """Load heterogeneity map.
+    """Load heterogeneity map and transforms it to the target density.
 
     Parameters
     ----------
-    hmap_label : _type_
-        _description_
-    den : str, optional
-        _description_, by default "32k"
+    hmap_label : str
+        The label of the heterogeneity map to load.
+    trg_den : str, optional
+        The target density to which the map should be transformed, by default "32k".
 
     Returns
     -------
-    _type_
-        _description_
+    numpy.ndarray
+        The heterogeneity map data as a numpy array.
+
+    Raises
+    ------
+    FileNotFoundError
+        If no heterogeneity map is found for the given label.
     """
+
     hmap_file = list(Path(PROJ_DIR, "data", "heteromaps").glob(f"*desc-{hmap_label}_*.func.gii"))
     if len(hmap_file) == 0:
         raise FileNotFoundError(f"No heterogeneity map found for label '{hmap_label}'.")
@@ -125,8 +127,24 @@ def load_hmap(hmap_label, trg_den="32k"):
 
     return hmap
 
-
 def unmask(data, medmask, val=np.nan):
+    """
+    Unmasks data by inserting it into a full array with the same length as the medial mask.
+
+    Parameters
+    ----------
+    data : numpy.ndarray
+        The data to be unmasked (n_verts, n_data). Can be 1D or 2D.
+    medmask : numpy.ndarray
+        A boolean array where True indicates the positions of the data in the full array.
+    val : float, optional
+        The value to fill in the positions outside the mask. Default is np.nan.
+
+    Returns
+    -------
+    numpy.ndarray
+        The unmasked data, with the same shape as the medial mask.
+    """
     medmask = medmask.astype(bool)
 
     if data.ndim == 1:
