@@ -1,1 +1,1 @@
-from .solver import HeteroSolver
+from .solver import EigenSolver

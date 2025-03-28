@@ -1,7 +1,8 @@
 import pathlib
 import numpy as np
 from lapy import Solver, TriaMesh
-from sklearn.preprocessing import StandardScaler
+from scipy.ndimage import gaussian_filter
+from sklearn.preprocessing import StandardScaler, QuantileTransformer
 from brainspace.vtk_interface.wrappers import BSPolyData
 from brainspace.mesh.mesh_operations import mask_points
 from brainspace.mesh.mesh_io import read_surface
@@ -23,63 +24,96 @@ def _check_surf(surf):
         raise ValueError('Surface be a path-like string, an instance of '
                          'BSPolyData, or None')
 
-def _check_hmap(surf, hmap):
-    """Validate the heterogeneity map and return as a numpy array."""
-    if hmap is None:
-        return np.zeros(surf.n_points)
-    elif isinstance(hmap, np.ndarray):
-        if len(hmap) != surf.n_points:
-            raise ValueError("Heterogeneity map must have the same number of elements as the number of vertices in the surface template")
-        if np.isnan(hmap).any():
-            raise ValueError("Heterogeneity map must not contain NaNs")
-        
-        return hmap
-    else:
-        raise ValueError("Heterogeneity map must be a numpy array or None")
-
-class HeteroSolver(Solver):
+class EigenSolver(Solver):
     """
     Class to solve the heterogeneous Helmholtz equation on a surface mesh.
-    """
-    def __init__(self, surf, hmap=None, medmask=None, alpha=1.0, verbose=False, **lapy_kwargs):  
-        """
-        Initialize the HeteroSolver object.
 
-        Parameters
-        ----------
-        surf : str
-            Path to the surface template file or BSPolyData. 
-            See `brainspace.mesh.mesh_io.read_surface` for acceptable file types.
-        hmap : np.ndarray, optional
-            Array of the heterogeneity map, by default None. If None, hmap will be set to an array
-            of zeros of length (n_vertices,) and this will results in homogeneous modes.
-            If hmap is a numpy array, then it must contain the same number of elements as the number
-            of vertices in `surf`.
-        medmask : np.ndarray, optional
-            Mask to apply to the surface vertices, by default None. If None, no mask will be 
-            applied.
-        alpha : float, optional
-            Scaling factor for the heterogeneity map, by default 1.0.
-        verbose : bool, optional
-            Flag indicating whether to print the solver information, by default False.
-        """
+    Parameters
+    ----------
+    surf : str
+        Path to the surface template file or BSPolyData. 
+        See `brainspace.mesh.mesh_io.read_surface` for acceptable file types.
+    medmask : np.ndarray, optional
+        Mask to apply to the surface vertices, by default None. If None, no mask will be 
+        applied.
+    hetero : np.ndarray, optional
+        Array of the heterogeneity map, by default None. If None, hmap will be set to an array
+        of zeros of length (n_vertices,) and this will results in homogeneous modes.
+        If hmap is a numpy array, then it must contain the same number of elements as the number
+        of vertices in `surf`.
+    alpha : float, optional
+        Scaling factor for the heterogeneity map, by default 0. If alpha is 0, the heterogeneity
+        map will be set to an array of ones of length (n_vertices,).
+    sigma : int, optional
+        The number of iterations to smooth the heterogeneity map, by default 0. If sigma is 0,
+        no smoothing will be applied.
+    scaling : str, optional
+        The scaling function to apply to the heterogeneity map, by default "exponential".
+        Must be either "exponential" or "sigmoid".
+    q_norm : str, optional
+        The quantile normalisation method to apply to the heterogeneity map, by default None.
+        Must be either "uniform" or "normal". If None, no quantile normalisation will be applied.
+    verbose : bool, optional
+        Flag indicating whether to print the solver information, by default False.
+    lapy_kwargs : keyword arguments
+        Additional keyword arguments to pass to the lapy.Solver class.
+
+    Attributes
+    ----------
+    mesh : TriaMesh
+        The surface mesh object.
+    rho : np.ndarray
+        The heterogeneity map after scaling and smoothing.
+    """
+    def __init__(self, surf, medmask=None, hetero=None, alpha=0, sigma=0, scaling="exponential", 
+                 q_norm=None, verbose=False, **lapy_kwargs):  
         CMEAN = 3.3524
 
         # Initialise surface and convert to TriaMesh object
         surf = _check_surf(surf)
         if medmask is not None:
             surf = mask_points(surf, medmask)
-            if hmap is not None:
-                hmap = hmap[medmask]
+            if hetero is not None:
+                hetero = hetero[medmask]
         mesh = TriaMesh(get_points(surf), get_cells(surf))
 
-        # Check and scale heterogeneity map
-        if hmap is None:
-            alpha = 0
-        hmap = _check_hmap(surf, hmap)
-        rho = scale_hmap(hmap, alpha=alpha)
+        if hetero is None:
+            if alpha != 0:
+                print("Setting `alpha` to 0 because `hetero` is None.")
+                alpha = 0
+            rho = np.ones(surf.n_points)
+        elif isinstance(hetero, np.ndarray):
+            if len(hetero) != surf.n_points:
+                raise ValueError("Heterogeneity map must have the same number of elements as the number of vertices in the surface template")
+            if np.isnan(hetero).any():
+                raise ValueError("Heterogeneity map must not contain NaNs")
+                
+            # Z-score the heterogeneity map
+            scaler = StandardScaler()
+            hetero = scaler.fit_transform(hetero.reshape(-1, 1)).flatten()
+
+            # Apply quartile normalisation
+            if q_norm is not None:
+                scaler = QuantileTransformer(output_distribution=q_norm, random_state=0)
+                hetero = scaler.fit_transform(hetero.reshape(-1, 1)).flatten()
+            
+            # Smooth the heterogeneity map
+            if sigma > 0:
+                hetero = mesh.smooth_vfunc(hetero, n=sigma)
+
+            # Scale the heterogeneity map
+            if scaling == "exponential":
+                rho = np.exp(alpha * hetero)
+            elif scaling == "sigmoid":
+                rho = 2 / (1 + np.exp(-alpha * hetero))
+            else:
+                raise ValueError("Invalid scaling function. Must be 'exponential' or 'sigmoid'.")
+
+        else:
+            raise ValueError("Heterogeneity map must be a numpy array or None")
+
         # Check hmap values are physiologically plausible
-        if np.max(CMEAN * np.sqrt(rho) > 150):
+        if np.max(CMEAN * np.sqrt(rho)) > 150:
             raise ValueError("Alpha value results in non-physiological wave speeds (> 150 m/s). Try" 
                              " using a smaller alpha value.")
 
@@ -95,7 +129,7 @@ class HeteroSolver(Solver):
         
     def solve(self, n_modes=10, fix_mode1=False, standardise=False):
         """
-        Solve for eigenvalues and eigenmodes of the HeteroModes problem.
+        Solve for eigenvalues and eigenmodes
 
         Parameters
         ----------
@@ -135,25 +169,3 @@ class HeteroSolver(Solver):
 
         return evals, emodes
     
-def scale_hmap(hmap, alpha=1.0):
-    """
-    Scale the heterogeneity map using the given parameters.
-
-    Parameters
-    ----------
-    hmap : numpy.ndarray
-        The heterogeneity map to be scaled.
-    alpha : float
-        The scaling factor.
-
-    Returns
-    -------
-    rho : numpy.ndarray
-        The scaled heterogeneity map.
-    """
-
-    # z-score the heterogeneity map
-    scaler = StandardScaler()
-    rho = np.exp(alpha * scaler.fit_transform(hmap.reshape(-1, 1)).flatten())
-
-    return rho
