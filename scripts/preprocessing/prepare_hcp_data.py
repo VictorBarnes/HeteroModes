@@ -1,6 +1,5 @@
 import os
 import h5py
-import pandas as pd
 import nibabel as nib
 import numpy as np
 from brainspace.utils.parcellation import reduce_by_labels
@@ -14,7 +13,6 @@ load_dotenv()
 PROJ_DIR = os.getenv("PROJ_DIR")
 DENSITIES = {"4k": 4002, "32k": 32492}
 
-nsubj_desired = 384
 parc_name = None
 den = "4k"
 fetch_sc = False
@@ -28,12 +26,14 @@ if parc_name is not None:
     medmask = np.where(parc != 0, True, False)
     n_parcels = len(np.unique(parc[medmask]))
 else:
-    medmask = nib.load(fetch_fslr(den)["medial"][0]).darrays[0].data.astype(bool)
+    if den == "32k":
+        medmask = nib.load(fetch_fslr(den)["medial"][0]).darrays[0].data.astype(bool)
+    else:
+        medmask = nib.load(f"{PROJ_DIR}/data/empirical/fsLR-{den}_medmask.label.gii").darrays[0].data.astype(bool)
 
-# Only keep subjects that have both FC and SC data
-hcp_data = pd.read_csv('/fs03/kg98/vbarnes/HCP/restricted_1110_unrelated-445.csv', index_col=False)
-hcp_data = hcp_data[hcp_data['has_fc'] & hcp_data['has_sc']].reindex()
-subj_ids = hcp_data['Subject'].values
+
+# Load subject IDs
+subj_ids = np.loadtxt(f"{PROJ_DIR}/data/empirical/hcp-255_subj-ids.txt", dtype=int)
 
 # Load bold data as matrix
 scaler = StandardScaler()
@@ -41,8 +41,8 @@ bold_all = []
 sc_all = []
 subj_count = 0
 for i, subj in enumerate(subj_ids):
-    if subj_count == nsubj_desired:
-        break
+    # if subj_count == nsubj_desired:
+    #     break
 
     print(f"Processing subject {subj} ({i+1}/{len(subj_ids)})")
 
@@ -53,7 +53,14 @@ for i, subj in enumerate(subj_ids):
     else:
         bold_folder = f"/fs03/kg98/vbarnes/HCP/{subj}/MNINonLinear/Results/rfMRI_REST1_LR/resampled"
         bold_file = f"rfMRI_REST1_LR_Atlas_hp2000_clean_{den}.L.func.gii"
-    bold = np.array(nib.load(Path(bold_folder, bold_file)).agg_data()).T
+    try:
+        bold = np.array(nib.load(Path(bold_folder, bold_file)).agg_data(), dtype=np.float32).T
+    except:
+        print(f"Skipping subject {subj} due to missing bold data")
+        # Drop sub from sub_ids
+        subj_ids = np.delete(subj_ids, i)
+        continue
+    
     # Check that shape is valid
     if np.shape(bold) != (DENSITIES[den], 1200):
         print(f"Skipping subject {subj} due to invalid shape")
@@ -80,8 +87,8 @@ bold_all = np.dstack(bold_all)
 if parc_name is None:
     parc_name = f"None_fsLR{den}"
 
-with h5py.File(f"{PROJ_DIR}/data/empirical/HCP_unrelated-445_rfMRI_hemi-L_nsubj-{subj_count}_parc-{parc_name}_hemi-L_BOLD.hdf5", 'w') as f:
-    f.create_dataset('bold', data=bold_all)
+with h5py.File(f"{PROJ_DIR}/data/empirical/HCP_nsubj-{subj_count}_bold_parc-{parc_name}_hemi-L.h5", 'w') as f:
+    f.create_dataset('bold', data=bold_all, dtype=np.float32)
     f.create_dataset('subj_ids', data=subj_ids)
     f.create_dataset('medmask', data=medmask)
 
@@ -89,6 +96,6 @@ if fetch_sc:
     sc_all = np.dstack(sc_all)
     sc_avg = np.nanmean(sc_all, axis=2)
 
-    with h5py.File(f"{PROJ_DIR}/data/empirical/HCP_unrelated-445_SC_hemi-L_nsubj-{subj_count}_parc-{parc_name}_hemi-L_SCavg.hdf5", 'w') as f:
+    with h5py.File(f"{PROJ_DIR}/data/empirical/HCP_nsubj-{subj_count}_sc_hemi-L_nsubj-{subj_count}_parc-{parc_name}_hemi-L.hdf5", 'w') as f:
         f.create_dataset('sc', data=sc_avg)
         f.create_dataset('subj_ids', data=subj_ids)
