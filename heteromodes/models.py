@@ -4,9 +4,6 @@ from scipy.integrate import odeint
 from heteromodes.eigentools import calc_eigendecomposition
 
 
-# ================================
-# ========== WAVE MODEL ==========
-# ================================
 class WaveModel:
     """
     A class representing the NFT wave equation for simulating neural activity using eigenmodes.
@@ -49,16 +46,15 @@ class WaveModel:
     """
 
     def __init__(self, evecs, evals, r=28.9, gamma=0.116, tstep=0.1, tmax=100):
-        # Default parameters
+        self.evecs = evecs
+        self.evals = evals
         self.r = r                          # in mm
         self.gamma = gamma                 # in ms^-1
         self.tstep = tstep                           # in ms
         self.tmax = tmax                             # in ms
         self.t = np.arange(0, self.tmax + self.tstep, self.tstep)
-        self.evecs = evecs
-        self.evals = evals
         
-    def solve(self, ext_input, solver_method='Fourier', eig_method='matrix', B=None):
+    def solve(self, ext_input, solver_method='Fourier', eig_method='matrix', mass=None):
         """
         Simulate neural activity using eigenmodes.
 
@@ -70,8 +66,8 @@ class WaveModel:
             The method used for simulation. Can be either 'Fourier' (default) or 'ODE'.
         eig_method : str, optional
             The method used for the eigendecomposition. Default is 'matrix'.
-        B : array-like, optional
-            The mass matrix used for the eigendecomposition when method is 'orthonormal'.
+        mass : array-like, optional
+            The mass matrix used for the eigendecomposition when method is 'orthogonal'.
 
         Returns
         -------
@@ -83,37 +79,20 @@ class WaveModel:
 
         n_modes = np.shape(self.evecs)[1]
 
-        # TODO: perform mode decomposition of external input outside of if statement
+        # Calculate mode decomposition of external input
+        ext_input_coeffs = calc_eigendecomposition(ext_input, self.evecs, eig_method, mass=mass)
         if solver_method == 'ODE':
-            ext_input_coeffs = calc_eigendecomposition(ext_input, self.evecs, eig_method, B=B)
-            sim_activity = np.zeros((n_modes, np.shape(ext_input_coeffs)[1]))
+            sim_activity = np.zeros((n_modes, len(self.t)))
             for mode_ind in range(n_modes):
                 mode_coeff = ext_input_coeffs[mode_ind, :]
-                eval = self.evals[mode_ind]
-                yout = odeint(self.wave_ode, [mode_coeff[0], 0], self.t, args=(mode_coeff, eval))
+                yout = odeint(self.wave_ode, [mode_coeff[0], 0], self.t, args=(mode_coeff, self.evals[mode_ind]))
                 sim_activity[mode_ind, :] = yout[:, 0]
 
         elif solver_method == 'Fourier':
-            # Append time vector with negative values to have a zero center
-            # t_append = np.concatenate((-np.flip(self.t[1:]), self.t))
-            # nt = len(t_append)
-            # Find the 0 index in the appended time vector
-            # t0_ind = np.argmin(np.abs(t_append))
-            ext_input_coeffs_temp = calc_eigendecomposition(ext_input, self.evecs, eig_method, B=B)
-
-            # ext_input_coeffs = np.zeros((n_modes, nt))
-            # ext_input_coeffs[:, t0_ind:] = ext_input_coeffs_temp
-
-            # sim_activity = np.zeros((n_modes, nt))
             sim_activity = np.zeros((n_modes, len(self.t)))
             for mode_ind in range(n_modes):
-                # mode_coeff = ext_input_coeffs[mode_ind, :]
-                eval = self.evals[mode_ind]
-                # yout = self.wave_fourier(mode_coeff, eval, t_append)
-                yout = self.wave_fourier(ext_input_coeffs_temp[mode_ind, :], eval, self.t)
+                yout = self.wave_fourier(ext_input_coeffs[mode_ind, :], self.evals[mode_ind], self.t)
                 sim_activity[mode_ind, :] = yout
-
-            # sim_activity = sim_activity[:, t0_ind:]
 
         mode_activity = sim_activity
         sim_activity = self.evecs @ sim_activity
@@ -149,7 +128,7 @@ class WaveModel:
 
         return out
     
-    def wave_fourier(self, q, eval, t):
+    def wave_fourier(self, mode_coeff, eval, t):
         """
         Solve the NFT wave equation using a Fourier transform.
 
@@ -159,7 +138,7 @@ class WaveModel:
             Coefficient of the mode at each time point.
         eval : float
             Eigenvalue of the mode.
-        T : array_like
+        t : array_like
             Time vector with zero at center.
 
         Returns
@@ -168,56 +147,23 @@ class WaveModel:
             Solution of the wave equation.
         """
 
-        q_hat = sp.fft.fft(q)   # scipy fft is faster than numpy fft
+        q_hat = sp.fft.fft(mode_coeff)   # scipy fft is faster than numpy fft
         omega = sp.fft.fftfreq(len(t), t[1] - t[0]) * 2 * np.pi
         phi_hat = (self.gamma**2 * q_hat) / (-omega**2 + 2j*self.gamma*omega + self.gamma**2 + (self.gamma*self.r)**2 * eval)
         phi = np.real(sp.fft.ifft(phi_hat))
 
-
-        ####
-
-        # mode_coeff_fft = np.fft.fft(mode_coeff)
-        # denominator = -(2j * np.pi * T) ** 2 + 2j * np.pi * T + self.gamma ** 2 + eval
-        # out_fft = self.gamma ** 2 * mode_coeff_fft / denominator
-        # out = np.real(np.fft.ifft(out_fft))
-
-        ####
-
-        # Nt = len(T)
-        # wsamp = 1 / np.mean(self.tstep) * 2 * np.pi
-        # jvec = np.arange(Nt)
-        # w = wsamp * 1 / Nt * (jvec - Nt / 2)
-
-        # # Calculate the -1 vectors needed for the Fourier transform
-        # wM = (-1) ** np.arange(1, len(w) + 1)
-
-        # # Perform the Fourier transform
-        # mode_coeff_fft = wM * np.fft.ifft(wM * mode_coeff)
-
-        # # Solve the wave equation in Fourier space (this equation still works for the heterogeneous
-        # # helmholtz derviation since evals_new = cmean * evals_old)
-        # out_fft = self.gamma**2 * mode_coeff_fft / (-w**2 - 2*1j*w*self.gamma + self.gamma**2 
-        #                                             + (self.r * self.gamma)**2 * eval)
-        # # out_fft = self.gamma**2 * mode_coeff_fft / (-w**2 - 2*1j*w*self.gamma + self.gamma**2 + eval)
-
-        # # Perform the inverse Fourier transform
-        # out = np.real(wM * np.fft.fft(wM * out_fft))
-
         return phi
 
 
-# ===================================
-# ========== BALLOON MODEL ==========
-# ===================================
 class BalloonModel:
     def __init__(self, evecs, tstep=0.1, tmax=100):
         # Default independent model parameters
-        self.kappa = 0.65  # signal decay rate [s^-1]
-        self.gamma = 0.41  # rate of elimination [s^-1]
-        self.tau = 0.98  # hemodynamic transit time [s]
-        self.alpha = 0.32  # Grubb's exponent [unitless]
-        self.rho = 0.34  # resting oxygen extraction fraction [unitless]
-        self.V0 = 0.02  # resting blood volume fraction [unitless]
+        self.kappa = 0.65   # signal decay rate [s^-1]
+        self.gamma = 0.41   # rate of elimination [s^-1]
+        self.tau = 0.98     # hemodynamic transit time [s]
+        self.alpha = 0.32   # Grubb's exponent [unitless]
+        self.rho = 0.34     # resting oxygen extraction fraction [unitless]
+        self.V0 = 0.02      # resting blood volume fraction [unitless]
         
         # Other parameters
         self.w_f = 0.56
@@ -246,7 +192,7 @@ class BalloonModel:
         n_modes = self.evecs.shape[1]
 
         if solver_method == 'ODE':
-            ext_input_coeffs = calc_eigendecomposition(neural, self.evecs, eig_method, B=B)
+            ext_input_coeffs = calc_eigendecomposition(neural, self.evecs, eig_method, mass=B)
             F0 = np.tile(0.001*np.ones(n_modes), (4, 1)).T
             F = F0.copy()
             sol = {'z': np.zeros((n_modes, len(self.t))),
@@ -279,7 +225,7 @@ class BalloonModel:
             t0_ind = np.argmin(np.abs(T_append))
 
             # Mode decomposition of external input
-            ext_input_coeffs_temp = calc_eigendecomposition(neural, self.evecs, eig_method, B=B)
+            ext_input_coeffs_temp = calc_eigendecomposition(neural, self.evecs, eig_method, mass=B)
 
             # Append external input coefficients for negative time values
             ext_input_coeffs = np.zeros((n_modes, Nt))
