@@ -7,8 +7,8 @@ scripts/.ipynb_checkpoints/
 scripts/__pycache__/
 scripts/sandbox/
 scripts/_console.*
-scripts/model_rs/*.sh
-scripts/model_rs/*.json
+scripts/model_rest/*.sh
+scripts/model_rest/*.json
 .env
 HeteroModes_py38.yml
 .DS_Store
