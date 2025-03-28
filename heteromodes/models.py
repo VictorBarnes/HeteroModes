@@ -188,11 +188,11 @@ class BalloonModel:
         # Input parameters
         self.evecs = evecs
 
-    def solve(self, neural, solver_method='ODE', eig_method='matrix', B=None):
+    def solve(self, neural, solver_method='ODE', eig_method='matrix', mass=None):
         n_modes = self.evecs.shape[1]
 
         if solver_method == 'ODE':
-            ext_input_coeffs = calc_eigendecomposition(neural, self.evecs, eig_method, mass=B)
+            ext_input_coeffs = calc_eigendecomposition(neural, self.evecs, eig_method, mass=mass)
             F0 = np.tile(0.001*np.ones(n_modes), (4, 1)).T
             F = F0.copy()
             sol = {'z': np.zeros((n_modes, len(self.t))),
@@ -225,7 +225,7 @@ class BalloonModel:
             t0_ind = np.argmin(np.abs(T_append))
 
             # Mode decomposition of external input
-            ext_input_coeffs_temp = calc_eigendecomposition(neural, self.evecs, eig_method, mass=B)
+            ext_input_coeffs_temp = calc_eigendecomposition(neural, self.evecs, eig_method, mass=mass)
 
             # Append external input coefficients for negative time values
             ext_input_coeffs = np.zeros((n_modes, Nt))

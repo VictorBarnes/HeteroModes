@@ -9,14 +9,15 @@ from sklearn.preprocessing import StandardScaler
 from heteromodes.models import WaveModel, BalloonModel
 
 
-def simulate_bold(evals, emodes, ext_input, solver_method, eig_method, r=28.9, gamma=0.116, B=None, tstep=0.09 * 1e3):
+def simulate_bold(evals, emodes, ext_input, solver_method, eig_method, r=28.9, gamma=0.116, mass=None, tstep=0.09 * 1e3, nsteps=1200):
     """
-    Function that simulates resting-state fMRI BOLD data.
+    Function to simulate resting-state fMRI BOLD data using the NFT wave model and the Balloon
+    haemodynamic model.
     """
     # Set simulation parameters
     tr = 0.72 * 1e3 # HCP data TR in ms
     tpre = 50 * 1e3 # burn time to remove transient
-    tmax = tpre + 1199 * tr # match number of timepoints in empirical data
+    tmax = tpre + (nsteps - 1) * tr # match number of timepoints in empirical data
 
     # Wave model to simulate neural activity
     wave = WaveModel(emodes, evals, r=r, gamma=gamma, tstep=tstep, tmax=tmax)
@@ -27,12 +28,15 @@ def simulate_bold(evals, emodes, ext_input, solver_method, eig_method, r=28.9, g
     balloon = BalloonModel(emodes, tstep=tstep, tmax=tmax)
 
     # Simulate neural activity
-    _, neural_activity = wave.solve(ext_input, solver_method, eig_method, B=B)
+    _, neural_activity = wave.solve(ext_input, solver_method, eig_method, mass=mass)
     
     # Simulate BOLD activity
-    _, bold_activity = balloon.solve(neural_activity, solver_method, eig_method, B=B)
+    _, bold_activity = balloon.solve(neural_activity, solver_method, eig_method, mass=mass)
 
-    return bold_activity[:, tsteady_ind::ntsteps_tr]
+    # Extract BOLD activity to match empirical data timepoints
+    bold_activity_tr = bold_activity[:, tsteady_ind::ntsteps_tr]
+
+    return bold_activity_tr
 
 def filter_bold(bold, tr, lowcut=0.01, highcut=0.1):
     """Filter the BOLD signal using a bandpass filter.
@@ -69,62 +73,6 @@ def filter_bold(bold, tr, lowcut=0.01, highcut=0.1):
 
     return bold_filtered
 
-def calc_fcd(bold, tr=0.72, lowcut=0.04, highcut=0.07, n_avg=3):
-    """Calculate phase-based functional connectivity dynamics (phFCD).
-
-    This function calculates the phase-based functional connectivity dynamics (phFCD) 
-    between regions of interest using the given bold signal and repetition time (TR).
-
-    Parameters
-    ----------
-    bold : numpy.ndarray
-        The bold signal data of shape (N, T), where N is the number of regions and T is the number of time points.
-    tr : float
-        The repetition time (TR) in seconds.
-
-    Returns
-    -------
-    numpy.ndarray
-        The phFCD matrix of shape (M,), where M is the number of unique pairs of regions.
-    """
-
-    # Ensure n_avg > 0
-    if n_avg < 1:
-        raise ValueError("n_avg must be greater than 0")
-
-    n_regions, t = np.shape(bold)  
-    # Bandpass filter the BOLD signal
-    bold_filtered = filter_bold(bold, tr=tr, lowcut=lowcut, highcut=highcut)
-    # Calculate phase for each region
-    phase_bold = np.angle(hilbert(bold_filtered))
-
-    # Remove first 9 and last 9 time points to avoid edge effects from filtering, as the bandpass 
-    # filter may introduce distortions near the boundaries of the time series.
-    t_trunc = np.arange(9, t - 9)
-
-    # Calculate synchrony
-    triu_inds = np.triu_indices(n_regions, k=1)
-    nt = len(t_trunc)
-    synchrony_vecs = np.zeros((nt, len(triu_inds[0])))
-    for t_ind, t in enumerate(t_trunc):
-        phase_diff = np.subtract.outer(phase_bold[:, t], phase_bold[:, t])
-        synchrony_mat = np.cos(phase_diff)
-        synchrony_vecs[t_ind, :] = synchrony_mat[triu_inds]
-
-    # Pre-calculate phase vectors
-    p_mat = np.zeros((nt - n_avg-1, synchrony_vecs.shape[1]))
-    for t_ind in range(nt - n_avg-1):
-        p_mat[t_ind, :] = np.mean(synchrony_vecs[t_ind : t_ind+n_avg, :], axis=0)
-        p_mat[t_ind, :] = p_mat[t_ind, :] / norm(p_mat[t_ind, :])
-
-    # Calculate phase for every time pair
-    fcd_mat = p_mat @ p_mat.T
-
-    triu_ind = np.triu_indices(fcd_mat.shape[0], k=1)
-    fcd = fcd_mat[triu_ind]
-
-    return fcd
-
 def generalized_phase_vector(x, Fs, lp):
     """
     GENERALIZED PHASE VECTOR calculate the generalized phase of input vector
@@ -147,7 +95,6 @@ def generalized_phase_vector(x, Fs, lp):
 
     # anonymous functions
     rewrap = lambda xp: (xp - 2 * np.pi * np.floor((xp - np.pi) / (2 * np.pi)) - 2 * np.pi)
-    # naninterp = lambda xp: interp1d(np.where(~np.isnan(xp))[0], xp[~np.isnan(xp)], kind='cubic', fill_value="extrapolate")(np.where(np.isnan(xp))[0])
     def naninterp(xp):
         # Find indices where xp is not NaN and where it is NaN
         not_nan = np.where(~np.isnan(xp))[0]
@@ -222,74 +169,125 @@ def generalized_phase_vector(x, Fs, lp):
 
     return xgp, wt
 
-def calc_phase(bold, tr=0.72, lowcut=0.01, highcut=0.1):
-    # Bandpass filter the BOLD signal
-    bold_filtered = filter_bold(bold, tr=tr, lowcut=lowcut, highcut=highcut)
+def calc_edgefc_corr(model_fc, emp_fc, eps=1e-7):
+    triu_inds = np.triu_indices(np.shape(model_fc)[0], k=1)
+    edge_fc_corr = np.corrcoef(np.arctanh(np.clip(model_fc[triu_inds], -1 + eps, 1 - eps)), 
+                               np.arctanh(np.clip(emp_fc[triu_inds], -1 + eps, 1 - eps)))[0, 1]
 
+    return edge_fc_corr
+
+def calc_nodefc_corr(model_fc, emp_fc, eps=1e-7):
+    # Compute Node-level FC (exclude diagonal elements by setting them to NaN)
+    fc_model_nandiag = np.clip(model_fc, -1 + eps, 1 - eps)
+    np.fill_diagonal(fc_model_nandiag, np.nan)
+    fc_emp_nandiag = np.clip(emp_fc, -1 + eps, 1 - eps)
+    np.fill_diagonal(fc_emp_nandiag, np.nan)
+    node_fc_corr = np.corrcoef(np.nanmean(np.arctanh(fc_model_nandiag), axis=1), 
+                               np.nanmean(np.arctanh(fc_emp_nandiag), axis=1))[0, 1]
+    
+    return node_fc_corr
+
+def calc_gen_phase(bold, tr=0.72, lowcut=0.01, highcut=0.1):
     # Calculate phase delay
-    phase_delay = np.empty(bold_filtered.shape, dtype=np.complex128)
-    for i in range(bold_filtered.shape[0]):
-        phase_delay[i, :] = generalized_phase_vector(bold_filtered[i, :], Fs=1/0.72, lp=lowcut)[0].conj()
+    phase_delay = np.empty(bold.shape, dtype=np.complex128)
+    for i in range(bold.shape[0]):
+        phase_delay[i, :] = generalized_phase_vector(bold[i, :], Fs=1/0.72, lp=lowcut)[0].conj()
 
     return np.angle(phase_delay)
 
 def calc_phase_map(phase, n_components=4):
     # Compute SVD
-    U, s, _ = fbpca.pca(phase, k=n_components, n_iter=20, l=20)
+    l = 10 + n_components
+    U, s, V = fbpca.pca(phase, k=n_components, n_iter=20, l=l)
 
     # Calculate weighted sum of first n principal components
-    combined_phase_map = np.sum(U * s**2, axis=1)
+    combined_phase_map = np.sum(np.real(V).T @ np.diag(s), axis=1) / np.sum(s)
+    # combined_phase_map = np.mean(U @ np.diag(s) @ V, axis=1)
 
+    # return combined_phase_map
     return combined_phase_map
 
-def calc_edge_and_node_fc(empirical, model):
-    """_summary_
+def calc_phase_cpcs(phase, n_components=4):
+    """Calculate the complex principal components (CPCs) of the phase data.
+
+    This function computes the complex principal components (CPCs) of the input phase data
+    using Singular Value Decomposition (SVD).
 
     Parameters
     ----------
-    empirical : _type_
-        _description_
-    model : _type_
-        _description_
+    phase : numpy.ndarray
+        The phase data of shape (T, N), where T is the number of time points and N is the number of regions.
+    n_components : int, optional
+        The number of principal components to compute, by default 3.
 
     Returns
     -------
-    _type_
-        _description_
-
-    Raises
-    ------
-    ValueError
-        _description_
-    ValueError
-        _description_
+    numpy.ndarray
+        The complex principal components (CPCs) shape (N, n_components).
+    numpy.ndarray
+        The singular values corresponding to the principal components.
     """
 
-    fc_emp = empirical["fc"]
-    fc_model = model["fc"]
-    nruns = np.shape(fc_model)[2]
+    # Compute SVD
+    l = 10 + n_components
+    U, s, V = fbpca.pca(phase, k=n_components, n_iter=20, l=l)
+    # combined_phase_map = np.sum(np.real(V.T) * s, axis=1) / np.sum(s)
 
-    if np.shape(fc_emp)[0] != np.shape(fc_model)[0]:
-        raise ValueError("Empirical and model FC data do not have the same number of regions")
-    
-    nparcels = np.shape(fc_emp)[0]
-    triu_inds = np.triu_indices(nparcels, k=1)
+    return np.real(V).T, s
 
-    edge_fc_corr, node_fc_corr = np.zeros(nruns), np.zeros(nruns)
-    for run in range(nruns):
-        fc_model_run = fc_model[:, :, run]
 
-        # Compute Edge-level FC
-        edge_fc_corr[run] = np.corrcoef(np.arctanh(fc_emp[triu_inds]), np.arctanh(fc_model_run[triu_inds]))[0, 1]
+def calc_fcd(bold, tr=0.72, lowcut=0.04, highcut=0.07, n_avg=3):
+    """Calculate phase-based functional connectivity dynamics (phFCD).
 
-        # Compute Node-level FC (exclude diagonal elements by setting them to NaN)
-        fc_model_run_nandiag = np.copy(fc_model_run)
-        np.fill_diagonal(fc_model_run_nandiag, np.nan)
-        fc_emp_nandiag = np.copy(fc_emp)
-        np.fill_diagonal(fc_emp_nandiag, np.nan)
-        node_fc_corr[run] = np.corrcoef(np.nanmean(np.arctanh(fc_model_run_nandiag), axis=1), 
-                            np.nanmean(np.arctanh(fc_emp_nandiag), axis=1))[0, 1]
-    edge_fc_corr = np.mean(edge_fc_corr)
-    node_fc_corr = np.mean(node_fc_corr)
+    This function calculates the phase-based functional connectivity dynamics (phFCD) 
+    between regions of interest using the given bold signal and repetition time (TR).
 
-    return edge_fc_corr, node_fc_corr
+    Parameters
+    ----------
+    bold : numpy.ndarray
+        The bold signal data of shape (N, T), where N is the number of regions and T is the number of time points.
+    tr : float
+        The repetition time (TR) in seconds.
+
+    Returns
+    -------
+    numpy.ndarray
+        The phFCD matrix of shape (M,), where M is the number of unique pairs of regions.
+    """
+
+    # Ensure n_avg > 0
+    if n_avg < 1:
+        raise ValueError("n_avg must be greater than 0")
+
+    n_regions, t = np.shape(bold)  
+    # Bandpass filter the BOLD signal
+    bold_filtered = filter_bold(bold, tr=tr, lowcut=lowcut, highcut=highcut)
+    # Calculate phase for each region
+    phase_bold = np.angle(hilbert(bold_filtered))
+
+    # Remove first 9 and last 9 time points to avoid edge effects from filtering, as the bandpass 
+    # filter may introduce distortions near the boundaries of the time series.
+    t_trunc = np.arange(9, t - 9)
+
+    # Calculate synchrony
+    triu_inds = np.triu_indices(n_regions, k=1)
+    nt = len(t_trunc)
+    synchrony_vecs = np.zeros((nt, len(triu_inds[0])))
+    for t_ind, t in enumerate(t_trunc):
+        phase_diff = np.subtract.outer(phase_bold[:, t], phase_bold[:, t])
+        synchrony_mat = np.cos(phase_diff)
+        synchrony_vecs[t_ind, :] = synchrony_mat[triu_inds]
+
+    # Pre-calculate phase vectors
+    p_mat = np.zeros((nt - n_avg-1, synchrony_vecs.shape[1]))
+    for t_ind in range(nt - n_avg-1):
+        p_mat[t_ind, :] = np.mean(synchrony_vecs[t_ind : t_ind+n_avg, :], axis=0)
+        p_mat[t_ind, :] = p_mat[t_ind, :] / norm(p_mat[t_ind, :])
+
+    # Calculate phase for every time pair
+    fcd_mat = p_mat @ p_mat.T
+
+    triu_ind = np.triu_indices(fcd_mat.shape[0], k=1)
+    fcd = fcd_mat[triu_ind]
+
+    return fcd
