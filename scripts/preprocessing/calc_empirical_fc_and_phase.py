@@ -2,6 +2,7 @@
 # import packages
 import os
 import h5py
+import fbpca
 import numpy as np
 from joblib import Parallel, delayed
 from sklearn.preprocessing import StandardScaler
@@ -37,7 +38,7 @@ if __name__ == "__main__":
     freql = 0.01
     freqh = 0.1
     n_subjs = 255
-    ncps = 10
+    ncpcs = 10
     ncpcs_comb = 3
     den = "4k"
     phase_type = "complex"
@@ -71,20 +72,20 @@ if __name__ == "__main__":
     phase_indiv_mm[:] = np.dstack(phase_indiv)
 
     print('calculating phase cpcs')
-    phase_cpcs_group, svals_group = calc_phase_cpcs(
-        phase=np.hstack([phase_indiv_mm[:, :, i] for i in range(n_subjs)], dtype=np.complex64).T, 
-        n_components=ncps
+    l = 10 + ncpcs
+    _, svals_group, V_group = fbpca.pca(
+        np.hstack([phase_indiv_mm[:, :, i] for i in range(n_subjs)], dtype=np.complex64).T, 
+        k=ncpcs, 
+        n_iter=20, 
+        l=l
     )
-    phase_combined_group = calc_phase_map(
-        phase=np.hstack([phase_indiv_mm[:, :, i] for i in range(n_subjs)], dtype=np.complex64).T,
-        n_components=ncps
-    )
+    phase_cpcs_group = np.real(V_group).T
 
     fc_train = np.empty((nverts, nverts, n_splits))
     fc_test = np.empty((nverts, nverts, n_splits))
-    phase_cpcs_train = np.empty((nverts, ncps, n_splits))
-    phase_cpcs_test = np.empty((nverts, ncps, n_splits))
-    svals_train, svals_test = np.empty((ncps, n_splits)), np.empty((ncps, n_splits))
+    phase_cpcs_train = np.empty((nverts, ncpcs, n_splits))
+    phase_cpcs_test = np.empty((nverts, ncpcs, n_splits))
+    svals_train, svals_test = np.empty((ncpcs, n_splits)), np.empty((ncpcs, n_splits))
     phase_combined_train = np.empty((nverts, n_splits))
     phase_combined_test = np.empty((nverts, n_splits))
     train_subjs, test_subjs = [], []
@@ -96,23 +97,22 @@ if __name__ == "__main__":
         fc_test[:, :, i] = np.mean(fc_indiv_mm[:, :, test_idx], axis=2)
 
         print("Computing Phase")
-        phase_cpcs_train[:, :, i], svals_train[:, i] = calc_phase_cpcs(
-            phase=np.hstack([phase_indiv_mm[:, :, i] for i in train_idx]).T, 
-            n_components=ncps
+        _, s_train, V_train = fbpca.pca(
+            np.hstack([phase_indiv_mm[:, :, i] for i in train_idx]).T, 
+            k=ncpcs, 
+            n_iter=20, 
+            l=l
         )
-        phase_cpcs_test[:, :, i], svals_test[:, i] = calc_phase_cpcs(
-            phase=np.hstack([phase_indiv_mm[:, :, i] for i in test_idx]).T,
-            n_components=ncps
+        _, s_test, V_test = fbpca.pca(
+            np.hstack([phase_indiv_mm[:, :, i] for i in test_idx]).T, 
+            k=ncpcs, 
+            n_iter=20, 
+            l=l
         )
-
-        phase_combined_train[:, i] = calc_phase_map(
-            phase=np.hstack([phase_indiv_mm[:, :, i] for i in train_idx]).T, 
-            n_components=ncpcs_comb
-        )
-        phase_combined_test[:, i] = calc_phase_map(
-            phase=np.hstack([phase_indiv_mm[:, :, i] for i in test_idx]).T,
-            n_componnets=ncpcs_comb
-        )
+        phase_cpcs_train[:, :, i] = np.real(V_train).T
+        phase_cpcs_test[:, :, i] = np.real(V_test).T
+        svals_train[:, i] = s_train
+        svals_test[:, i] = s_test
 
         train_subjs.append(subj_ids[train_idx])
         test_subjs.append(subj_ids[test_idx])
@@ -130,7 +130,6 @@ if __name__ == "__main__":
         h5f.create_dataset('phase', data=phase_indiv_mm, dtype=np.complex64)
         h5f.create_dataset('phase_cpcs_group', data=phase_cpcs_group, dtype=np.float32)
         h5f.create_dataset('svals_group', data=svals_group, dtype=np.float32)
-        h5f.create_dataset('phase_combined_group', data=phase_combined_group, dtype=np.float32)
         h5f.create_dataset('medmask', data=medmask)
         h5f.create_dataset('subj_ids', data=subj_ids)
 
@@ -146,13 +145,6 @@ if __name__ == "__main__":
         h5f.create_dataset('svals_train', data=svals_train, dtype=np.float32)
         h5f.create_dataset('phase_cpcs_test', data=phase_cpcs_test, dtype=np.float32)
         h5f.create_dataset('svals_test', data=svals_test, dtype=np.float32)
-        h5f.create_dataset('medmask', data=medmask)
-        h5f.create_dataset('subj_ids_train', data=pad_sequences(train_subjs))
-        h5f.create_dataset('subj_ids_test', data=pad_sequences(test_subjs))
-
-    with h5py.File(f"{PROJ_DIR}/data/empirical/HCP_nsubj-{n_subjs}_phasemaps-kfold{n_splits}_parc-None_fsLR{den}_hemi-L_freql-{freql:.1g}_freqh-{freqh:.1g}_ncpcs-{ncpcs_comb}.h5", 'w') as h5f:
-        h5f.create_dataset('phase_combined_train', data=phase_combined_train, dtype=np.float32)
-        h5f.create_dataset('phase_combined_test', data=phase_combined_test, dtype=np.float32)
         h5f.create_dataset('medmask', data=medmask)
         h5f.create_dataset('subj_ids_train', data=pad_sequences(train_subjs))
         h5f.create_dataset('subj_ids_test', data=pad_sequences(test_subjs))
