@@ -195,47 +195,6 @@ def calc_gen_phase(bold, tr=0.72, lowcut=0.01, highcut=0.1):
 
     return np.angle(phase_delay)
 
-def calc_phase_map(phase, n_components=4):
-    # Compute SVD
-    l = 10 + n_components
-    U, s, V = fbpca.pca(phase, k=n_components, n_iter=20, l=l)
-
-    # Calculate weighted sum of first n principal components
-    combined_phase_map = np.sum(np.real(V).T @ np.diag(s), axis=1) / np.sum(s)
-    # combined_phase_map = np.mean(U @ np.diag(s) @ V, axis=1)
-
-    # return combined_phase_map
-    return combined_phase_map
-
-def calc_phase_cpcs(phase, n_components=4):
-    """Calculate the complex principal components (CPCs) of the phase data.
-
-    This function computes the complex principal components (CPCs) of the input phase data
-    using Singular Value Decomposition (SVD).
-
-    Parameters
-    ----------
-    phase : numpy.ndarray
-        The phase data of shape (T, N), where T is the number of time points and N is the number of regions.
-    n_components : int, optional
-        The number of principal components to compute, by default 3.
-
-    Returns
-    -------
-    numpy.ndarray
-        The complex principal components (CPCs) shape (N, n_components).
-    numpy.ndarray
-        The singular values corresponding to the principal components.
-    """
-
-    # Compute SVD
-    l = 10 + n_components
-    U, s, V = fbpca.pca(phase, k=n_components, n_iter=20, l=l)
-    # combined_phase_map = np.sum(np.real(V.T) * s, axis=1) / np.sum(s)
-
-    return np.real(V).T, s
-
-
 def calc_fcd(bold, tr=0.72, lowcut=0.04, highcut=0.07, n_avg=3):
     """Calculate phase-based functional connectivity dynamics (phFCD).
 
