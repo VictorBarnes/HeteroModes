@@ -4,161 +4,210 @@ import time
 import argparse
 import itertools
 import numpy as np
-import nibabel as nib
-from joblib import Parallel, delayed
+import fbpca
+from joblib import Parallel, delayed, Memory
 from dotenv import load_dotenv
-from sklearn.model_selection import KFold
 from sklearn.preprocessing import StandardScaler
 from neuromaps.datasets import fetch_atlas
-from brainspace.utils.parcellation import reduce_by_labels
-from heteromodes import HeteroSolver
-from heteromodes.utils import load_hmap, pad_sequences
-from heteromodes.restingstate import simulate_bold, calc_phase, calc_edge_and_node_fc, calc_phase_map
-from heteromodes.solver import scale_hmap
+from scipy.signal import hilbert
+from heteromodes import EigenSolver
+from heteromodes.utils import load_hmap
+from heteromodes.restingstate import simulate_bold, calc_edgefc_corr, calc_nodefc_corr, filter_bold
 
 load_dotenv()
 PROJ_DIR = os.getenv("PROJ_DIR")
+TR = 0.72
+nT = 1200
+memory = Memory("/fs03/kg98/vbarnes/cache/", verbose=0)
+DENSITIES = {3619: "4k", 29696: "32k"}
 
+def print_heading(text):
+    print(f"\n{text}\n{'=' * len(text)}")
 
-def calc_fc_and_phase(bold, tr, band_freq, parc=None):
-    # Z-score bold data
-    scaler = StandardScaler()
-    bold_z = scaler.fit_transform(bold.T).T
-
-    # Compute phase on vertex data
-    phase = calc_phase(bold_z, tr=tr, lowcut=band_freq[0], highcut=band_freq[1])
-
-    # Compute FC on parcellated data
-    if parc is not None:
-        bold_z = reduce_by_labels(bold_z, parc, axis=1)
-    fc = np.corrcoef(bold_z)
-
-    return fc, phase
-
-def run_model(run, evals, emodes, parc, args, params, B=None):
-    # Load external input, run model and parcellate
-    ext_input = np.load(f"{PROJ_DIR}/data/resting_state/extInput_parc-{args.parc}_den-{args.den}_nT-1200_randseed-{run}.npy")
-    bold_model = simulate_bold(evals, emodes, ext_input, solver_method='Fourier', 
-                               eig_method='orthonormal', r=params[1], gamma=params[2], B=B)
-
-    # Z-score bold data
-    scaler = StandardScaler()
-    bold_model = scaler.fit_transform(bold_model.T).T
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Model resting-state fMRI BOLD data and evaluate against empirical data.")
+    parser.add_argument("--id", type=str, default=0, help="The id of the run for saving outputs.")
+    parser.add_argument("--hmap_label", type=lambda x: None if x.lower() == "none" else x, default=None, 
+                        help="The label of the heterogeneity map. Defaults to None (indicating homogeneity)")
+    parser.add_argument("--n_runs", type=int, default=5, 
+                        help="The number of runs to simulate. Defaults to 50.")
+    parser.add_argument("--n_modes", type=int, default=500, 
+                        help="The number of modes to calculate. Defaults to 500.")
+    parser.add_argument("--n_splits", type=int, default=5, 
+                        help="The number of splits for cross-validation. Defaults to 5.")
+    parser.add_argument("--n_subjs", type=int, default=255, 
+                        help="The number of subjects in the empirical data. Defaults to 255.")
+    parser.add_argument("--n_jobs", type=int, default=-1, 
+                        help="The number of CPUs for parallelization. Defaults to -1")
+    parser.add_argument('--alpha', type=float, nargs=3, default=[-2, 2, 0.2], metavar=('alpha_min', 'alpha_max', 'alpha_step'), 
+                        help='The alpha_min, alpha_max, and alpha_step values for scaling the heterogeneity map.')
+    parser.add_argument("--r", type=float, nargs="+", default=[28.9], metavar="r_values", 
+                        help="The spatial length scale of the wave model. Defaults to 28.9 s^-1. Provide either a single r value or three values (r_min, r_max, r_step).")
+    parser.add_argument("--gamma", type=float, nargs="+", default=[0.116], metavar="gamma values",
+                        help="The dampening rate of the wave model. Defaults to 0.116 s^-1. Provide either a single gamma value or three values (gamma_min, gamma_max, gamma_step).")
+    parser.add_argument("--sigma", type=int, nargs="+", default=[0], metavar="sigma values",
+                        help="The number of smoothing iterations to apply to the heterogeneity map. Defaults to 0. Provide either a single sigma value or three values (sigma_min, sigma_max, sigma_step).")
+    parser.add_argument("--den", type=str, default="4k", 
+                        help="The density of the surface. Defaults to `4k`.")
+    parser.add_argument("--band_freq", type=float, nargs=2, default=[0.01, 0.1], metavar=('low', 'high'), 
+                        help="The low and high bandpass frequencies for filtering the BOLD data. Defaults to [0.01, 0.1].")
+    parser.add_argument("--metrics", type=str, nargs='+', default=["edge_fc", "node_fc", "phase"], 
+                        help="The metrics to use for evaluation. Defaults to ['edge_fc', 'node_fc', 'phase']")
+    parser.add_argument("--crossval", type=lambda x: x.lower() == "true", default=False, 
+                        help="Whether to perform cross-validation. Defaults to False.")
+    parser.add_argument("--scaling", type=str, default="exponential",
+                        help="The scaling to apply to the heterogeneity map. Defaults to 'exponential'.")
+    parser.add_argument('--q_norm', type=lambda x: None if x.lower() == "none" else x, default=None, 
+                        help="Type of distribution to match to when doing the quantile normalisation")
+    parser.add_argument("--phase_type", type=str, default="cpc",
+                        help="The type of phase to calculate. Defaults to 'cpc'.")
+    parser.add_argument("--n_comps", type=int, default=3,
+                        help="The number of components to calculate for the phase map. Defaults to 3.")
     
-    # Compute model FC and phase
-    fc_model, phase_model = calc_fc_and_phase(
-        bold=bold_model, 
-        tr=0.72, 
-        band_freq=(args.band_freq[0], args.band_freq[1]),
-        parc=parc
+    return parser.parse_args()
+
+# @memory.cache
+def run_model(surf, hmap, medmask, params, n_modes=500, n_runs=5, phase_type=None, band_freq=(0.01, 0.1), 
+              scaling="exponential", q_norm=None, n_components=3):
+    nverts = np.sum(medmask)
+    den = DENSITIES[nverts]
+    
+    # Try solve eigenvalues and eigenvectors. If it doesn't work then return None
+    try:
+        solver = EigenSolver(surf=surf, hetero=hmap, medmask=medmask, alpha=params[0], sigma=params[3], 
+                             scaling=scaling, q_norm=q_norm)
+        evals, emodes = solver.solve(n_modes=n_modes, fix_mode1=True, standardise=True)
+    # Only catch error when invalid parameter combinations are used
+    except ValueError as e:
+        if "Alpha value results in non-physiological wave speeds" in str(e):
+            print(f"Invalid parameter combination: {params}")
+            return None, None
+        else:
+            raise e
+
+    # Z-score bold data
+    scaler = StandardScaler()
+
+    # Simulate BOLD data and calculate FC and phase
+    fcs = np.empty((nverts, nverts, n_runs))
+    phase = np.empty((nverts, nT*n_runs), dtype=np.complex64)
+    for run in range(n_runs):
+        # Load external input, run model and parcellate
+        ext_input = np.load(f"{PROJ_DIR}/data/resting_state/extInput_parc-None_den-{den}_nT-{nT}_randseed-{run}.npy")
+        bold = simulate_bold(evals, emodes, ext_input, solver_method='Fourier', 
+                             eig_method='orthogonal', r=params[1], gamma=params[2], mass=solver.mass)
+        bold_z = scaler.fit_transform(bold.T).T
+        
+        # Compute model FC and phase
+        fcs[:, :, run] = np.corrcoef(bold_z)
+
+        # Bandpass filter the BOLD signal
+        bold_filtered = filter_bold(bold_z, tr=TR, lowcut=band_freq[0], highcut=band_freq[1])
+
+        # Compute phase
+        phase[:, run*nT:(run+1)*nT] = hilbert(bold_filtered, axis=1).conj()
+
+    # Calculate FC
+    fc = np.mean(fcs, axis=2, dtype=np.float32)
+    # Calculate phase map
+    if phase_type in ["cpc", "combined"]:
+        _, s, V = fbpca.pca(phase.T, k=10, n_iter=20, l=20)
+
+        if phase_type == "cpc":
+            phase_map = np.real(V[0, :]).T
+        elif phase_type == "combined":
+            phase_map = np.sum(np.real(V[:n_components, :]).T * s[:n_components], axis=1) / np.sum(s[:n_components])
+    else:
+        phase_map = None
+
+    return fc, phase_map
+
+def evaluate_model(model_fc, model_phase_map, emp_fc, emp_phase_map, metrics):
+    # Calculate evaluation metrics
+    edge_fc_corr, node_fc_corr, phase_corr = 0, 0, 0
+    if "edge_fc" in metrics:
+        edge_fc_corr = calc_edgefc_corr(model_fc, emp_fc)
+    if "node_fc" in metrics:
+        node_fc_corr = calc_nodefc_corr(model_fc, emp_fc)
+    if "phase" in metrics:
+        phase_corr = np.abs(np.corrcoef(model_phase_map, emp_phase_map)[0, 1])
+
+    return edge_fc_corr, node_fc_corr, phase_corr
+
+# @profile
+def run_split(model_fcs, model_phase_maps, emp_train_fc, emp_test_fc, emp_train_phase_map, emp_test_phase_map, param_combs, args):
+    # Evaluate each model on train data
+    train_edge_fc_corr = np.empty(len(model_fcs))
+    train_node_fc_corr = np.empty(len(model_fcs))
+    train_phase_corr = np.empty(len(model_fcs))
+    for param_i in range(len(model_fcs)):
+        if "phase" in args.metrics:
+            model_phase_map_param = model_phase_maps[param_i]
+        else:
+            model_phase_map_param = None
+        train_edge_fc_corr[param_i], train_node_fc_corr[param_i], train_phase_corr[param_i] = evaluate_model(
+            model_fcs[param_i],
+            model_phase_map_param,
+            emp_train_fc,
+            emp_train_phase_map,
+            args.metrics
+        )
+
+        print(f"alpha: {param_combs[param_i][0]:.2f}, r: {param_combs[param_i][1]:.2f}, gamma: {param_combs[param_i][2]:.2f}, sigma: {param_combs[param_i][3]:.2f} | Combined metric: {train_edge_fc_corr[param_i] + train_node_fc_corr[param_i] + train_phase_corr[param_i]:.3g}")
+
+    # Calculate combined metric
+    train_combined = train_edge_fc_corr + train_node_fc_corr + train_phase_corr
+    best_ind = np.argmax(train_combined)
+    best_combs = param_combs[best_ind]
+    
+    # Get best FC and phase map from best model
+    best_fc = model_fcs[best_ind]
+    if "phase" in args.metrics:
+        best_phase_map = model_phase_maps[best_ind]
+    else:
+        best_phase_map = None
+        emp_test_phase_map = None
+    # Evaluate best model on test data
+    test_edge_fc_corr, test_node_fc_corr, test_phase_corr = evaluate_model(
+        best_fc,
+        best_phase_map,
+        emp_test_fc,
+        emp_test_phase_map,
+        args.metrics
     )
 
-    return fc_model, phase_model
+    # Calculate combined metric
+    test_combined = test_edge_fc_corr + test_node_fc_corr + test_phase_corr
 
-def run_and_evaluate(surf, medmask, hmap, parc, params, args, emp_results, return_all=False):
+    return (
+        train_edge_fc_corr, train_node_fc_corr, train_phase_corr, train_combined,
+        test_edge_fc_corr, test_node_fc_corr, test_phase_corr, test_combined,
+        best_fc, best_phase_map, best_combs
+    )
+
+
+if __name__ == "__main__":
     t1 = time.time()
 
-    # Calculate modes
-    solver = HeteroSolver(
-        surf=surf,
-        hmap=hmap,
-        medmask=medmask,
-        alpha=params[0],
-    )
-    evals, emodes = solver.solve(n_modes=args.n_modes, fix_mode1=True, standardise=True)
+    args = parse_arguments()
+    if args.hmap_label == "None":
+        args.hmap_label = None
+    if args.q_norm == "None":
+        args.q_norm = None
 
-    # Run model but only return evaluation metrics
-    if parc is not None:
-        n_regions = len(np.unique(parc))
-    else:
-        n_regions = np.sum(medmask)
-    fc_model = np.empty((n_regions, n_regions, args.n_runs))
-    n_verts = np.sum(medmask)
-    phase_model = np.empty((n_verts, 1200, args.n_runs))    # 1200 time points in HCP data
-    for run in range(args.n_runs):
-        fc_model[:, :, run], phase_model[:, :, run] = run_model(
-            run=run, 
-            evals=evals, 
-            emodes=emodes, 
-            parc=parc,
-            args=args, 
-            params=params, 
-            B=solver.mass,
-        )
-    # Concatenate subjects/runs
-    phase_model = phase_model.reshape(n_verts, -1)
-    model_results = {"fc": fc_model, "phase": phase_model}
+    out_dir = f'{PROJ_DIR}/results/model_rest/group'
 
-    # Calculate edge and node FC
-    edge_fc_corr, node_fc_corr = calc_edge_and_node_fc(
-        empirical=emp_results, 
-        model=model_results, 
-    )
-
-    # Calculate phase corr
-    phase_map_emp = calc_phase_map(emp_results["phase"], n_components=4)
-    phase_map_model = calc_phase_map(phase_model, n_components=4)
-    if parc is not None:
-        phase_map_emp = reduce_by_labels(phase_map_emp, parc, axis=0)
-        phase_map_model = reduce_by_labels(phase_map_model, parc, axis=0)
-    phase_corr = np.corrcoef(phase_map_emp, phase_map_model)[0, 1]
-
-    t2 = time.time()
-    print(f"alpha = {params[0]:.1f} | {t2 - t1:.2f} seconds")
-
-    if return_all:
-        return edge_fc_corr, node_fc_corr, phase_corr, np.mean(fc_model, axis=2), phase_map_model
-    else:
-        return edge_fc_corr, node_fc_corr, phase_corr
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Model resting-state fMRI BOLD data and evaluate against empirical data.")
-    parser.add_argument("--id", type=int, help="The id of the run for saving outputs.")
-    parser.add_argument("--hmap_label", type=str, default=None, help="The label of the heterogeneity map. Defaults to None (indicating homogeneity)")
-    parser.add_argument("--n_runs", type=int, default=5, help="The number of runs to simulate. Defaults to 50.")
-    parser.add_argument("--n_modes", type=int, default=500, help="The number of modes to calculate. Defaults to 500.")
-    parser.add_argument("--n_splits", type=int, default=5, help="The number of splits for cross-validation. Defaults to 5.")
-    parser.add_argument("--n_subjs", type=int, default=384, help="The number of subjects in the empirical data. Defaults to 384.")
-    parser.add_argument("--n_jobs", type=int, default=-1, help="The number of CPUs for parallelization. Defaults to -1")
-    parser.add_argument('--alpha', type=float, nargs=3, metavar=('alpha_min', 'alpha_max', 'alpha_step'), help='The alpha_min, alpha_max, and alpha_step values for scaling the heterogeneity map.')
-    parser.add_argument("--den", type=str, default="32k", help="The density of the surface. Defaults to `32k`.")
-    parser.add_argument("--parc", type=str, default=None, help="The parcellation to use to downsample the BOLD data.")
-    parser.add_argument("--band_freq", type=float, nargs=2, default=[0.01, 0.1], metavar=('low', 'high'), help="The low and high bandpass frequencies for filtering the BOLD data. Defaults to [0.01, 0.1].")
-    parser.add_argument("--metrics", type=str, nargs='+', default=["edge_fc", "node_fc", "phase"], help="The metrics to use for evaluation. Defaults to ['edge_fc', 'node_fc', 'phase']")
-    args = parser.parse_args()
-    
-    # Get surface, medial mask and parcellation files
+    # Get surface
     fslr = fetch_atlas(atlas='fsLR', density=args.den)
     surf = str(fslr['midthickness'][0])
-
-    out_dir = f'{PROJ_DIR}/results/model_rs/crossval/id-{args.id}'
-
-    # Load empirical BOLD data
-    bold_data = h5py.File(f"{PROJ_DIR}/data/empirical/HCP_unrelated-445_rfMRI_hemi-L_nsubj-{args.n_subjs}_parc-None_fsLR{args.den}_hemi-L_BOLD.hdf5", 'r')
-    bold_emp = bold_data['bold'][:]
-    subj_ids = bold_data['subj_ids']
-
-    # Load parcellation and medial wall mask
-    if args.parc is not None:
-        try:
-            parc_file = f"{PROJ_DIR}/data/parcellations/parc-{args.parc}_space-fsLR_den-{args.den}_hemi-L.label.gii"
-            parc = nib.load(parc_file).darrays[0].data.astype(int)
-        except:
-            raise ValueError(f"Parcellation '{args.parc}' with den '{args.den}' not found.")
-        medmask = np.where(parc != 0, True, False)
-        parc = parc[medmask]
-    else:
-        parc = None
-        medmask = np.where(bold_emp[:, 0, 0] != 0, True, False)
-
-    bold_emp = bold_emp[medmask, :, :]
-    nverts, _, nsubjs = np.shape(bold_emp)
+    # Load medmask
+    with h5py.File(f"{PROJ_DIR}/data/empirical/HCP_nsubj-{args.n_subjs}_bold_parc-None_fsLR{args.den}_hemi-L.h5", 'r') as f:
+        medmask = f['medmask'][:]
 
     # Get hmap and alpha values
     if args.hmap_label is None:
         hmap = None
-        param_combs = [(0, 28.9, 0.116)]
+        alpha_vals = [0]
     else:
         # If hmap_label is null, load null map
         if args.hmap_label[:4] == "null":
@@ -173,170 +222,193 @@ def main():
             num_nonmed_zeros = np.sum(np.where(hmap[medmask] == 0, True, False))
             if num_nonmed_zeros > 0 and np.min(hmap[medmask]) == 0:
                 print(f"Warning: {num_nonmed_zeros} vertices on the heterogeneity maps have a "
-                      f"value of 0.")
+                        f"value of 0.")
 
         alpha_min, alpha_max, alpha_step = args.alpha
         alpha_num = int(abs(alpha_max - alpha_min) / alpha_step) + 1
         alpha_vals = np.linspace(alpha_min, alpha_max, alpha_num)
         if alpha_min < 0 < alpha_max:
             alpha_vals = alpha_vals[alpha_vals != 0] # Remove 0 since that is the homogeneous case
-        # Only keep valid alpha values (i.e. max wave speed <= 150 m/s)
-        valid_alpha = []
-        for i, alpha in enumerate(alpha_vals):
-            if np.max(3.3524*np.sqrt(scale_hmap(hmap[medmask], alpha=alpha))) <= 150:
-                valid_alpha.append(alpha)
+        print(alpha_vals)
+    r_vals = args.r if len(args.r) == 1 else np.arange(args.r[0], args.r[1], args.r[2])
+    gamma_vals = args.gamma if len(args.gamma) == 1 else np.arange(args.gamma[0], args.gamma[1], args.gamma[2])
+    sigma_vals = args.sigma if len(args.sigma) == 1 else np.arange(args.sigma[0], args.sigma[1], args.sigma[2], dtype=int)
+    param_combs = list(itertools.product(alpha_vals, r_vals, gamma_vals, sigma_vals))
 
-        r_vals = [28.9]
-        gamma_vals = [0.116]
-
-        param_combs = list(itertools.product(valid_alpha, r_vals, gamma_vals))
-
-    print(f"Number of parameter combinations: {len(param_combs)}")
-
-    # Parallelize the calculation of FC and phase
-    print("Calculating empirical FC and Phase...")
-    results = Parallel(n_jobs=args.n_jobs, verbose=1)(
-        delayed(calc_fc_and_phase)(
-            bold=bold_emp[:, :, subj], 
-            tr=0.72, 
-            band_freq=(args.band_freq[0], args.band_freq[1]),
-            parc=parc
-        )
-        for subj in range(nsubjs)
+    # Run all models (i.e. for all parameter combinations) and store outputs in cache
+    print_heading(f"Running {args.hmap_label} model for {len(param_combs)} parameter combinations...")
+    results = Parallel(n_jobs=args.n_jobs, backend="loky")(
+        delayed(run_model)(
+            surf=surf, 
+            hmap=hmap, 
+            medmask=medmask, 
+            params=params, 
+            n_modes=args.n_modes,
+            n_runs=args.n_runs,
+            # calc_phase=True if "phase" in args.metrics else False,
+            phase_type=args.phase_type if "phase" in args.metrics else None,
+            band_freq=args.band_freq,
+            scaling=args.scaling,
+            q_norm=args.q_norm,
+            n_components=args.n_comps
+        ) for params in param_combs
     )
-    fc_emp_all, phase_emp_all = zip(*results)
-    fc_emp_all = np.dstack(fc_emp_all)
-    phase_emp_all = np.dstack(phase_emp_all)
-
-    # Initialise output arrays
-    best_combs = []
-
-    edge_fc_train = np.empty((args.n_splits, len(param_combs)))
-    node_fc_train = np.empty((args.n_splits, len(param_combs)))
-    phase_train = np.empty((args.n_splits, len(param_combs)))
-    combined_train = np.zeros((args.n_splits, len(param_combs)))
-
-    edge_fc_test = np.empty((args.n_splits))
-    node_fc_test = np.empty((args.n_splits))
-    phase_test = np.empty((args.n_splits))
-    combined_test = np.zeros((args.n_splits))
-
-    fc_matrices, phase_maps = [], []
-    train_subjs_split, test_subjs_split = [], []
+    fcs_model, phase_maps_model = zip(*results)
+    # Find invalid combinations and remove those 
+    nan_indices = [i for i, x in enumerate(fcs_model) if x is None]
+    print(f"Only {len(param_combs) - len(nan_indices)} out of {len(param_combs)} parameter combinations were valid.")
     
-    kf = KFold(n_splits=args.n_splits, shuffle=False)
-    for i, (train_index, test_index) in enumerate(kf.split(np.arange(args.n_subjs))):
-        print(f"\n==========\nSplit {i+1}/{args.n_splits}\n==========")
+    param_combs = [param_combs[i] for i in range(len(param_combs)) if i not in nan_indices]
+    fcs_model = [fcs_model[i] for i in range(len(fcs_model)) if i not in nan_indices]
+    phase_maps_model = [phase_maps_model[i] for i in range(len(phase_maps_model)) if i not in nan_indices]
+    if "phase" not in args.metrics:
+        phase_maps_model = None
 
-        # Select train and test bold data
-        fc_emp_train = np.mean(fc_emp_all[:, :, train_index], axis=2)
-        fc_emp_test = np.mean(fc_emp_all[:, :, test_index], axis=2)
-        phase_emp_train = phase_emp_all[:, :, train_index].reshape(nverts, -1)
-        phase_emp_test = phase_emp_all[:, :, test_index].reshape(nverts, -1)
+    # Evaluated against empirical data
+    if not args.crossval:
+        print_heading("Fitting models to empirical data...")
+        with h5py.File(f"{PROJ_DIR}/data/empirical/HCP_nsubj-255_fc_parc-None_fsLR4k_hemi-L.h5", "r") as f:
+            emp_fc = f['fc_group'][:]
 
-        # Get subject ids
-        train_subjs_split.append(subj_ids[train_index])
-        test_subjs_split.append(subj_ids[test_index])
+        with h5py.File(f"{PROJ_DIR}/data/empirical/HCP_nsubj-255_complexPhase_parc-None_fsLR4k_hemi-L_freql-0.01_freqh-0.1.h5", "r") as f:
+            phase_cpcs_group = f['phase_cpcs_group'][:]
+            if args.phase_type == "cpc":
+                emp_phase_map = phase_cpcs_group[:, 0]
+            elif args.phase_type == "combined":
+                svals_emp = f['svals_group'][:args.n_comps]
+                emp_phase_map = np.sum(phase_cpcs_group[:, :args.n_comps] * svals_emp, axis=1) / np.sum(svals_emp)
 
-        if args.hmap_label is not None:
-            print(f"\nTraining...\n===========")
-            
-            results_train = Parallel(n_jobs=args.n_jobs, verbose=1)(
-                delayed(run_and_evaluate)(
-                    surf=surf,
-                    medmask=medmask,
-                    hmap=hmap,
-                    parc=parc,
-                    params=params,
-                    args=args,
-                    emp_results={"fc": fc_emp_train, "phase": phase_emp_train},
-                    return_all=False,
-                )
-                for params in param_combs
-            )
-            edge_fc_train[i, :], node_fc_train[i, :], phase_train[i, :] = zip(*results_train)
-
-            # Calculate combined metric
-            if "edge_fc" in args.metrics:
-                combined_train[i, :] += np.array(edge_fc_train[i, :])
-            if "node_fc" in args.metrics:
-                combined_train[i, :] += np.array(node_fc_train[i, :])
+        edge_fc_corr = np.empty(len(param_combs))
+        node_fc_corr = np.empty(len(param_combs))
+        phase_corr = np.empty(len(param_combs))
+        for param_i in range(len(param_combs)):
             if "phase" in args.metrics:
-                combined_train[i, :] += np.array(phase_train[i, :])
-
-            # Get best training results (average across runs)
-            best_combs_ind = np.argmax(combined_train[i, :])
-            best_alpha, best_r, best_gamma = param_combs[best_combs_ind]
-
-            print("\nTraining results:\n-----------------")
-            print(f"    Best alpha: {best_alpha:.3g}")
-            print(f"    Best r: {best_r:.3g}")
-            print(f"    Best gamma: {best_gamma:.3g}")
-            print(f"    Best combined metric: {combined_train[i, best_combs_ind]:.4g}")
-            print(f"    Best edge-level FC: {edge_fc_train[i, best_combs_ind]:.3g}")
-            print(f"    Best node-level FC: {node_fc_train[i, best_combs_ind]:.3g}")
-            print(f"    Best phase corr: {phase_train[i, best_combs_ind]:.3g}")
-        else:
-            best_alpha = 0
-            best_r = 28.9
-            best_gamma = 0.116
-        best_combs.append((best_alpha, best_r, best_gamma))
-        
-        # Evaluate on test set
-        print(f"\nTesting (alpha = {best_alpha:.1f}, r = {best_r:.1f}, gamma = {best_gamma:.3f})..."
-              f"\n==================================================")
-        # Run model and evaluate
-        edge_fc_test[i], node_fc_test[i], phase_test[i], fc, phase_map = run_and_evaluate(
-            surf=surf,
-            medmask=medmask,
-            hmap=hmap,
-            parc=parc,
-            params=(best_alpha, best_r, best_gamma),
-            args=args,
-            emp_results={"fc": fc_emp_test, "phase": phase_emp_test},
-            return_all=True
-        )
-        fc_matrices.append(fc)
-        phase_maps.append(phase_map)
+                model_phase_map_param = phase_maps_model[param_i]
+            else:
+                model_phase_map_param = None
+            edge_fc_corr[param_i], node_fc_corr[param_i], phase_corr[param_i] = evaluate_model(
+                fcs_model[param_i],
+                model_phase_map_param,
+                emp_fc,
+                emp_phase_map,
+                args.metrics
+            )
 
         # Calculate combined metric
-        if "edge_fc" in args.metrics:
-            combined_test[i] += np.array(edge_fc_test[i])
-        if "node_fc" in args.metrics:
-            combined_test[i] += np.array(node_fc_test[i])
+        combined = edge_fc_corr + node_fc_corr + phase_corr
+        best_ind = np.argmax(combined)
+        best_combs = param_combs[best_ind]
+        model_fc_best = fcs_model[best_ind]
         if "phase" in args.metrics:
-            combined_test[i] += np.array(phase_test[i])
+            model_phase_map_best = phase_maps_model[best_ind]
 
-        print(f"\nTest results:\n-------------")
-        print(f"    Combined metric: {combined_test[i]:.4g}")
-        print(f"    Edge-level FC: {edge_fc_test[i]:.3g}")
-        print(f"    Node-level FC: {node_fc_test[i]:.3g}")
-        print(f"    Phase corr: {phase_test[i]:.3g}")
+        # Print results
+        print_heading("Model fit results")
+        print(f"alpha: {best_combs[0]:.2f}")
+        if len(r_vals) > 1:
+            print(f"r: {best_combs[1]:.2f}")
+        if len(gamma_vals) > 1:
+            print(f"gamma: {best_combs[2]:.2f}")
+        if len(sigma_vals) > 1:
+            print(f"sigma: {best_combs[3]:.0f}")
+        if "edge_fc" in args.metrics:
+            print(f"Edge-level FC corr: {edge_fc_corr[best_ind]:.3g}")
+        if "node_fc" in args.metrics:
+            print(f"Node-level FC corr: {node_fc_corr[best_ind]:.3g}")
+        if "phase" in args.metrics:
+            print(f"Phase corr: {phase_corr[best_ind]:.3g}")
+        print(f"Combined metric: {combined[best_ind]:.3g}")
 
-    print("\n==========\nFinal results\n==========")
-    print(f"Best alpha: {np.mean(best_combs, axis=0)[0]}")
-    print(f"Best r: {np.mean(best_combs, axis=0)[1]:.3g}")
-    print(f"Best gamma: {np.mean(best_combs, axis=0)[2]:.3g}")
-    print(f"Best combined metric: {np.mean(combined_test):.4g}") 
-    print(f"Best edge-level FC: {np.mean(edge_fc_test):.3g}")
-    print(f"Best node-level FC: {np.mean(node_fc_test):.3g}")
-    print(f"Best Phase corr: {np.mean(phase_test):.3g}")
+    else:
+        print_heading("Fitting models to empirical data using cross validation...")
+        with h5py.File(f"{PROJ_DIR}/data/empirical/HCP_nsubj-255_fc-kfold5_parc-None_fsLR{args.den}_hemi-L.h5", "r") as f:
+            fcs_train = f['fc_train'][:]
+            fcs_test = f['fc_test'][:]
 
-    # Create output directory if it doesn't exist
-    if not os.path.exists(out_dir):
-        os.makedirs(out_dir)
+        with h5py.File(f"{PROJ_DIR}/data/empirical/HCP_nsubj-255_phasecpcs-kfold5_parc-None_fsLR{args.den}_hemi-L_freql-{args.band_freq[0]}_freqh-{args.band_freq[1]}.h5", "r") as f:
+            phase_cpcs_train = f['phase_cpcs_train'][:]
+            phase_cpcs_test = f['phase_cpcs_test'][:]
+            if args.phase_type == "cpc":
+                phase_maps_train = phase_cpcs_train[:, 0, :]
+                phase_maps_test = phase_cpcs_test[:, 0, :]
+            elif args.phase_type == "combined":
+                svals_train = f['svals_train'][:args.n_comps]
+                svals_test = f['svals_test'][:args.n_comps]
+                phase_maps_train = np.empty((np.sum(medmask), args.n_splits))
+                phase_maps_test = np.empty((np.sum(medmask), args.n_splits))
+                for i in range(args.n_splits):
+                    phase_maps_train[:, i] = np.sum(phase_cpcs_train[:, :args.n_comps, i] * svals_train[:args.n_comps, i], axis=1) / np.sum(svals_train[:args.n_comps, i])
+                    phase_maps_test[:, i] = np.sum(phase_cpcs_test[:, :args.n_comps, i] * svals_test[:args.n_comps, i], axis=1) / np.sum(svals_test[:args.n_comps, i])
 
-    out_file = f"{args.hmap_label}_results.hdf5"
-    # If file exists: append number to folder name to avoid overwriting
-    if os.path.exists(f"{out_dir}/{out_file}"):
-        i = 1
-        while os.path.exists(f"{out_dir}/{out_file}"):
-            out_file = f"{args.hmap_label}_results_{i}.hdf5"
-            i += 1
-    out_path = f"{out_dir}/{out_file}"
-    print(f"Output path: {out_path}")
+        split_results = Parallel(n_jobs=args.n_jobs, backend="loky")(
+            delayed(run_split)(
+            fcs_model,
+            phase_maps_model,
+            fcs_train[:, :, i], 
+            fcs_test[:, :, i], 
+            phase_maps_train[:, i], 
+            phase_maps_test[:, i],
+            param_combs, 
+            args
+            )
+            for i in range(args.n_splits)
+        )
+        train_edge_fc_corr = np.vstack([split[0] for split in split_results])
+        train_node_fc_corr = np.vstack([split[1] for split in split_results])
+        train_phase_corr = np.vstack([split[2] for split in split_results])
+        train_combined = np.vstack([split[3] for split in split_results])
+
+        test_edge_fc_corr = np.array([split[4] for split in split_results])
+        test_node_fc_corr = np.array([split[5] for split in split_results])
+        test_phase_corr = np.array([split[6] for split in split_results])
+        test_combined = np.array([split[7] for split in split_results])
+
+        best_fc_matrices = np.dstack([split[8] for split in split_results])
+        best_phase_maps = np.vstack([split[9] for split in split_results]).T if "phase" in args.metrics else None
+        best_combs = np.vstack([split[10] for split in split_results])
+
+        # Print test results
+        for i in range(args.n_splits):
+            print(f"\nSplit {i+1}: Test results")
+            print(f"alpha: {best_combs[i, 0]:.2f}")
+            if len(r_vals) > 1:
+                print(f"r: {best_combs[i, 1]:.2f}")
+            if len(gamma_vals) > 1:
+                print(f"gamma: {best_combs[i, 2]:.2f}")
+            if len(sigma_vals) > 1:
+                print(f"sigma: {best_combs[i, 3]:.0f}")
+            if "edge_fc" in args.metrics:
+                print(f"Edge-level FC corr: {np.mean(test_edge_fc_corr[i]):.3g}")
+            if "node_fc" in args.metrics:
+                print(f"Node-level FC corr: {np.mean(test_node_fc_corr[i]):.3g}")
+            if "phase" in args.metrics:
+                print(f"Phase corr: {np.mean(test_phase_corr[i]):.3g}")
+            print(f"Combined metric: {np.mean(test_combined[i]):.3}") 
+
+        # Print final results
+        print_heading("Final Results")
+        print(f"alpha: {np.mean(best_combs, axis=0)[0]:.2f}")
+        if len(r_vals) > 1:
+            print(f"r: {np.mean(best_combs, axis=0)[1]:.2f}")
+        if len(gamma_vals) > 1:
+            print(f"gamma: {np.mean(best_combs, axis=0)[2]:.2f}")
+        if len(sigma_vals) > 1:
+            print(f"sigma: {np.mean(best_combs, axis=0)[3]:.0f}")
+        if "edge_fc" in args.metrics:
+            print(f"Edge-level FC corr: {np.mean(test_edge_fc_corr):.3g}")
+        if "node_fc" in args.metrics:
+            print(f"Node-level FC corr: {np.mean(test_node_fc_corr):.3g}")
+        if "phase" in args.metrics:
+            print(f"Phase corr: {np.mean(test_phase_corr):.3g}")
+        print(f"Combined metric: {np.mean(test_combined):.3g}") 
 
     # Save results
+    if not os.path.exists(f"{out_dir}/id-{args.id}"):
+        os.makedirs(f"{out_dir}/id-{args.id}")
+
+    out_path = f"{out_dir}/id-{args.id}/{str(args.hmap_label)}_results_crossval-{args.crossval}.h5"
+    print(f"Output path: {out_path}")
+
     with h5py.File(out_path, 'w') as f:
         # Write metadata to file
         for key, value in vars(args).items():
@@ -344,36 +416,35 @@ def main():
                 f.attrs[key] = "None"
             else:
                 f.attrs[key] = value
-
         # Write outputs to file
-        f.create_dataset('edge_fc_train', data=edge_fc_train)
-        f.create_dataset('node_fc_train', data=node_fc_train)
-        f.create_dataset('phase_train', data=phase_train)
-        f.create_dataset('combined_train', data=combined_train)
+        if not args.crossval:
+            f.create_dataset('edge_fc_corr', data=edge_fc_corr)
+            f.create_dataset('node_fc_corr', data=node_fc_corr)
+            f.create_dataset('phase_corr', data=phase_corr)
+            f.create_dataset('combined', data=combined)
+            f.create_dataset('best_fc', data=model_fc_best)
+            if "phase" in args.metrics:
+                f.create_dataset('best_phase_map', data=model_phase_map_best)
 
-        f.create_dataset('edge_fc_test', data=edge_fc_test)
-        f.create_dataset('node_fc_test', data=node_fc_test)
-        f.create_dataset('phase_test', data=phase_test)
-        f.create_dataset('combined_test', data=combined_test)
+        else:
+            if args.hmap_label is not None:
+                f.create_dataset('edge_fc_train', data=train_edge_fc_corr)
+                f.create_dataset('node_fc_train', data=train_node_fc_corr)
+                f.create_dataset('phase_train', data=train_phase_corr)
+                f.create_dataset('combined_train', data=train_combined)
 
-        f.create_dataset('combs', data=param_combs)
+            f.create_dataset('edge_fc_test', data=test_edge_fc_corr)
+            f.create_dataset('node_fc_test', data=test_node_fc_corr)
+            f.create_dataset('phase_test', data=test_phase_corr)
+            f.create_dataset('combined_test', data=test_combined)
+
+            f.create_dataset('best_fcs', data=best_fc_matrices)
+            if "phase" in args.metrics:
+                f.create_dataset('best_phase_maps', data=best_phase_maps)
+
         f.create_dataset('best_combs', data=best_combs)
-        f.create_dataset('best_alpha', data=np.mean(best_combs, axis=0)[0])
-        f.create_dataset('best_r', data=np.mean(best_combs, axis=0)[1])
-        f.create_dataset('best_gamma', data=np.mean(best_combs, axis=0)[2])
-
-        f.create_dataset('fc_matrices', data=np.dstack(fc_matrices))
-        f.create_dataset('phase_maps', data=np.vstack(phase_maps).T)
-
+        f.create_dataset('combs', data=np.array(param_combs))
         f.create_dataset('medmask', data=medmask)
 
-        # Pad train_subjs_split and test_subjs_split with -1 to have the same length
-        f.create_dataset('train_subjs_split', data=pad_sequences(train_subjs_split))
-        f.create_dataset('test_subjs_split', data=pad_sequences(test_subjs_split))
-
-if __name__ == "__main__":
-    t1 = time.time()
-    main()
     t2 = time.time()
-    print(f"Total time: {t2 - t1:.2f} seconds")
-    
+    print(f"Total time: {(t2 - t1)/60:.1f} mins")
