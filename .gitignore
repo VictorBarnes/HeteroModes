@@ -11,5 +11,3 @@ scripts/model_rest/*.sh
 scripts/model_rest/*.json
 scripts/model_rest/__pycache__/
 .env
-HeteroModes_py38.yml
-.DS_Store
