@@ -11,8 +11,8 @@ from joblib import Parallel, delayed
 from dotenv import load_dotenv
 from sklearn.preprocessing import StandardScaler
 from brainspace.utils.parcellation import reduce_by_labels
-from heteromodes import HeteroSolver
-from heteromodes.restingstate import simulate_bold, calc_phase, calc_edge_and_node_fc, calc_phase_map
+from heteromodes import EigenSolver
+from heteromodes.restingstate import simulate_bold, calc_gen_phase, calc_edge_and_node_fc, calc_phase_map
 from heteromodes.solver import scale_hmap
 
 load_dotenv()
@@ -25,7 +25,7 @@ def calc_fc_and_phase(bold, tr, band_freq, parc=None):
     bold_z = scaler.fit_transform(bold.T).T
 
     # Compute phase on vertex data
-    phase = calc_phase(bold_z, tr=tr, lowcut=band_freq[0], highcut=band_freq[1])
+    phase = calc_gen_phase(bold_z, tr=tr, lowcut=band_freq[0], highcut=band_freq[1])
 
     # Compute FC on parcellated data
     if parc is not None:
@@ -38,7 +38,7 @@ def run_model(run, evals, emodes, parc, args, params, B=None):
     # Load external input, run model and parcellate
     ext_input = np.load(f"{PROJ_DIR}/data/resting_state/extInput_parc-{args.parc}_den-{args.den}_nT-1200_randseed-{run}.npy")
     bold_model = simulate_bold(evals, emodes, ext_input, solver_method='Fourier', 
-                               eig_method='orthonormal', r=params[1], gamma=params[2], B=B)
+                               eig_method='orthogonal', r=params[1], gamma=params[2], mass=B)
 
     # Z-score bold data
     scaler = StandardScaler()
@@ -58,9 +58,9 @@ def run_and_evaluate(surf, medmask, hmap, parc, params, args, emp_results, retur
     t1 = time.time()
 
     # Calculate modes
-    solver = HeteroSolver(
+    solver = EigenSolver(
         surf=surf,
-        hmap=hmap,
+        hetero=hmap,
         medmask=medmask,
         alpha=params[0],
     )
@@ -90,8 +90,8 @@ def run_and_evaluate(surf, medmask, hmap, parc, params, args, emp_results, retur
 
     # Calculate edge and node FC
     edge_fc_corr, node_fc_corr = calc_edge_and_node_fc(
-        empirical=emp_results, 
-        model=model_results, 
+        emp_results=emp_results, 
+        model_results=model_results, 
     )
 
     # Calculate phase corr
@@ -125,12 +125,25 @@ def main():
     parser.add_argument("--subj_id", type=int, help="The subject ID to run the model on")
     args = parser.parse_args()
 
-    out_dir = f'{PROJ_DIR}/results/model_rs/individual/id-{args.id}/subj-{args.subj_id}'
+    out_dir = f'{PROJ_DIR}/results/model_rest/individual/id-{args.id}/subj-{args.subj_id}'
 
     # Get surface, medial mask and parcellation files
     hcp_dir = f"/fs03/kg98/vbarnes/HCP/{args.subj_id}/MNINonLinear/Results"
     surf_file = f"{args.subj_id}.L.midthickness_MSMAll.4k_fs_LR.surf.gii"
     surf = f"{hcp_dir}/{surf_file}"
+    
+    # Load parcellation and medial wall mask
+    if args.parc is not None:
+        try:
+            parc_file = f"{PROJ_DIR}/data/parcellations/parc-{args.parc}_space-fsLR_den-{args.den}_hemi-L.label.gii"
+            parc = nib.load(parc_file).darrays[0].data.astype(int)
+        except:
+            raise ValueError(f"Parcellation '{args.parc}' with den '{args.den}' not found.")
+        medmask = np.where(parc != 0, True, False)
+        parc = parc[medmask]
+    else:
+        parc = None
+        medmask = np.where(bold_emp_train[:, 0] != 0, True, False)
 
     # Load empirical BOLD data and z-score
     scaler = StandardScaler()
@@ -146,8 +159,8 @@ def main():
         "resampled",
         "rfMRI_REST1_RL_Atlas_hp2000_clean_4k.L.func.gii"
     )
-    bold_emp_train_lr = scaler.fit_transform(nib.load(bold_emp_train_path_lr).agg_data()).T
-    bold_emp_train_rl = scaler.fit_transform(nib.load(bold_emp_train_path_rl).agg_data()).T
+    bold_emp_train_lr = scaler.fit_transform(nib.load(bold_emp_train_path_lr).agg_data()[:, medmask]).T
+    bold_emp_train_rl = scaler.fit_transform(nib.load(bold_emp_train_path_rl).agg_data()[:, medmask]).T
     bold_emp_train = np.concatenate((bold_emp_train_lr, bold_emp_train_rl), axis=1)
 
     bold_emp_test_path_lr = Path(
@@ -162,25 +175,9 @@ def main():
         "resampled",
         "rfMRI_REST2_RL_Atlas_hp2000_clean_4k.L.func.gii"
     )
-    bold_emp_test_lr = scaler.fit_transform(nib.load(bold_emp_test_path_lr).agg_data()).T
-    bold_emp_test_rl = scaler.fit_transform(nib.load(bold_emp_test_path_rl).agg_data()).T
+    bold_emp_test_lr = scaler.fit_transform(nib.load(bold_emp_test_path_lr).agg_data()[:, medmask]).T
+    bold_emp_test_rl = scaler.fit_transform(nib.load(bold_emp_test_path_rl).agg_data()[:, medmask]).T
     bold_emp_test = np.concatenate((bold_emp_test_lr, bold_emp_test_rl), axis=1)
-
-    # Load parcellation and medial wall mask
-    if args.parc is not None:
-        try:
-            parc_file = f"{PROJ_DIR}/data/parcellations/parc-{args.parc}_space-fsLR_den-{args.den}_hemi-L.label.gii"
-            parc = nib.load(parc_file).darrays[0].data.astype(int)
-        except:
-            raise ValueError(f"Parcellation '{args.parc}' with den '{args.den}' not found.")
-        medmask = np.where(parc != 0, True, False)
-        parc = parc[medmask]
-    else:
-        parc = None
-        medmask = np.where(bold_emp_train[:, 0] != 0, True, False)
-
-    bold_emp_train = bold_emp_train[medmask, :]
-    bold_emp_test = bold_emp_test[medmask, :]
 
     # Get hmap and alpha values
     if args.hmap_label is None:
