@@ -1,3 +1,4 @@
+import os
 import fbpca
 import numpy as np
 from scipy.linalg import norm
@@ -5,73 +6,186 @@ from scipy.signal import butter, filtfilt, detrend, hilbert
 from scipy.fft import fft, ifft
 from scipy.interpolate import PchipInterpolator
 from scipy.ndimage import label
-from sklearn.preprocessing import StandardScaler
-from heteromodes.models import WaveModel, BalloonModel
+from scipy.stats import zscore
+from heteromodes.solver import EigenSolver
 
+DENSITIES = {3619: "4k", 29696: "32k"}
 
-def simulate_bold(evals, emodes, ext_input, solver_method, eig_method, r=28.9, gamma=0.116, mass=None, tstep=0.09 * 1e3, nsteps=1200):
+def run_simulation(
+    # Solver parameters
+    surf, 
+    medmask=None, 
+    hetero=None, 
+    alpha=0, 
+    r=28.9, 
+    gamma=0.116, 
+    scaling="sigmoid", 
+    q_norm=None, 
+    lump=False, 
+    smoothit=10,
+    nmodes=500, 
+    # Simulation parameters
+    nruns=5, 
+    dt_emp=0.72 * 1e3, 
+    nt_emp=1200, 
+    dt=0.1, 
+    tsteady=0, 
+    solver_method="Fourier", 
+    eig_method="orthogonal", 
+    # Phase parameters
+    phase_type=None,
+    band_freq=(0.01, 0.1), 
+    n_comps=4
+):
     """
-    Function to simulate resting-state fMRI BOLD data using the NFT wave model and the Balloon
-    haemodynamic model.
+    Runs a neural field model simulation and computes functional connectivity (FC) and phase maps.
+
+    Solver Parameters:
+    ------------------
+    surf : Surface object
+        The cortical surface for the simulation.
+    medmask : array-like or None
+        Binary mask for medial wall regions.
+    hetero : float or None
+        Level of heterogeneity in the model.
+    alpha : float
+        Scaling parameter for wave propagation (default: 0).
+    r : float
+        Global coupling strength (default: 28.9).
+    gamma : float
+        Decay parameter for interactions (default: 0.116).
+    scaling : str
+        Type of scaling function ("sigmoid", "linear", etc.).
+    q_norm : float or None
+        Normalization factor for activity.
+    lump : bool
+        Whether to lump parameters together.
+    smoothit : int
+        Number of smoothing iterations (default: 10).
+    nmodes : int, optional
+        Number of eigenmodes to use in the solver (default: 500).
+
+    Simulation Parameters:
+    ----------------------
+    nruns : int, optional
+        Number of simulation runs to average over (default: 5).
+    dt_emp : float, optional
+        Empirical time step in milliseconds (default: 720 ms).
+    nt_emp : int, optional
+        Number of empirical timepoints (default: 1200).
+    dt : float
+        Simulation time step in milliseconds (default: 0.1 ms).
+    tsteady : float
+        Time before starting data collection.
+    solver_method : str
+        Method for solving the simulation (default: "Fourier").
+    eig_method : str
+        Method for eigenmode decomposition (default: "orthogonal").
+
+    Phase Parameters:
+    -----------------
+    phase_type : str, optional
+        Type of phase map to compute. Options: {"cpc1", "combined"} (default: None).
+    band_freq : tuple of (float, float)
+        Frequency band for Hilbert transform (default: (0.01, 0.1)).
+    n_comps : int
+        Number of principal components to use for phase calculation (default: 4).
+
+    Returns:
+    --------
+    fc : np.ndarray
+        Functional connectivity matrix.
+    phase_map : np.ndarray or None
+        Phase map of the first complex principal component (CPC1) if requested.
     """
-    # Set simulation parameters
-    tr = 0.72 * 1e3 # HCP data TR in ms
-    tpre = 50 * 1e3 # burn time to remove transient
-    tmax = tpre + (nsteps - 1) * tr # match number of timepoints in empirical data
-
-    # Wave model to simulate neural activity
-    wave = WaveModel(emodes, evals, r=r, gamma=gamma, tstep=tstep, tmax=tmax)
-    ntsteps_tr = int(tr // wave.tstep)
-    tsteady_ind = np.abs(wave.t - tpre).argmin()
-
-    # Balloon model to simulate BOLD activity
-    balloon = BalloonModel(emodes, tstep=tstep, tmax=tmax)
-
-    # Simulate neural activity
-    _, neural_activity = wave.solve(ext_input, solver_method, eig_method, mass=mass)
     
-    # Simulate BOLD activity
-    _, bold_activity = balloon.solve(neural_activity, solver_method, eig_method, mass=mass)
+    # Try solving eigenvalues and eigenvectors
+    try:
+        solver = EigenSolver(surf=surf, medmask=medmask, hetero=hetero, alpha=alpha, 
+                             r=r, gamma=gamma, scaling=scaling, q_norm=q_norm, 
+                             lump=lump, smoothit=smoothit)
+        solver.solve(k=nmodes, fix_mode1=True, standardise=False)
+    except ValueError as e:
+        if "Alpha value results in non-physiological wave speeds" in str(e):
+            print(f"Invalid parameter combination: alpha={alpha}, r={r}, gamma={gamma}")
+            return None, None
+        else:
+            raise e
 
-    # Extract BOLD activity to match empirical data timepoints
-    bold_activity_tr = bold_activity[:, tsteady_ind::ntsteps_tr]
+    nt = int((nt_emp - 1) * dt_emp / dt)
 
-    return bold_activity_tr
+    # Pre-allocate BOLD activity array
+    bold = np.empty((solver.surf.n_points, nt_emp * nruns), dtype=np.float32)
+    for run in range(nruns):
+        bold_run = solver.simulate_bold(dt=dt, nt=nt, tsteady=tsteady, solver_method=solver_method, 
+                                        eig_method=eig_method, seed=run)
 
-def filter_bold(bold, tr, lowcut=0.01, highcut=0.1):
-    """Filter the BOLD signal using a bandpass filter.
+        # Downsample to match empirical time resolution
+        bold_run = bold_run[:, ::int(dt_emp // dt)]
+        bold[:, run * nt_emp : (run + 1) * nt_emp] = zscore(bold_run, axis=1)
 
-    Parameters
-    ----------
-    bold : numpy.ndarray
-        The BOLD signal data of shape (N, T), where N is the number of regions and T is the number of time points.
-    tr : float
-        The repetition time (TR) in seconds.
-    lowcut : float
-        The lowcut frequency for the bandpass filter.
-    highcut : float
-        The highcut frequency for the bandpass filter.
+    # Calculate Functional Connectivity (FC)
+    fc = solver.calc_fc(bold)
 
-    Returns
-    -------
-    numpy.ndarray
-        The filtered BOLD signal data.
-    """
-    # Define parameters
-    k = 2  # 2nd order butterworth filter
-    fnq = 0.5 * 1/tr  # nyquist frequency
-    Wn = [lowcut/fnq, highcut/fnq]  # butterworth bandpass non-dimensional frequency
-    bfilt2, afilt2 = butter(k, Wn, btype="bandpass")  # construct the filter
+    # Compute phase map if required
+    phase_map = None
+    if phase_type in ["cpc1", "combined"]:
+        fnq = 0.5 * (1 / (dt_emp / 1e3))  # Nyquist frequency
 
-    # Standardise and detrend the data if it isn't already
-    if not np.allclose(np.mean(bold, axis=1), 0) or not np.allclose(np.std(bold, axis=1), 1.0):
-        scaler = StandardScaler()
-        bold = scaler.fit_transform(bold.T).T
-    bold = detrend(bold, axis=1, type='constant')
-    # Apply the filter to the data
-    bold_filtered = filtfilt(bfilt2, afilt2, bold, axis=1)
+        # Apply Hilbert transform
+        complex_data = solver.calc_hilbert(
+            bold, fnq=fnq, band_freq=band_freq, conj=True
+        )
 
-    return bold_filtered
+        # PCA on complex data
+        _, s, V = fbpca.pca(complex_data.T, k=10, n_iter=20, l=20)
+
+        if phase_type == "cpc1":
+            phase_map = np.real(V[0, :]).T
+        elif phase_type == "combined":
+            phase_map = np.sum(
+                np.real(V[:n_comps, :]).T * s[:n_comps], axis=1
+            ) / np.sum(s[:n_comps])
+
+    return fc, phase_map
+
+def evaluate_model(model_fc, model_phase_map, emp_fc, emp_phase_map, metrics):
+    # Calculate evaluation metrics
+    edge_fc_corr, node_fc_corr, phase_corr = 0, 0, 0
+    if "edge_fc" in metrics:
+        edge_fc_corr = calc_edgefc_corr(model_fc, emp_fc)
+    if "node_fc" in metrics:
+        node_fc_corr = calc_nodefc_corr(model_fc, emp_fc)
+    if "phase" in metrics:
+        phase_corr = np.abs(np.corrcoef(model_phase_map, emp_phase_map)[0, 1])
+
+    return edge_fc_corr, node_fc_corr, phase_corr
+
+def calc_edgefc_corr(model_fc, emp_fc, eps=1e-7):
+    triu_inds = np.triu_indices(np.shape(model_fc)[0], k=1)
+    edge_fc_corr = np.corrcoef(np.arctanh(np.clip(model_fc[triu_inds], -1 + eps, 1 - eps)), 
+                               np.arctanh(np.clip(emp_fc[triu_inds], -1 + eps, 1 - eps)))[0, 1]
+
+    return edge_fc_corr
+
+def calc_nodefc_corr(model_fc, emp_fc, eps=1e-7):
+    # Compute Node-level FC (exclude diagonal elements by setting them to NaN)
+    fc_model_nandiag = np.clip(model_fc, -1 + eps, 1 - eps)
+    np.fill_diagonal(fc_model_nandiag, np.nan)
+    fc_emp_nandiag = np.clip(emp_fc, -1 + eps, 1 - eps)
+    np.fill_diagonal(fc_emp_nandiag, np.nan)
+    node_fc_corr = np.corrcoef(np.nanmean(np.arctanh(fc_model_nandiag), axis=1), 
+                               np.nanmean(np.arctanh(fc_emp_nandiag), axis=1))[0, 1]
+    
+    return node_fc_corr
+
+def calc_gen_phase(bold, tr=0.72, lowcut=0.01, highcut=0.1):
+    # Calculate phase delay
+    phase_delay = np.empty(bold.shape, dtype=np.complex128)
+    for i in range(bold.shape[0]):
+        phase_delay[i, :] = generalized_phase_vector(bold[i, :], Fs=1/0.72, lp=lowcut)[0].conj()
+
+    return np.angle(phase_delay)
 
 def generalized_phase_vector(x, Fs, lp):
     """
@@ -169,31 +283,6 @@ def generalized_phase_vector(x, Fs, lp):
 
     return xgp, wt
 
-def calc_edgefc_corr(model_fc, emp_fc, eps=1e-7):
-    triu_inds = np.triu_indices(np.shape(model_fc)[0], k=1)
-    edge_fc_corr = np.corrcoef(np.arctanh(np.clip(model_fc[triu_inds], -1 + eps, 1 - eps)), 
-                               np.arctanh(np.clip(emp_fc[triu_inds], -1 + eps, 1 - eps)))[0, 1]
-
-    return edge_fc_corr
-
-def calc_nodefc_corr(model_fc, emp_fc, eps=1e-7):
-    # Compute Node-level FC (exclude diagonal elements by setting them to NaN)
-    fc_model_nandiag = np.clip(model_fc, -1 + eps, 1 - eps)
-    np.fill_diagonal(fc_model_nandiag, np.nan)
-    fc_emp_nandiag = np.clip(emp_fc, -1 + eps, 1 - eps)
-    np.fill_diagonal(fc_emp_nandiag, np.nan)
-    node_fc_corr = np.corrcoef(np.nanmean(np.arctanh(fc_model_nandiag), axis=1), 
-                               np.nanmean(np.arctanh(fc_emp_nandiag), axis=1))[0, 1]
-    
-    return node_fc_corr
-
-def calc_gen_phase(bold, tr=0.72, lowcut=0.01, highcut=0.1):
-    # Calculate phase delay
-    phase_delay = np.empty(bold.shape, dtype=np.complex128)
-    for i in range(bold.shape[0]):
-        phase_delay[i, :] = generalized_phase_vector(bold[i, :], Fs=1/0.72, lp=lowcut)[0].conj()
-
-    return np.angle(phase_delay)
 
 def calc_fcd(bold, tr=0.72, lowcut=0.04, highcut=0.07, n_avg=3):
     """Calculate phase-based functional connectivity dynamics (phFCD).

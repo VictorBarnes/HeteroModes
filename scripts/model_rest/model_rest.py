@@ -12,14 +12,11 @@ from neuromaps.datasets import fetch_atlas
 from scipy.signal import hilbert
 from heteromodes import EigenSolver
 from heteromodes.utils import load_hmap
-from heteromodes.restingstate import simulate_bold, calc_edgefc_corr, calc_nodefc_corr, filter_bold
+from heteromodes.restingstate import run_simulation, evaluate_model
 
 load_dotenv()
 PROJ_DIR = os.getenv("PROJ_DIR")
-TR = 0.72
-nT = 1200
 memory = Memory("/fs03/kg98/vbarnes/cache/", verbose=0)
-DENSITIES = {3619: "4k", 29696: "32k"}
 
 def print_heading(text):
     print(f"\n{text}\n{'=' * len(text)}")
@@ -45,8 +42,6 @@ def parse_arguments():
                         help="The spatial length scale of the wave model. Defaults to 28.9 s^-1. Provide either a single r value or three values (r_min, r_max, r_step).")
     parser.add_argument("--gamma", type=float, nargs="+", default=[0.116], metavar="gamma values",
                         help="The dampening rate of the wave model. Defaults to 0.116 s^-1. Provide either a single gamma value or three values (gamma_min, gamma_max, gamma_step).")
-    parser.add_argument("--sigma", type=int, nargs="+", default=[0], metavar="sigma values",
-                        help="The number of smoothing iterations to apply to the heterogeneity map. Defaults to 0. Provide either a single sigma value or three values (sigma_min, sigma_max, sigma_step).")
     parser.add_argument("--den", type=str, default="4k", 
                         help="The density of the surface. Defaults to `4k`.")
     parser.add_argument("--band_freq", type=float, nargs=2, default=[0.01, 0.1], metavar=('low', 'high'), 
@@ -66,73 +61,6 @@ def parse_arguments():
     
     return parser.parse_args()
 
-# @memory.cache
-def run_model(surf, hmap, medmask, params, n_modes=500, n_runs=5, phase_type=None, band_freq=(0.01, 0.1), 
-              scaling="exponential", q_norm=None, n_components=3):
-    nverts = np.sum(medmask)
-    den = DENSITIES[nverts]
-    
-    # Try solve eigenvalues and eigenvectors. If it doesn't work then return None
-    try:
-        solver = EigenSolver(surf=surf, hetero=hmap, medmask=medmask, alpha=params[0], sigma=params[3], 
-                             scaling=scaling, q_norm=q_norm)
-        evals, emodes = solver.solve(n_modes=n_modes, fix_mode1=True, standardise=True)
-    # Only catch error when invalid parameter combinations are used
-    except ValueError as e:
-        if "Alpha value results in non-physiological wave speeds" in str(e):
-            print(f"Invalid parameter combination: {params}")
-            return None, None
-        else:
-            raise e
-
-    # Z-score bold data
-    scaler = StandardScaler()
-
-    # Simulate BOLD data and calculate FC and phase
-    fcs = np.empty((nverts, nverts, n_runs))
-    phase = np.empty((nverts, nT*n_runs), dtype=np.complex64)
-    for run in range(n_runs):
-        # Load external input, run model and parcellate
-        ext_input = np.load(f"{PROJ_DIR}/data/resting_state/extInput_parc-None_den-{den}_nT-{nT}_randseed-{run}.npy")
-        bold = simulate_bold(evals, emodes, ext_input, solver_method='Fourier', 
-                             eig_method='orthogonal', r=params[1], gamma=params[2], mass=solver.mass)
-        bold_z = scaler.fit_transform(bold.T).T
-        
-        # Compute model FC and phase
-        fcs[:, :, run] = np.corrcoef(bold_z)
-
-        # Bandpass filter the BOLD signal
-        bold_filtered = filter_bold(bold_z, tr=TR, lowcut=band_freq[0], highcut=band_freq[1])
-
-        # Compute phase
-        phase[:, run*nT:(run+1)*nT] = hilbert(bold_filtered, axis=1).conj()
-
-    # Calculate FC
-    fc = np.mean(fcs, axis=2, dtype=np.float32)
-    # Calculate phase map
-    if phase_type in ["cpc", "combined"]:
-        _, s, V = fbpca.pca(phase.T, k=10, n_iter=20, l=20)
-
-        if phase_type == "cpc":
-            phase_map = np.real(V[0, :]).T
-        elif phase_type == "combined":
-            phase_map = np.sum(np.real(V[:n_components, :]).T * s[:n_components], axis=1) / np.sum(s[:n_components])
-    else:
-        phase_map = None
-
-    return fc, phase_map
-
-def evaluate_model(model_fc, model_phase_map, emp_fc, emp_phase_map, metrics):
-    # Calculate evaluation metrics
-    edge_fc_corr, node_fc_corr, phase_corr = 0, 0, 0
-    if "edge_fc" in metrics:
-        edge_fc_corr = calc_edgefc_corr(model_fc, emp_fc)
-    if "node_fc" in metrics:
-        node_fc_corr = calc_nodefc_corr(model_fc, emp_fc)
-    if "phase" in metrics:
-        phase_corr = np.abs(np.corrcoef(model_phase_map, emp_phase_map)[0, 1])
-
-    return edge_fc_corr, node_fc_corr, phase_corr
 
 # @profile
 def run_split(model_fcs, model_phase_maps, emp_train_fc, emp_test_fc, emp_train_phase_map, emp_test_phase_map, param_combs, args):
@@ -153,7 +81,7 @@ def run_split(model_fcs, model_phase_maps, emp_train_fc, emp_test_fc, emp_train_
             args.metrics
         )
 
-        print(f"alpha: {param_combs[param_i][0]:.2f}, r: {param_combs[param_i][1]:.2f}, gamma: {param_combs[param_i][2]:.2f}, sigma: {param_combs[param_i][3]:.2f} | Combined metric: {train_edge_fc_corr[param_i] + train_node_fc_corr[param_i] + train_phase_corr[param_i]:.3g}")
+        print(f"alpha: {param_combs[param_i][0]:.2f}, r: {param_combs[param_i][1]:.2f}, gamma: {param_combs[param_i][2]:.2f} | Combined metric: {train_edge_fc_corr[param_i] + train_node_fc_corr[param_i] + train_phase_corr[param_i]:.3g}")
 
     # Calculate combined metric
     train_combined = train_edge_fc_corr + train_node_fc_corr + train_phase_corr
@@ -188,6 +116,12 @@ def run_split(model_fcs, model_phase_maps, emp_train_fc, emp_test_fc, emp_train_
 
 if __name__ == "__main__":
     t1 = time.time()
+
+    # Define constants
+    dt_emp = 0.72 * 1e3
+    nt_emp = 1200
+    dt = dt_emp / 8
+    tsteady = 50 * 1e3 # burn time to remove transient
 
     args = parse_arguments()
     if args.hmap_label == "None":
@@ -232,25 +166,29 @@ if __name__ == "__main__":
         print(alpha_vals)
     r_vals = args.r if len(args.r) == 1 else np.arange(args.r[0], args.r[1], args.r[2])
     gamma_vals = args.gamma if len(args.gamma) == 1 else np.arange(args.gamma[0], args.gamma[1], args.gamma[2])
-    sigma_vals = args.sigma if len(args.sigma) == 1 else np.arange(args.sigma[0], args.sigma[1], args.sigma[2], dtype=int)
-    param_combs = list(itertools.product(alpha_vals, r_vals, gamma_vals, sigma_vals))
+    param_combs = list(itertools.product(alpha_vals, r_vals, gamma_vals))
 
     # Run all models (i.e. for all parameter combinations) and store outputs in cache
     print_heading(f"Running {args.hmap_label} model for {len(param_combs)} parameter combinations...")
     results = Parallel(n_jobs=args.n_jobs, backend="loky")(
-        delayed(run_model)(
+        delayed(run_simulation)(
             surf=surf, 
-            hmap=hmap, 
             medmask=medmask, 
-            params=params, 
-            n_modes=args.n_modes,
-            n_runs=args.n_runs,
-            # calc_phase=True if "phase" in args.metrics else False,
-            phase_type=args.phase_type if "phase" in args.metrics else None,
-            band_freq=args.band_freq,
+            hetero=hmap, 
+            alpha=params[0],
+            r=params[1], 
+            gamma=params[2],
             scaling=args.scaling,
             q_norm=args.q_norm,
-            n_components=args.n_comps
+            nmodes=args.n_modes,
+            nruns=args.n_runs,
+            dt_emp=dt_emp,
+            nt_emp=nt_emp,
+            dt=dt,
+            tsteady=tsteady,
+            phase_type=args.phase_type if "phase" in args.metrics else None,
+            band_freq=args.band_freq,
+            n_comps=args.n_comps
         ) for params in param_combs
     )
     fcs_model, phase_maps_model = zip(*results)
@@ -309,8 +247,6 @@ if __name__ == "__main__":
             print(f"r: {best_combs[1]:.2f}")
         if len(gamma_vals) > 1:
             print(f"gamma: {best_combs[2]:.2f}")
-        if len(sigma_vals) > 1:
-            print(f"sigma: {best_combs[3]:.0f}")
         if "edge_fc" in args.metrics:
             print(f"Edge-level FC corr: {edge_fc_corr[best_ind]:.3g}")
         if "node_fc" in args.metrics:
@@ -375,8 +311,6 @@ if __name__ == "__main__":
                 print(f"r: {best_combs[i, 1]:.2f}")
             if len(gamma_vals) > 1:
                 print(f"gamma: {best_combs[i, 2]:.2f}")
-            if len(sigma_vals) > 1:
-                print(f"sigma: {best_combs[i, 3]:.0f}")
             if "edge_fc" in args.metrics:
                 print(f"Edge-level FC corr: {np.mean(test_edge_fc_corr[i]):.3g}")
             if "node_fc" in args.metrics:
@@ -392,8 +326,6 @@ if __name__ == "__main__":
             print(f"r: {np.mean(best_combs, axis=0)[1]:.2f}")
         if len(gamma_vals) > 1:
             print(f"gamma: {np.mean(best_combs, axis=0)[2]:.2f}")
-        if len(sigma_vals) > 1:
-            print(f"sigma: {np.mean(best_combs, axis=0)[3]:.0f}")
         if "edge_fc" in args.metrics:
             print(f"Edge-level FC corr: {np.mean(test_edge_fc_corr):.3g}")
         if "node_fc" in args.metrics:
