@@ -4,13 +4,9 @@ import time
 import argparse
 import itertools
 import numpy as np
-import fbpca
 from joblib import Parallel, delayed, Memory
 from dotenv import load_dotenv
-from sklearn.preprocessing import StandardScaler
 from neuromaps.datasets import fetch_atlas
-from scipy.signal import hilbert
-from heteromodes import EigenSolver
 from heteromodes.utils import load_hmap
 from heteromodes.restingstate import run_simulation, evaluate_model
 
@@ -54,8 +50,8 @@ def parse_arguments():
                         help="The scaling to apply to the heterogeneity map. Defaults to 'exponential'.")
     parser.add_argument('--q_norm', type=lambda x: None if x.lower() == "none" else x, default=None, 
                         help="Type of distribution to match to when doing the quantile normalisation")
-    parser.add_argument("--phase_type", type=str, default="cpc",
-                        help="The type of phase to calculate. Defaults to 'cpc'.")
+    parser.add_argument("--phase_type", type=str, default="cpc1",
+                        help="The type of phase to calculate. Defaults to 'cpc1'.")
     parser.add_argument("--n_comps", type=int, default=3,
                         help="The number of components to calculate for the phase map. Defaults to 3.")
     
@@ -81,7 +77,7 @@ def run_split(model_fcs, model_phase_maps, emp_train_fc, emp_test_fc, emp_train_
             args.metrics
         )
 
-        print(f"alpha: {param_combs[param_i][0]:.2f}, r: {param_combs[param_i][1]:.2f}, gamma: {param_combs[param_i][2]:.2f} | Combined metric: {train_edge_fc_corr[param_i] + train_node_fc_corr[param_i] + train_phase_corr[param_i]:.3g}")
+        print(f"alpha: {param_combs[param_i][0]:.2f}, r: {param_combs[param_i][1]:.1f}, gamma: {param_combs[param_i][2]:.3f} | Combined metric: {train_edge_fc_corr[param_i] + train_node_fc_corr[param_i] + train_phase_corr[param_i]:.3g}")
 
     # Calculate combined metric
     train_combined = train_edge_fc_corr + train_node_fc_corr + train_phase_corr
@@ -118,10 +114,10 @@ if __name__ == "__main__":
     t1 = time.time()
 
     # Define constants
-    dt_emp = 0.72 * 1e3
-    nt_emp = 1200
-    dt = dt_emp / 8
-    tsteady = 50 * 1e3 # burn time to remove transient
+    dt_emp = 720        # empirical time step (ms)
+    nt_emp = 1200       # empirical number of time points
+    dt = dt_emp / 8     # model time step (ms)
+    tsteady = 50 * 1e3  # burn time to remove transient effects (ms)
 
     args = parse_arguments()
     if args.hmap_label == "None":
@@ -129,7 +125,7 @@ if __name__ == "__main__":
     if args.q_norm == "None":
         args.q_norm = None
 
-    out_dir = f'{PROJ_DIR}/results/model_rest/group'
+    out_dir = f'{PROJ_DIR}/results/model_rest/group/id-{args.id}'
 
     # Get surface
     fslr = fetch_atlas(atlas='fsLR', density=args.den)
@@ -210,7 +206,7 @@ if __name__ == "__main__":
 
         with h5py.File(f"{PROJ_DIR}/data/empirical/HCP_nsubj-255_complexPhase_parc-None_fsLR4k_hemi-L_freql-0.01_freqh-0.1.h5", "r") as f:
             phase_cpcs_group = f['phase_cpcs_group'][:]
-            if args.phase_type == "cpc":
+            if args.phase_type == "cpc1":
                 emp_phase_map = phase_cpcs_group[:, 0]
             elif args.phase_type == "combined":
                 svals_emp = f['svals_group'][:args.n_comps]
@@ -264,7 +260,7 @@ if __name__ == "__main__":
         with h5py.File(f"{PROJ_DIR}/data/empirical/HCP_nsubj-255_phasecpcs-kfold5_parc-None_fsLR{args.den}_hemi-L_freql-{args.band_freq[0]}_freqh-{args.band_freq[1]}.h5", "r") as f:
             phase_cpcs_train = f['phase_cpcs_train'][:]
             phase_cpcs_test = f['phase_cpcs_test'][:]
-            if args.phase_type == "cpc":
+            if args.phase_type == "cpc1":
                 phase_maps_train = phase_cpcs_train[:, 0, :]
                 phase_maps_test = phase_cpcs_test[:, 0, :]
             elif args.phase_type == "combined":
@@ -335,10 +331,10 @@ if __name__ == "__main__":
         print(f"Combined metric: {np.mean(test_combined):.3g}") 
 
     # Save results
-    if not os.path.exists(f"{out_dir}/id-{args.id}"):
-        os.makedirs(f"{out_dir}/id-{args.id}")
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
 
-    out_path = f"{out_dir}/id-{args.id}/{str(args.hmap_label)}_results_crossval-{args.crossval}.h5"
+    out_path = f"{out_dir}/{str(args.hmap_label)}_results_crossval-{args.crossval}.h5"
     print(f"Output path: {out_path}")
 
     with h5py.File(out_path, 'w') as f:

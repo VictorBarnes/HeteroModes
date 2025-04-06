@@ -1,15 +1,13 @@
-import os
 import fbpca
 import numpy as np
 from scipy.linalg import norm
-from scipy.signal import butter, filtfilt, detrend, hilbert
+from scipy.signal import butter, filtfilt, hilbert
 from scipy.fft import fft, ifft
 from scipy.interpolate import PchipInterpolator
 from scipy.ndimage import label
 from scipy.stats import zscore
 from heteromodes.solver import EigenSolver
 
-DENSITIES = {3619: "4k", 29696: "32k"}
 
 def run_simulation(
     # Solver parameters
@@ -26,7 +24,7 @@ def run_simulation(
     nmodes=500, 
     # Simulation parameters
     nruns=5, 
-    dt_emp=0.72 * 1e3, 
+    dt_emp=720, 
     nt_emp=1200, 
     dt=0.1, 
     tsteady=0, 
@@ -39,6 +37,8 @@ def run_simulation(
 ):
     """
     Runs a neural field model simulation and computes functional connectivity (FC) and phase maps.
+    This function has been written with the intent of being parallelized which is why the 
+    EigenSolver is called within the function instead of being passed as an argument.
 
     Solver Parameters:
     ------------------
@@ -125,7 +125,7 @@ def run_simulation(
         bold[:, run * nt_emp : (run + 1) * nt_emp] = zscore(bold_run, axis=1)
 
     # Calculate Functional Connectivity (FC)
-    fc = solver.calc_fc(bold)
+    fc = calc_fc(bold)
 
     # Compute phase map if required
     phase_map = None
@@ -133,7 +133,7 @@ def run_simulation(
         fnq = 0.5 * (1 / (dt_emp / 1e3))  # Nyquist frequency
 
         # Apply Hilbert transform
-        complex_data = solver.calc_hilbert(
+        complex_data = calc_hilbert(
             bold, fnq=fnq, band_freq=band_freq, conj=True
         )
 
@@ -148,6 +148,67 @@ def run_simulation(
             ) / np.sum(s[:n_comps])
 
     return fc, phase_map
+
+def filter_bold(bold, fnq, band_freq=(0.01, 0.1), k=2):
+    """Filter the BOLD signal using a bandpass filter."""
+    # Define parameters
+    Wn = [band_freq[0]/fnq, band_freq[1]/fnq]
+    bfilt2, afilt2 = butter(k, Wn, btype="bandpass")
+
+    bold_z = zscore(bold, axis=1)
+    bold_filtered = filtfilt(bfilt2, afilt2, bold_z, axis=1)
+
+    return bold_filtered
+
+def calc_fc(bold):
+    bold_z = zscore(bold, axis=1)
+    fc_matrix = np.corrcoef(bold_z)
+
+    return fc_matrix
+
+def calc_hilbert(bold, fnq, band_freq=(0.01, 0.1), k=2, conj=False):
+    bold_filtered = filter_bold(bold, fnq, k=k, band_freq=band_freq)
+    
+    if conj:
+        return hilbert(bold_filtered, axis=1).conj()
+    else:
+        return hilbert(bold_filtered, axis=1)
+
+def calc_fcd(bold, fnq, band_freq=(0.01, 0.1), n_avg=3):
+    # Ensure n_avg > 0
+    if n_avg < 1:
+        raise ValueError("n_avg must be greater than 0")
+
+    _, nt = np.shape(bold)  
+    # Bandpass filter the BOLD signal
+    phase = np.angle(calc_hilbert(bold, fnq, band_freq=band_freq, k=k, conj=False))
+
+    # Remove first 9 and last 9 time points to avoid edge effects from filtering, as the bandpass 
+    # filter may introduce distortions near the boundaries of the time series.
+    t_trunc = np.arange(9, t - 9)
+
+    # Calculate synchrony
+    triu_inds = np.triu_indices(np.shape(bold)[0], k=1)
+    nt_trunc = len(t_trunc)
+    synchrony_vecs = np.zeros((nt_trunc, len(triu_inds[0])))
+    for t_ind, t in enumerate(t_trunc):
+        phase_diff = np.subtract.outer(phase[:, nt], phase[:, nt])
+        synchrony_mat = np.cos(phase_diff)
+        synchrony_vecs[t_ind, :] = synchrony_mat[triu_inds]
+
+    # Pre-calculate phase vectors
+    p_mat = np.zeros((nt_trunc - n_avg-1, synchrony_vecs.shape[1]))
+    for t_ind in range(nt_trunc - n_avg-1):
+        p_mat[t_ind, :] = np.mean(synchrony_vecs[t_ind : t_ind+n_avg, :], axis=0)
+        p_mat[t_ind, :] = p_mat[t_ind, :] / norm(p_mat[t_ind, :])
+
+    # Calculate phase for every time pair
+    fcd_mat = p_mat @ p_mat.T
+
+    triu_ind = np.triu_indices(fcd_mat.shape[0], k=1)
+    fcd = fcd_mat[triu_ind]
+
+    return fcd
 
 def evaluate_model(model_fc, model_phase_map, emp_fc, emp_phase_map, metrics):
     # Calculate evaluation metrics
@@ -282,60 +343,3 @@ def generalized_phase_vector(x, Fs, lp):
     xgp = md * np.exp(1j * p)
 
     return xgp, wt
-
-
-def calc_fcd(bold, tr=0.72, lowcut=0.04, highcut=0.07, n_avg=3):
-    """Calculate phase-based functional connectivity dynamics (phFCD).
-
-    This function calculates the phase-based functional connectivity dynamics (phFCD) 
-    between regions of interest using the given bold signal and repetition time (TR).
-
-    Parameters
-    ----------
-    bold : numpy.ndarray
-        The bold signal data of shape (N, T), where N is the number of regions and T is the number of time points.
-    tr : float
-        The repetition time (TR) in seconds.
-
-    Returns
-    -------
-    numpy.ndarray
-        The phFCD matrix of shape (M,), where M is the number of unique pairs of regions.
-    """
-
-    # Ensure n_avg > 0
-    if n_avg < 1:
-        raise ValueError("n_avg must be greater than 0")
-
-    n_regions, t = np.shape(bold)  
-    # Bandpass filter the BOLD signal
-    bold_filtered = filter_bold(bold, tr=tr, lowcut=lowcut, highcut=highcut)
-    # Calculate phase for each region
-    phase_bold = np.angle(hilbert(bold_filtered))
-
-    # Remove first 9 and last 9 time points to avoid edge effects from filtering, as the bandpass 
-    # filter may introduce distortions near the boundaries of the time series.
-    t_trunc = np.arange(9, t - 9)
-
-    # Calculate synchrony
-    triu_inds = np.triu_indices(n_regions, k=1)
-    nt = len(t_trunc)
-    synchrony_vecs = np.zeros((nt, len(triu_inds[0])))
-    for t_ind, t in enumerate(t_trunc):
-        phase_diff = np.subtract.outer(phase_bold[:, t], phase_bold[:, t])
-        synchrony_mat = np.cos(phase_diff)
-        synchrony_vecs[t_ind, :] = synchrony_mat[triu_inds]
-
-    # Pre-calculate phase vectors
-    p_mat = np.zeros((nt - n_avg-1, synchrony_vecs.shape[1]))
-    for t_ind in range(nt - n_avg-1):
-        p_mat[t_ind, :] = np.mean(synchrony_vecs[t_ind : t_ind+n_avg, :], axis=0)
-        p_mat[t_ind, :] = p_mat[t_ind, :] / norm(p_mat[t_ind, :])
-
-    # Calculate phase for every time pair
-    fcd_mat = p_mat @ p_mat.T
-
-    triu_ind = np.triu_indices(fcd_mat.shape[0], k=1)
-    fcd = fcd_mat[triu_ind]
-
-    return fcd

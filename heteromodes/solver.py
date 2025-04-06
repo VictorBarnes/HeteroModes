@@ -1,14 +1,14 @@
 import os
 import pathlib
+import importlib
 import numpy as np
 from joblib import Memory
 from pathlib import Path
 from dotenv import load_dotenv
 from lapy import Solver, TriaMesh
 from lapy.utils._imports import import_optional_dependency
-from scipy.ndimage import gaussian_filter
+from scipy.linalg import norm
 from scipy.stats import zscore
-from scipy.signal import butter, filtfilt, hilbert
 from sklearn.preprocessing import QuantileTransformer
 from brainspace.vtk_interface.wrappers import BSPolyData
 from brainspace.mesh.mesh_operations import mask_points
@@ -26,8 +26,7 @@ vtk.vtkObject.GlobalWarningDisplayOff()
 load_dotenv()
 CACHE_DIR = os.getenv("CACHE_DIR")
 if CACHE_DIR is None or not os.path.exists(CACHE_DIR):
-    CACHE_DIR = Path.cwd() / "cache"
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    CACHE_DIR = Path.cwd()
 memory = Memory(Path(CACHE_DIR), verbose=0)
 
 def _check_surf(surf):
@@ -182,7 +181,7 @@ class EigenSolver(Solver):
             self.sksparse = None
         
         # Solve the eigenvalue problem
-        self.evals, evecs = self.eigs(k=k, verbose=self.verbose)
+        self.evals, evecs = self.eigs(k=k)
         
         # Set first mode to be constant (mean of first column)
         if fix_mode1:
@@ -220,67 +219,4 @@ class EigenSolver(Solver):
         # Return only the steady state part
         tsteady_ind = np.abs(self.t - tsteady).argmin()
 
-        return bold[:, tsteady_ind:]  
-
-    def filter_bold(self, bold, fnq, band_freq=(0.01, 0.1), k=2):
-        """Filter the BOLD signal using a bandpass filter."""
-        # Define parameters
-        Wn = [band_freq[0]/fnq, band_freq[1]/fnq]
-        bfilt2, afilt2 = butter(k, Wn, btype="bandpass")
-
-        bold_z = zscore(bold, axis=1)
-        bold_filtered = filtfilt(bfilt2, afilt2, bold_z, axis=1)
-
-        return bold_filtered
-
-    def calc_fc(self, bold):
-        bold_z = zscore(bold, axis=1)
-        fc_matrix = np.corrcoef(bold)
-
-        return fc_matrix
-
-    def calc_hilbert(self, bold, fnq, band_freq=(0.01, 0.1), k=2, conj=False):
-        bold_filtered = self.filter_bold(bold, fnq, k=k, band_freq=band_freq)
-        
-        if conj:
-            return hilbert(bold_filtered, axis=1).conj()
-        else:
-            return hilbert(bold_filtered, axis=1)
-
-    def calc_fcd(self, bold, fnq, band_freq=(0.01, 0.1), n_avg=3):
-        # Ensure n_avg > 0
-        if n_avg < 1:
-            raise ValueError("n_avg must be greater than 0")
-
-        _, nt = np.shape(bold)  
-        # Bandpass filter the BOLD signal
-        phase = np.angle(self.calc_hilbert(bold_filtered, fnq, band_freq=band_freq, k=k, conj=False))
-
-        # Remove first 9 and last 9 time points to avoid edge effects from filtering, as the bandpass 
-        # filter may introduce distortions near the boundaries of the time series.
-        t_trunc = np.arange(9, t - 9)
-
-        # Calculate synchrony
-        triu_inds = np.triu_indices(self.surf.n_points, k=1)
-        nt_trunc = len(t_trunc)
-        synchrony_vecs = np.zeros((nt_trunc, len(triu_inds[0])))
-        for t_ind, t in enumerate(t_trunc):
-            phase_diff = np.subtract.outer(phase[:, nt], phase[:, nt])
-            synchrony_mat = np.cos(phase_diff)
-            synchrony_vecs[t_ind, :] = synchrony_mat[triu_inds]
-
-        # Pre-calculate phase vectors
-        p_mat = np.zeros((nt_trunc - n_avg-1, synchrony_vecs.shape[1]))
-        for t_ind in range(nt_trunc - n_avg-1):
-            p_mat[t_ind, :] = np.mean(synchrony_vecs[t_ind : t_ind+n_avg, :], axis=0)
-            p_mat[t_ind, :] = p_mat[t_ind, :] / norm(p_mat[t_ind, :])
-
-        # Calculate phase for every time pair
-        fcd_mat = p_mat @ p_mat.T
-
-        triu_ind = np.triu_indices(fcd_mat.shape[0], k=1)
-        fcd = fcd_mat[triu_ind]
-
-        return fcd
-
-
+        return bold[:, tsteady_ind:]

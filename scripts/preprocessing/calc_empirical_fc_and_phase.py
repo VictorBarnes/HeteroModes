@@ -39,7 +39,6 @@ if __name__ == "__main__":
     freqh = 0.1
     n_subjs = 255
     ncpcs = 10
-    ncpcs_comb = 3
     den = "4k"
     phase_type = "complex"
 
