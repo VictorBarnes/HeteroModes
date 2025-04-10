@@ -1,4 +1,5 @@
 .vscode/
+build/
 data/
 heteromodes/__pycache__/
 heteromodes.egg-info/

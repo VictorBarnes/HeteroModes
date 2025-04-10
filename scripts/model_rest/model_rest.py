@@ -5,12 +5,11 @@ import argparse
 import itertools
 import numpy as np
 from joblib import Parallel, delayed, Memory
-from dotenv import load_dotenv
 from neuromaps.datasets import fetch_atlas
-from heteromodes.utils import load_hmap
+from heteromodes.utils import load_hmap, load_project_env
 from heteromodes.restingstate import run_simulation, evaluate_model
 
-load_dotenv()
+load_project_env()
 PROJ_DIR = os.getenv("PROJ_DIR")
 memory = Memory("/fs03/kg98/vbarnes/cache/", verbose=0)
 
@@ -51,9 +50,9 @@ def parse_arguments():
     parser.add_argument('--q_norm', type=lambda x: None if x.lower() == "none" else x, default=None, 
                         help="Type of distribution to match to when doing the quantile normalisation")
     parser.add_argument("--phase_type", type=str, default="cpc1",
-                        help="The type of phase to calculate. Defaults to 'cpc1'.")
+                        help="The type of phase to calculate: 'cpc1' or 'combined'. Defaults to 'cpc1'")
     parser.add_argument("--n_comps", type=int, default=3,
-                        help="The number of components to calculate for the phase map. Defaults to 3.")
+                        help="The number of components to calculate for the phase map if phase_type == 'combined'. Defaults to 3.")
     
     return parser.parse_args()
 

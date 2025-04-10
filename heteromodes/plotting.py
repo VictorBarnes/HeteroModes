@@ -7,7 +7,7 @@ from surfplot import Plot
 
 def plot_brain(surf, data, labels=None, layout="row", views=["lateral", "medial"], clim_q=None, 
                cmap="viridis", cbar=False, cbar_label=None, cbar_kws=None, label_kws=None,
-               outline=False, ax=None):
+               outline=False, zoom=1.25, ax=None):
     """
     Plot brain surface data on a given surface mesh.
 
@@ -77,7 +77,7 @@ def plot_brain(surf, data, labels=None, layout="row", views=["lateral", "medial"
     with tempfile.TemporaryDirectory() as temp_dir:
         for i, ax in enumerate(axs):
             # Use surfplot to plot the data
-            p = Plot(surf_lh=surf, views=views, size=(500, 250), zoom=1.25)
+            p = Plot(surf_lh=surf, views=views, size=(500, 250), zoom=zoom)
             color_range = [np.nanpercentile(data[:, i], clim_q[0]), np.nanpercentile(data[:, i], clim_q[1])] if clim_q else None
             p.add_layer(data=data[:, i], cmap=cmap, cbar=cbar, color_range=color_range)
             if outline:

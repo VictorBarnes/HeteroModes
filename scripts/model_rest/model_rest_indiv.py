@@ -8,16 +8,15 @@ import pandas as pd
 import nibabel as nib
 from pathlib import Path
 from joblib import Parallel, delayed
-from dotenv import load_dotenv
 from sklearn.preprocessing import StandardScaler
 from brainspace.utils.parcellation import reduce_by_labels
 from heteromodes import EigenSolver
 from heteromodes.restingstate import simulate_bold, calc_gen_phase, calc_edge_and_node_fc, calc_phase_map
 from heteromodes.solver import scale_hmap
+from heteromodes.utils import load_project_env
 
-load_dotenv()
+load_project_env()
 PROJ_DIR = os.getenv("PROJ_DIR")
-
 
 def calc_fc_and_phase(bold, tr, band_freq, parc=None):
     # Z-score bold data

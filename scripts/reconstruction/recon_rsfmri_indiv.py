@@ -2,17 +2,15 @@ import os
 import h5py
 import numpy as np
 from sklearn.preprocessing import StandardScaler
-from heteromodes.eigentools import calc_eigenreconstruction
-from heteromodes import EigenSolver
-from heteromodes.utils import load_hmap
 from neuromaps.datasets import fetch_fslr
 from joblib import Parallel, delayed
-from dotenv import load_dotenv
 from memory_profiler import profile
 import argparse
+from heteromodes.eigentools import calc_eigenreconstruction
+from heteromodes import EigenSolver
+from heteromodes.utils import load_project_env
 
-
-load_dotenv()
+load_project_env()
 PROJ_DIR = os.getenv("PROJ_DIR")
 
 def recon_subject(bold_subj, method="orthogonal"):

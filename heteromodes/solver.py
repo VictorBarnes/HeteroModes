@@ -4,10 +4,8 @@ import importlib
 import numpy as np
 from joblib import Memory
 from pathlib import Path
-from dotenv import load_dotenv
 from lapy import Solver, TriaMesh
 from lapy.utils._imports import import_optional_dependency
-from scipy.linalg import norm
 from scipy.stats import zscore
 from sklearn.preprocessing import QuantileTransformer
 from brainspace.vtk_interface.wrappers import BSPolyData
@@ -15,7 +13,7 @@ from brainspace.mesh.mesh_operations import mask_points
 from brainspace.mesh.mesh_io import read_surface
 from brainspace.mesh.mesh_elements import get_cells, get_points
 from heteromodes.models import WaveModel, BalloonModel
-from heteromodes.utils import standardise_modes
+from heteromodes.utils import standardise_modes, load_project_env
 
 # Turn off VTK warning when using importing brainspace.mesh_operations:  
 # "vtkThreshold.cxx:99 WARN| vtkThreshold::ThresholdBetween was deprecated for VTK 9.1 and will be removed in a future version."
@@ -23,7 +21,7 @@ import vtk
 vtk.vtkObject.GlobalWarningDisplayOff()
 
 # Set up joblib memory caching
-load_dotenv()
+load_project_env()
 CACHE_DIR = os.getenv("CACHE_DIR")
 if CACHE_DIR is None or not os.path.exists(CACHE_DIR):
     CACHE_DIR = Path.cwd()

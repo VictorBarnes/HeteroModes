@@ -4,12 +4,12 @@ import nibabel as nib
 import numpy as np
 from brainspace.utils.parcellation import reduce_by_labels
 from sklearn.preprocessing import StandardScaler
-from dotenv import load_dotenv
 from pathlib import Path
 from scipy.io import loadmat
 from neuromaps.datasets import fetch_fslr
+from heteromodes.utils import load_project_env
 
-load_dotenv()
+load_project_env()
 PROJ_DIR = os.getenv("PROJ_DIR")
 DENSITIES = {"4k": 4002, "32k": 32492}
 

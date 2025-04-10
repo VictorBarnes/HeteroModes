@@ -5,15 +5,13 @@ from sklearn.preprocessing import StandardScaler
 from heteromodes.eigentools import calc_eigenreconstruction
 from neuromaps.datasets import fetch_fslr
 from joblib import Parallel, delayed
-from dotenv import load_dotenv
 from memory_profiler import profile
 import argparse
 from heteromodes import EigenSolver
-from heteromodes.utils import load_hmap
+from heteromodes.utils import load_hmap, load_project_env
 from heteromodes.restingstate import filter_bold
 
-
-load_dotenv()
+load_project_env()
 PROJ_DIR = os.getenv("PROJ_DIR")
 
 def recon_subject(bold_subj, emodes, mass, method="orthogonal", metric="pearsonr"):
