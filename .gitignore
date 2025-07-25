@@ -11,3 +11,4 @@ scripts/_console.*
 *.ipynb
 *.sh
 *.json
+.DS_Store
