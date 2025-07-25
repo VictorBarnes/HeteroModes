@@ -1,15 +1,13 @@
 .vscode/
 build/
 data/
-heteromodes/__pycache__/
 heteromodes.egg-info/
 results/
 scripts/.ipynb_checkpoints/
-scripts/__pycache__/
 scripts/sandbox/
 scripts/_console.*
-scripts/model_rest/__pycache__/
 .env
+**/__pycache__/
 *.ipynb
 *.sh
 *.json
