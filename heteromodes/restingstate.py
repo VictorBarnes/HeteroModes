@@ -1,3 +1,5 @@
+import os
+import numexpr as ne
 import fbpca
 import numpy as np
 from scipy.linalg import norm
@@ -5,11 +7,13 @@ from scipy.signal import butter, filtfilt, hilbert
 from scipy.fft import fft, ifft
 from scipy.interpolate import PchipInterpolator
 from scipy.ndimage import label
-from scipy.stats import zscore
-from heteromodes.solver import EigenSolver
+from scipy.stats import zscore, ks_2samp
+from brainspace.utils.parcellation import reduce_by_labels
+from nsbtools.utils import unmask
+from nsbtools.eigen import EigenSolver
 
 
-def run_simulation(
+def run_model(
     # Solver parameters
     surf, 
     medmask=None, 
@@ -21,19 +25,15 @@ def run_simulation(
     q_norm=None, 
     lump=False, 
     smoothit=10,
-    nmodes=500, 
+    n_modes=500, 
     # Simulation parameters
-    nruns=5, 
-    dt_emp=720, 
+    n_runs=5, 
     nt_emp=1200, 
-    dt=0.1, 
+    dt_emp=720, 
+    dt_model=90, 
     tsteady=0, 
-    solver_method="Fourier", 
     eig_method="orthogonal", 
-    # Phase parameters
-    phase_type=None,
-    band_freq=(0.01, 0.1), 
-    n_comps=4
+    parc=None
 ):
     """
     Runs a neural field model simulation and computes functional connectivity (FC) and phase maps.
@@ -62,7 +62,7 @@ def run_simulation(
         Whether to lump parameters together.
     smoothit : int
         Number of smoothing iterations (default: 10).
-    nmodes : int, optional
+    n_modes : int, optional
         Number of eigenmodes to use in the solver (default: 500).
 
     Simulation Parameters:
@@ -77,8 +77,6 @@ def run_simulation(
         Simulation time step in milliseconds (default: 0.1 ms).
     tsteady : float
         Time before starting data collection.
-    solver_method : str
-        Method for solving the simulation (default: "Fourier").
     eig_method : str
         Method for eigenmode decomposition (default: "orthogonal").
 
@@ -101,10 +99,10 @@ def run_simulation(
     
     # Try solving eigenvalues and eigenvectors
     try:
-        solver = EigenSolver(surf=surf, medmask=medmask, hetero=hetero, alpha=alpha, 
+        solver = EigenSolver(surf=surf, medmask=medmask, hetero=hetero, n_modes=n_modes, alpha=alpha, 
                              r=r, gamma=gamma, scaling=scaling, q_norm=q_norm, 
                              lump=lump, smoothit=smoothit)
-        solver.solve(k=nmodes, fix_mode1=True, standardise=False)
+        solver.solve(fix_mode1=True, standardise=False)
     except ValueError as e:
         if "Alpha value results in non-physiological wave speeds" in str(e):
             print(f"Invalid parameter combination: alpha={alpha}, r={r}, gamma={gamma}")
@@ -112,42 +110,91 @@ def run_simulation(
         else:
             raise e
 
-    nt = int((nt_emp - 1) * dt_emp / dt)
+    nt_model = int((nt_emp - 1) * dt_emp / dt_model)
 
     # Pre-allocate BOLD activity array
-    bold = np.empty((solver.surf.n_points, nt_emp * nruns), dtype=np.float32)
-    for run in range(nruns):
-        bold_run = solver.simulate_bold(dt=dt, nt=nt, tsteady=tsteady, solver_method=solver_method, 
-                                        eig_method=eig_method, seed=run)
+    n_regions = solver.surf.n_points if parc is None else np.sum(parc != 0)
+    bold = np.empty((n_regions, nt_emp, n_runs), dtype=np.float32)
+    for i in range(n_runs):
+        bold_i = solver.simulate_waves(dt=dt_model, nt=nt_model, tsteady=tsteady, seed=i, bold_out=True,
+                                         eig_method=eig_method)
 
         # Downsample to match empirical time resolution
-        bold_run = bold_run[:, ::int(dt_emp // dt)]
-        bold[:, run * nt_emp : (run + 1) * nt_emp] = zscore(bold_run, axis=1)
+        bold_i = bold_i[:, ::int(dt_emp // dt_model)]
+        
+        # Parcellate
+        if parc is not None:
+            medmask_parc = np.where(parc != 0, True, False)
+            # Unmask using the vertex mask then re-mask using the parcellationg mask since they are different
+            bold_i_masked = unmask(bold_i, medmask)[medmask_parc, :]
+            bold_i = reduce_by_labels(bold_i_masked, parc[medmask_parc], axis=1)
 
-    # Calculate Functional Connectivity (FC)
-    fc = calc_fc(bold)
+        bold[:, :, i] = zscore(bold_i, axis=1)
 
-    # Compute phase map if required
-    phase_map = None
-    if phase_type in ["cpc1", "combined"]:
-        fnq = 0.5 * (1 / (dt_emp / 1e3))  # Nyquist frequency
+    return bold
 
-        # Apply Hilbert transform
-        complex_data = calc_hilbert(
-            bold, fnq=fnq, band_freq=band_freq, conj=True
-        )
+def analyze_bold(bold, dt_emp=720, band_freq=(0.01, 0.1), 
+                 metrics=["edge_fc_corr", "node_fc_corr", "fcd_ks"]):
+    """Compute all derivatives from BOLD data."""
+    outputs = {}
+    
+    # Calculate FC
+    if "edge_fc_corr" in metrics or "node_fc_corr" in metrics:
+        bold_concat = np.hstack([bold[:, :, i] for i in range(bold.shape[2])], dtype=np.float32)
+        outputs['fc'] = calc_fc(bold_concat)
+    
+    if "cpc1" in metrics or 'fcd_ks' in metrics:
+        fnq = 0.5 * (1 / (dt_emp / 1e3))   
 
-        # PCA on complex data
-        _, s, V = fbpca.pca(complex_data.T, k=10, n_iter=20, l=20)
+        if "cpc1" in metrics:
+            outputs['analytic'] = calc_hilbert(bold, fnq=fnq, band_freq=band_freq, k=2).astype(np.complex64)
+        if "fcd_ks" in metrics:
+            fcd = []
+            for i in range(bold.shape[2]):
+                fcd.append(calc_fcd_efficient(bold[:, :, i], fnq=fnq, band_freq=band_freq).astype(np.float32))
+            outputs['fcd'] = np.array(fcd).T
 
-        if phase_type == "cpc1":
-            phase_map = np.real(V[0, :]).T
-        elif phase_type == "combined":
-            phase_map = np.sum(
-                np.real(V[:n_comps, :]).T * s[:n_comps], axis=1
-            ) / np.sum(s[:n_comps])
+    return outputs
 
-    return fc, phase_map
+
+def evaluate_model(model_outputs, emp_outputs, 
+                   metrics=["edge_fc_corr", "node_fc_corr", "fcd_ks"]):
+    """
+    Evaluate model against empirical data using pre-computed results.
+    
+    Parameters:
+    -----------
+    model_results : dict
+        Dictionary containing model derivatives (fc, phase_map, fcd, etc.)
+    emp_results : dict  
+        Dictionary containing empirical derivatives (fc_mean, phase_map_mean, etc.)
+    metrics : list
+        List of metrics to compute results for
+        
+    Returns:
+    --------
+    results : dict
+        Dictionary with correlation values for each metric
+    """
+    results = {}
+    
+    if "edge_fc_corr" in metrics:
+        model_edge_fc = calc_edge_fc(model_outputs['fc'], fisher_z=True)
+        emp_edge_fc = calc_edge_fc(emp_outputs['fc'], fisher_z=True)
+        results['edge_fc_corr'] = np.corrcoef(model_edge_fc, emp_edge_fc)[0, 1]
+    
+    if "node_fc_corr" in metrics:
+        model_node_fc = calc_node_fc(model_outputs['fc'])
+        emp_node_fc = calc_node_fc(emp_outputs['fc'])
+        results['node_fc_corr'] = np.corrcoef(model_node_fc, emp_node_fc)[0, 1]
+    
+    if "phase" in metrics:
+        pass
+    
+    if "fcd_ks" in metrics:
+        results['fcd_ks'] = ks_2samp(model_outputs['fcd'].flatten(), emp_outputs['fcd'].flatten())[0]
+    
+    return results
 
 def filter_bold(bold, fnq, band_freq=(0.01, 0.1), k=2):
     """Filter the BOLD signal using a bandpass filter."""
@@ -162,17 +209,14 @@ def filter_bold(bold, fnq, band_freq=(0.01, 0.1), k=2):
 
 def calc_fc(bold):
     bold_z = zscore(bold, axis=1)
-    fc_matrix = np.corrcoef(bold_z)
+    fc_matrix = np.corrcoef(bold_z, dtype=np.float32)
 
     return fc_matrix
 
-def calc_hilbert(bold, fnq, band_freq=(0.01, 0.1), k=2, conj=False):
+def calc_hilbert(bold, fnq, band_freq=(0.01, 0.1), k=2):
     bold_filtered = filter_bold(bold, fnq, k=k, band_freq=band_freq)
     
-    if conj:
-        return hilbert(bold_filtered, axis=1).conj()
-    else:
-        return hilbert(bold_filtered, axis=1)
+    return hilbert(bold_filtered, axis=1)
 
 def calc_fcd(bold, fnq, band_freq=(0.01, 0.1), n_avg=3):
     # Ensure n_avg > 0
@@ -181,18 +225,18 @@ def calc_fcd(bold, fnq, band_freq=(0.01, 0.1), n_avg=3):
 
     _, nt = np.shape(bold)  
     # Bandpass filter the BOLD signal
-    phase = np.angle(calc_hilbert(bold, fnq, band_freq=band_freq, k=k, conj=False))
+    phase = np.angle(calc_hilbert(bold, fnq, band_freq=band_freq, k=2))
 
     # Remove first 9 and last 9 time points to avoid edge effects from filtering, as the bandpass 
     # filter may introduce distortions near the boundaries of the time series.
-    t_trunc = np.arange(9, t - 9)
+    t_trunc = np.arange(9, nt - 9)
 
     # Calculate synchrony
     triu_inds = np.triu_indices(np.shape(bold)[0], k=1)
     nt_trunc = len(t_trunc)
     synchrony_vecs = np.zeros((nt_trunc, len(triu_inds[0])))
     for t_ind, t in enumerate(t_trunc):
-        phase_diff = np.subtract.outer(phase[:, nt], phase[:, nt])
+        phase_diff = np.subtract.outer(phase[:, t], phase[:, t])
         synchrony_mat = np.cos(phase_diff)
         synchrony_vecs[t_ind, :] = synchrony_mat[triu_inds]
 
@@ -210,41 +254,85 @@ def calc_fcd(bold, fnq, band_freq=(0.01, 0.1), n_avg=3):
 
     return fcd
 
-def evaluate_model(model_fc, model_phase_map, emp_fc, emp_phase_map, metrics):
-    # Calculate evaluation metrics
-    edge_fc_corr, node_fc_corr, phase_corr = 0, 0, 0
-    if "edge_fc" in metrics:
-        edge_fc_corr = calc_edgefc_corr(model_fc, emp_fc)
-    if "node_fc" in metrics:
-        node_fc_corr = calc_nodefc_corr(model_fc, emp_fc)
-    if "phase" in metrics:
-        phase_corr = np.abs(np.corrcoef(model_phase_map, emp_phase_map)[0, 1])
+def calc_fcd_efficient(bold, fnq, band_freq=(0.01, 0.1), n_avg=3, chunk_size=50, metric="phase"):
+    if n_avg < 1:
+        raise ValueError("n_avg must be greater than 0")
 
-    return edge_fc_corr, node_fc_corr, phase_corr
+    bold = bold.astype(np.float32)
 
-def calc_edgefc_corr(model_fc, emp_fc, eps=1e-7):
-    triu_inds = np.triu_indices(np.shape(model_fc)[0], k=1)
-    edge_fc_corr = np.corrcoef(np.arctanh(np.clip(model_fc[triu_inds], -1 + eps, 1 - eps)), 
-                               np.arctanh(np.clip(emp_fc[triu_inds], -1 + eps, 1 - eps)))[0, 1]
+    n_regions, nt = bold.shape
+    if metric == "amplitude":
+        # Calculate amplitude of the BOLD signal
+        phase = np.abs(calc_hilbert(bold, fnq, band_freq=band_freq, k=2))
+    elif metric == "phase":
+        phase = np.angle(calc_hilbert(bold, fnq, band_freq=band_freq, k=2))
+    else:
+        raise ValueError("Invalid metric. Choose 'amplitude' or 'phase'.")
 
-    return edge_fc_corr
+    t_trunc = np.arange(9, nt - 9)
+    nt_trunc = len(t_trunc)
+    phase_trunc = phase[:, t_trunc]  # Preloaded for efficient access
 
-def calc_nodefc_corr(model_fc, emp_fc, eps=1e-7):
-    # Compute Node-level FC (exclude diagonal elements by setting them to NaN)
-    fc_model_nandiag = np.clip(model_fc, -1 + eps, 1 - eps)
-    np.fill_diagonal(fc_model_nandiag, np.nan)
-    fc_emp_nandiag = np.clip(emp_fc, -1 + eps, 1 - eps)
-    np.fill_diagonal(fc_emp_nandiag, np.nan)
-    node_fc_corr = np.corrcoef(np.nanmean(np.arctanh(fc_model_nandiag), axis=1), 
-                               np.nanmean(np.arctanh(fc_emp_nandiag), axis=1))[0, 1]
+    triu_i, triu_j = np.triu_indices(n_regions, k=1)
+    n_edges = len(triu_i)
+
+    p_mat = np.empty((nt_trunc - n_avg - 1, n_edges), dtype=np.float32)
+    avg_sync = np.empty(n_edges, dtype=np.float32)  # Preallocated for reuse
+
+    for chunk_start in range(0, nt_trunc, chunk_size):
+        chunk_end = min(chunk_start + chunk_size, nt_trunc)
+        chunk_size_actual = chunk_end - chunk_start
+
+        synchrony_chunk = np.empty((chunk_size_actual, n_edges), dtype=np.float32)
+
+        for i in range(chunk_size_actual):
+            x = phase_trunc[:, chunk_start + i][:, None]
+            y = phase_trunc[:, chunk_start + i][None, :]
+            synchrony_mat = ne.evaluate("cos(x - y)")
+            synchrony_chunk[i, :] = synchrony_mat[triu_i, triu_j]
+
+        for i in range(chunk_size_actual):
+            global_t = chunk_start + i
+            if global_t < nt_trunc - n_avg - 1:
+                start_idx = max(0, global_t - chunk_start)
+                end_idx = min(chunk_size_actual, global_t + n_avg - chunk_start)
+
+                if end_idx > start_idx:
+                    avg_sync = np.mean(synchrony_chunk[start_idx:end_idx, :], axis=0)
+
+                    norm_val = np.sqrt(ne.evaluate("sum(avg_sync ** 2)"))
+                    if norm_val > 1e-6:
+                        p_mat[global_t, :] = avg_sync / norm_val
+                    else:
+                        p_mat[global_t, :] = 0.0
+
+    fcd_mat = p_mat @ p_mat.T
+    triu_ind = np.triu_indices(fcd_mat.shape[0], k=1)
+    fcd_upper = fcd_mat[triu_ind]
     
-    return node_fc_corr
+    return fcd_upper
+
+def calc_edge_fc(fc, eps=1e-7, fisher_z=False):
+    triu_inds = np.triu_indices(np.shape(fc)[0], k=1)
+    edge_fc = np.clip(fc[triu_inds], -1 + eps, 1 - eps)
+    if fisher_z:
+        edge_fc = np.arctanh(edge_fc)
+
+    return edge_fc
+
+def calc_node_fc(fc, eps=1e-7):
+    # Compute Node-level FC (exclude diagonal elements by setting them to NaN)
+    fc_nandiag = np.clip(fc, -1 + eps, 1 - eps)
+    np.fill_diagonal(fc_nandiag, np.nan)
+    node_fc = np.nanmean(np.arctanh(fc_nandiag), axis=1)
+    
+    return node_fc
 
 def calc_gen_phase(bold, tr=0.72, lowcut=0.01, highcut=0.1):
     # Calculate phase delay
     phase_delay = np.empty(bold.shape, dtype=np.complex128)
     for i in range(bold.shape[0]):
-        phase_delay[i, :] = generalized_phase_vector(bold[i, :], Fs=1/0.72, lp=lowcut)[0].conj()
+        phase_delay[i, :] = generalized_phase_vector(bold[i, :], Fs=1/0.72, lp=lowcut)[0]
 
     return np.angle(phase_delay)
 
