@@ -8,7 +8,8 @@ scripts/.ipynb_checkpoints/
 scripts/__pycache__/
 scripts/sandbox/
 scripts/_console.*
-scripts/model_rest/*.sh
-scripts/model_rest/*.json
 scripts/model_rest/__pycache__/
 .env
+*.ipynb
+*.sh
+*.json
