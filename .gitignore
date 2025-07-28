@@ -12,3 +12,5 @@ scripts/_console.*
 *.sh
 *.json
 .DS_Store
+
+conda-environment.yml
