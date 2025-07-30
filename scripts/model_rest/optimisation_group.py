@@ -4,6 +4,7 @@ import time
 import argparse
 import itertools
 import numpy as np
+import pandas as pd
 import nibabel as nib
 from tqdm import tqdm
 from joblib import Parallel, delayed
@@ -14,7 +15,7 @@ from heteromodes.restingstate import run_model, analyze_bold, evaluate_model
 
 load_project_env()
 PROJ_DIR = os.getenv("PROJ_DIR")
-os.environ["NUMEXPR_MAX_THREADS"] = "1"
+os.environ["NUMEXPR_MAX_THREADS"] = "1" # this is for calc_fcd_efficient
 
 def print_heading(text):
     print(f"\n{text}\n{'=' * len(text)}")
@@ -36,6 +37,8 @@ def parse_arguments():
                         help="The number of CPUs for parallelization. Defaults to -1")
     parser.add_argument('--alpha', type=float, nargs=3, default=[-5, 5, 0.1], metavar=('alpha_min', 'alpha_max', 'alpha_step'), 
                         help='The alpha_min, alpha_max, and alpha_step values for scaling the heterogeneity map.')
+    parser.add_argument("--beta", type=float, default=[1.0], nargs="+", metavar="beta values",
+                        help="The beta value for scaling the heterogeneity map. Defaults to 1.0. Provide either a single beta value or three values (beta_min, beta_max, beta_step).")
     parser.add_argument("--r", type=float, nargs="+", default=[28.9], metavar="r_values", 
                         help="The spatial length scale of the wave model. Defaults to 28.9 s^-1. Provide either a single r value or three values (r_min, r_max, r_step).")
     parser.add_argument("--gamma", type=float, nargs="+", default=[0.116], metavar="gamma values",
@@ -58,6 +61,8 @@ def parse_arguments():
                         help="The number of components to calculate for the phase map if phase_type == 'combined'. Defaults to 3.")
     parser.add_argument("--nt_emp", type=int, default=600,
                         help="The number of time points in the empirical data. Defaults to 1200.")
+    parser.add_argument("--species", type=str, default="human",
+                        help="The species of the data. Defaults to 'human'.")
     
     return parser.parse_args()
 
@@ -78,36 +83,41 @@ def model_job(params, surf, medmask, hmap, args, dt_emp, dt, tsteady):
     """
     
     # Run simulation
-    bold_data = run_model(
-        surf=surf, 
-        medmask=medmask, 
-        hetero=hmap, 
-        alpha=params[0],
-        r=params[1], 
-        gamma=params[2],
-        scaling=args.scaling,
-        q_norm=args.q_norm,
-        n_modes=args.n_modes,
-        n_runs=args.n_runs,
-        dt_emp=dt_emp,
-        nt_emp=args.nt_emp,
-        dt_model=dt,
-        tsteady=tsteady
-    )
-    
-    # Check if simulation was successful
-    if bold_data is None:
+    try:
+        bold_data = run_model(
+            surf=surf, 
+            medmask=medmask, 
+            hetero=hmap, 
+            alpha=params[0],
+            r=params[1], 
+            gamma=params[2],
+            beta=params[3],
+            scaling=args.scaling,
+            q_norm=args.q_norm,
+            n_modes=args.n_modes,
+            n_runs=args.n_runs,
+            dt_emp=dt_emp,
+            nt_emp=args.nt_emp,
+            dt_model=dt,
+            tsteady=tsteady
+        )
+        
+        # Check if simulation was successful
+        if bold_data is None:
+            return None
+        
+        # Analyze BOLD data
+        outputs = analyze_bold(
+            bold_data, 
+            dt_emp=dt_emp, 
+            band_freq=args.band_freq,
+            metrics=args.metrics
+        )
+        
+        return outputs
+    except Exception as e:
+        print(f"Error in model_job with params {params}: {e}")
         return None
-    
-    # Analyze BOLD data
-    outputs = analyze_bold(
-        bold_data, 
-        dt_emp=dt_emp, 
-        band_freq=args.band_freq,
-        metrics=args.metrics
-    )
-    
-    return outputs
 
 def run_split(model_outputs, emp_outputs_train, emp_outputs_test, args):
     """
@@ -148,18 +158,34 @@ def run_split(model_outputs, emp_outputs_train, emp_outputs_test, args):
 if __name__ == "__main__":
     t1 = time.time()
 
-    # Define constants
-    dt_emp = 720        # empirical time step (ms)
-    dt = dt_emp / 8     # model time step (ms)
-    tsteady = 50 * 1e3  # burn time to remove transient effects (ms)
-
     args = parse_arguments()
     if args.hmap_label == "None":
         args.hmap_label = None
     if args.q_norm == "None":
         args.q_norm = None
 
-    out_dir = f'{PROJ_DIR}/results/model_rest/group/id-{args.id}/{args.hmap_label}'
+    TR_SPECIES = {"human": 720, "macaque": 750, "marmoset": 2000} # in ms
+    DT_SPECIES = {"human": 90, "macaque": 50, "marmoset": 50} # in ms
+    DATA_DIR_SPECIES = {
+        "human": "/fs03/kg98/vbarnes/HCP",
+        "macaque": "/fs03/kg98/vbarnes/nhp_nnp/macaque",
+        "marmoset": "/fs03/kg98/vbarnes/nhp_nnp/marmoset"
+    }
+    DATA_DESC_SPECIES = {
+        "human": "hcp-s1200_nsubj-255",
+        "macaque": "_nsubj-10", # TODO:
+        "marmoset": "mbm-v4_nsubj-39"
+    }
+
+    dt_emp = TR_SPECIES[args.species]
+    dt = DT_SPECIES[args.species]  # model time step (ms)
+    data_dir = DATA_DIR_SPECIES[args.species]
+    data_desc = DATA_DESC_SPECIES[args.species]
+    
+    # Define constants
+    tsteady = 5 * 1e4  # burn time to remove transient effects (ms)
+
+    out_dir = f'{PROJ_DIR}/results/{args.species}/model_rest/group/id-{args.id}/{args.hmap_label}'
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
 
@@ -167,7 +193,7 @@ if __name__ == "__main__":
     fslr = fetch_atlas(atlas='fsLR', density=args.den)
     surf = str(fslr['midthickness'][0])
     # Load medmask
-    medmask = nib.load(f"{PROJ_DIR}/data/empirical/space-fsLR_den-{args.den}_hemi-L_desc-nomedialwall.func.gii").darrays[0].data.astype(bool)
+    medmask = nib.load(f"{PROJ_DIR}/data/empirical/{args.species}/space-fsLR_den-{args.den}_hemi-L_desc-nomedialwall.func.gii").darrays[0].data.astype(bool)
 
     # Get hmap and alpha values
     if args.hmap_label is None:
@@ -191,13 +217,14 @@ if __name__ == "__main__":
 
         alpha_min, alpha_max, alpha_step = args.alpha
         alpha_num = int(abs(alpha_max - alpha_min) / alpha_step) + 1
-        alpha_vals = np.linspace(alpha_min, alpha_max, alpha_num)
+        alpha_vals = np.linspace(alpha_min, alpha_max, alpha_num).round(len(str(alpha_step).split('.')[-1]))
         if alpha_min < 0 < alpha_max:
             alpha_vals = alpha_vals[alpha_vals != 0] # Remove 0 since that is the homogeneous case
         print(alpha_vals)
     r_vals = args.r if len(args.r) == 1 else np.arange(args.r[0], args.r[1], args.r[2])
     gamma_vals = args.gamma if len(args.gamma) == 1 else np.arange(args.gamma[0], args.gamma[1], args.gamma[2])
-    param_combs = list(itertools.product(alpha_vals, r_vals, gamma_vals))
+    beta_vals = args.beta if len(args.beta) == 1 else np.arange(args.beta[0], args.beta[1], args.beta[2])
+    param_combs = list(itertools.product(alpha_vals, r_vals, gamma_vals, beta_vals))
 
     # Run all models (i.e. for all parameter combinations) and store outputs in cache
     print_heading(f"Running {args.hmap_label} model for {len(param_combs)} parameter combinations...")
@@ -226,13 +253,12 @@ if __name__ == "__main__":
         print_heading("Fitting models to empirical data...")
         
         # Load empirical data and create emp_outputs dictionary
-        with h5py.File(f"{PROJ_DIR}/data/empirical/hcp-s1200_nsubj-255_desc-fc_space-fsLR_den-{args.den}_hemi-L.h5", "r") as f:
-            emp_fc = f['fc_group'][:]
-
-        emp_outputs = {'fc': emp_fc}
+        emp_outputs = {}
+        with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fc_space-fsLR_den-{args.den}_hemi-L.h5", "r") as f:
+            emp_outputs['fc'] = f['fc_group'][:]
 
         if "fcd_ks" in args.metrics:
-            with h5py.File(f"{PROJ_DIR}/data/empirical/hcp-s1200_nsubj-255_desc-fcd_space-fsLR_den-{args.den}_hemi-L_freql-{args.band_freq[1]}_freqh-{args.band_freq[1]}.h5", "r") as f:
+            with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fcd_space-fsLR_den-{args.den}_hemi-L_freql-{args.band_freq[1]}_freqh-{args.band_freq[1]}.h5", "r") as f:
                 emp_outputs['fcd_ks'] = f['fcd_group'][:]
         
         # Evaluate all models
@@ -259,15 +285,15 @@ if __name__ == "__main__":
 
     else:
         print_heading("Fitting models to empirical data using cross validation...")
-        
-        # Load empirical cross-validation data
-        with h5py.File(f"{PROJ_DIR}/data/empirical/hcp-s1200_nsubj-255_desc-fc-kfold5_space-fsLR_den-{args.den}_hemi-L_nt-{args.nt_emp}.h5", "r") as f:
-            fcs_train = f['fc_train'][:]
-            fcs_test = f['fc_test'][:]
 
         # Prepare empirical outputs for each split
         emp_outputs_train = []
         emp_outputs_test = []
+        
+        # Load empirical cross-validation data
+        with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fc-kfold5_space-fsLR_den-{args.den}_hemi-L_nt-{args.nt_emp}.h5", "r") as f:
+            fcs_train = f['fc_train'][:]
+            fcs_test = f['fc_test'][:]
         
         for i in range(args.n_splits):
             emp_train = {'fc': fcs_train[:, :, i]}
@@ -276,7 +302,7 @@ if __name__ == "__main__":
             emp_outputs_test.append(emp_test)
 
         if "fcd_ks" in args.metrics:
-            with h5py.File(f"{PROJ_DIR}/data/empirical/hcp-s1200_nsubj-255_desc-fcd-kfold5_space-fsLR_den-{args.den}_hemi-L_freql-{args.band_freq[0]}_freqh-{args.band_freq[1]}_nt-{args.nt_emp}.h5", "r") as f:
+            with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fcd-kfold5_space-fsLR_den-{args.den}_hemi-L_freql-{args.band_freq[0]}_freqh-{args.band_freq[1]}_nt-{args.nt_emp}.h5", "r") as f:
                 fcds_train = f['fcd_train'][:]
                 fcds_test = f['fcd_test'][:]
                 for i in range(args.n_splits):
@@ -300,7 +326,7 @@ if __name__ == "__main__":
                 f"{metric}: {split_results_i['test_results'][metric]:.3f}" for metric in args.metrics
             ])
             print(f"Split {i} Best Model | alpha: {param_combs[best_ind_i][0]:.2f}, r: {param_combs[best_ind_i][1]:.1f}, "
-                    f"gamma: {param_combs[best_ind_i][2]:.3f} | {resuls_str}")
+                    f"gamma: {param_combs[best_ind_i][2]:.3f}, beta: {param_combs[best_ind_i][3]} | {resuls_str}")
             
             split_results.append(split_results_i)
 
@@ -311,7 +337,7 @@ if __name__ == "__main__":
             for metric in args.metrics:
                 results_i[metric] = np.array([train_results[j][i][metric] for j in range(args.n_splits)])
 
-            out_file = f"{out_dir}/results_alpha-{param_combs[i][0]:.1f}_r-{param_combs[i][1]:.1f}_gamma-{param_combs[i][2]:.3f}.h5"
+            out_file = f"{out_dir}/results_alpha-{param_combs[i][0]:.1f}_r-{param_combs[i][1]:.1f}_gamma-{param_combs[i][2]:.3f}_beta-{param_combs[i][3]:.1f}.h5"
             with h5py.File(out_file, "w") as f:
                 f.create_dataset('fc', data=model_outputs[i].get('fc', np.nan))
                 f.create_dataset('fcd', data=model_outputs[i].get('fcd', np.nan))
@@ -332,12 +358,13 @@ if __name__ == "__main__":
             f.create_dataset('alpha', data=best_combs[:, 0])
             f.create_dataset('r', data=best_combs[:, 1])
             f.create_dataset('gamma', data=best_combs[:, 2])
-            f.create_dataset('fc', data=np.dstack([model_outputs[best_ind[i]].get('fcd', np.nan) for i in range(args.n_splits)]))
+            f.create_dataset('beta', data=best_combs[:, 3])
+            f.create_dataset('fc', data=np.dstack([model_outputs[best_ind[i]].get('fc', np.nan) for i in range(args.n_splits)]))
             f.create_dataset('fcd', data=np.dstack([model_outputs[best_ind[i]].get('fcd', np.nan) for i in range(args.n_splits)]))
             
-            f.create_group('results')
+            group = f.create_group('results')
             for key, value in best_results.items():
-                f.create_dataset(key, data=value)
+                group.create_dataset(key, data=value)
 
         # Print final results (averages across splits)
         print_heading("Final Results")
@@ -348,8 +375,13 @@ if __name__ == "__main__":
         print(
             f"Best Model | alpha: {np.mean(best_combs, axis=0)[0]:.1f} "
             f"r: {np.mean(best_combs, axis=0)[1]:.1f} "
-            f"gamma: {np.mean(best_combs, axis=0)[2]:.3f} | {results_str}"
+            f"gamma: {np.mean(best_combs, axis=0)[2]:.3f} "
+            f"beta: {np.mean(best_combs, axis=0)[3]:.1f} | {results_str}"
         )
 
+    # Save parameter combinations to csv file
+    param_combs_df = pd.DataFrame(param_combs, columns=['alpha', 'r', 'gamma', 'beta'])
+    param_combs_df.to_csv(f"{out_dir}/parameter_combinations.csv", index=False)
+
     t2 = time.time()
-    print(f"\nTotal time: {(t2 - t1)/60:.1f} mins")
+    print(f"\nTotal time: {(t2 - t1)/3600:.1f} hours")

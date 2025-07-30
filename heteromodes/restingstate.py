@@ -19,6 +19,7 @@ def run_model(
     medmask=None, 
     hetero=None, 
     alpha=0, 
+    beta=1.0,
     r=28.9, 
     gamma=0.116, 
     scaling="sigmoid", 
@@ -99,7 +100,7 @@ def run_model(
     
     # Try solving eigenvalues and eigenvectors
     try:
-        solver = EigenSolver(surf=surf, medmask=medmask, hetero=hetero, n_modes=n_modes, alpha=alpha, 
+        solver = EigenSolver(surf=surf, medmask=medmask, hetero=hetero, n_modes=n_modes, alpha=alpha, beta=beta,
                              r=r, gamma=gamma, scaling=scaling, q_norm=q_norm, 
                              lump=lump, smoothit=smoothit)
         solver.solve(fix_mode1=True, standardise=False)

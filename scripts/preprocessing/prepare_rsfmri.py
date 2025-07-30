@@ -19,7 +19,7 @@ load_dotenv()
 PROJ_DIR = os.getenv("PROJ_DIR")
 DENSITIES = {"4k": 4002, "8k": 7842, "32k": 32492}
 
-def fc_and_phase_job(bold, fnq, band_freq):
+def calc_outputs(bold, fnq, band_freq):
     # Compute FC
     fc = calc_fc(bold).astype(np.float32)
     
@@ -31,6 +31,7 @@ def fc_and_phase_job(bold, fnq, band_freq):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Prepare empirical data for analysis.")
+    parser.add_argument("--species", type=str, default="human", help="Species of the data (e.g., 'human', 'macaque', 'marmoset').")
     parser.add_argument("--den", type=str, default="4k", help="Density of the data (e.g., '4k', '8k', '32k').")
     parser.add_argument("--crossval", action="store_true", default=False, help="Whether to perform cross-validation.")
     parser.add_argument("--n_splits", type=int, default=5, help="Number of splits for KFold cross-validation.")
@@ -42,12 +43,27 @@ if __name__ == "__main__":
 
     # Fixed parameters
     ncpcs = 10
-    tr = 0.72
-    fnq = 0.5 * 1/tr
+    TR_SPECIES = {"human": 0.72, "macaque": 0.75, "marmoset": 2.0}
+    DATA_DIR_SPECIES = {
+        "human": "/fs03/kg98/vbarnes/HCP",
+        "macaque": "/fs03/kg98/vbarnes/nhp_nnp/macaque",
+        "marmoset": "/fs03/kg98/vbarnes/nhp_nnp/marmoset"
+    }
+    DATA_DESC_SPECIES = {
+        "human": "hcp-s1200_nsubj-255",
+        "macaque": "_nsubj-10", # TODO:
+        "marmoset": "mbm-v4_nsubj-39"
+    }
 
+    tr = TR_SPECIES[args.species]
+    data_dir = DATA_DIR_SPECIES[args.species]
+    data_desc = DATA_DESC_SPECIES[args.species]
+    nsubj_expected = int(data_desc.split("nsubj-")[-1])
+
+    fnq = 0.5 * 1/tr
+    
     # Load subject IDs
-    subj_ids = np.loadtxt(f"{PROJ_DIR}/data/empirical/hcp-255_subj-ids.txt", dtype=str)
-    hcp_dir = "/fs03/kg98/vbarnes/HCP"
+    subj_ids = np.loadtxt(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-subjects.txt", dtype=str)
 
     bold_all = []
     subj_ids_valid = []
@@ -55,12 +71,23 @@ if __name__ == "__main__":
         print(f"Processing subject {subj} ({i+1}/{len(subj_ids)})")
 
         ### Load BOLD data ###
-        if args.den == "32k":
-            bold_folder = f"{hcp_dir}/{subj}/MNINonLinear/Results/rfMRI_REST1_LR"
-            bold_file = f"{bold_folder}/rfMRI_REST1_LR_Atlas_hp2000_clean.L.func.gii"
+        if args.species == "human":
+            if args.den == "32k":
+                bold_folder = f"{data_dir}/{subj}/MNINonLinear/Results/rfMRI_REST1_LR"
+                bold_file = f"{bold_folder}/rfMRI_REST1_LR_Atlas_hp2000_clean.L.func.gii"
+                medmask_dir = f"{data_dir}"
+            else:
+                bold_folder = f"{data_dir}/{subj}/MNINonLinear/Results/rfMRI_REST1_LR/resampled"
+                bold_file = f"{bold_folder}/rfMRI_REST1_LR_Atlas_hp2000_clean_{args.den}.L.func.gii"
+                medmask_dir = f"{data_dir}/resampled"
+        elif args.species == "marmoset":
+            bold_folder = f"{data_dir}/fmri"
+            bold_file = f"{bold_folder}/{subj}_space-fsLR_den-{args.den}_hemi-L_desc-fmri_smooth-2.func.gii"
+        elif args.species == "macaque":
+            bold_folder = f"{data_dir}/fmri"
+            bold_file = f"{bold_folder}/{subj}_space-fsLR_den-{args.den}_hemi-L_desc-fmri_clean.func.gii"
         else:
-            bold_folder = f"{hcp_dir}/{subj}/MNINonLinear/Results/rfMRI_REST1_LR/resampled"
-            bold_file = f"{bold_folder}/rfMRI_REST1_LR_Atlas_hp2000_clean_{args.den}.L.func.gii"
+            raise ValueError(f"Unknown species: {args.species}")
         
         # Check if the file exists and load it
         if os.path.exists(f"{bold_file}"):
@@ -76,14 +103,8 @@ if __name__ == "__main__":
             continue
 
         # Mask medial wall and Z-score
-        if args.parc is not None:
-            parc = nib.load(f"/fs03/kg98/vbarnes/parcellations/parc-{args.parc}_space-fsLR_den-{args.den}_hemi-L.label.gii").darrays[0].data.astype(int)
-            medmask = np.where(parc != 0)
-            bold_p = reduce_by_labels(bold[medmask], parc[medmask], axis=1)
-            bold_z = zscore(bold_p, axis=1)
-        else:
-            medmask = nib.load(f"{hcp_dir}/resampled/space-fsLR_den-{args.den}_hemi-L_desc-nomedialwall.func.gii").darrays[0].data.astype(bool)
-            bold_z = zscore(bold[medmask, :], axis=1)
+        medmask = nib.load(f"{medmask_dir}/space-fsLR_den-{args.den}_hemi-L_desc-nomedialwall.func.gii").darrays[0].data.astype(bool)
+        bold_z = zscore(bold[medmask, :], axis=1)
 
         # Check for NaNs
         if np.any(np.isnan(bold_z)):
@@ -100,38 +121,41 @@ if __name__ == "__main__":
 
     # convert to numpy array
     subj_ids_valid = np.array(subj_ids_valid)
-    n_subjs = len(subj_ids_valid)
-    print(f"Number of subjects with valid data: {n_subjs}")
+    n_subjs_valid = len(subj_ids_valid)
+    if n_subjs_valid != nsubj_expected:
+        raise ValueError(f"Warning: Number of subjects ({n_subjs_valid}) does not match expected ({nsubj_expected}).")
+    
+    print(f"Number of subjects with valid data: {n_subjs_valid}")
     bold_all = np.dstack(bold_all)
     nverts = np.shape(bold_all)[0]
     nt_emp = np.shape(bold_all)[1]
 
     # Parallelize the calculation of FC and phase
-    print("Calculating empirical FC and Complex data...")
+    print("Calculating empirical outputs from BOLD-fMRI..")
     results = Parallel(n_jobs=args.n_jobs, verbose=1, backend="loky")(
-        delayed(fc_and_phase_job)(
+        delayed(calc_outputs)(
             bold=bold_all[:, :, subj],
             fnq=fnq,
             band_freq=args.band_freq,
         )
-        for subj in range(n_subjs)
+        for subj in range(n_subjs_valid)
     )
     fc_indiv, complex_indiv, fcd_indiv = zip(*results)
 
     # Use memmaps to save memory
-    fc_indiv_mm = np.memmap(f"{PROJ_DIR}/data/temp/fc_memmap.dat", mode='w+', dtype=np.float32, shape=(nverts, nverts, n_subjs))
+    fc_indiv_mm = np.memmap(f"{PROJ_DIR}/data/temp/fc_memmap.dat", mode='w+', dtype=np.float32, shape=(nverts, nverts, n_subjs_valid))
     fc_indiv_mm[:] = np.dstack(fc_indiv)
     fc_group = np.mean(fc_indiv_mm, axis=2, dtype=np.float32)
-    complex_indiv_mm = np.memmap(f"{PROJ_DIR}/data/temp/phase_memmap.dat", mode='w+', dtype=np.complex64, shape=(nverts, nt_emp, n_subjs))
+    complex_indiv_mm = np.memmap(f"{PROJ_DIR}/data/temp/phase_memmap.dat", mode='w+', dtype=np.complex64, shape=(nverts, nt_emp, n_subjs_valid))
     complex_indiv_mm[:] = np.dstack(complex_indiv)
-    fcd_indiv_mm = np.memmap(f"{PROJ_DIR}/data/temp/fcd_memmap.dat", mode='w+', dtype=np.float32, shape=(len(fcd_indiv[0]), n_subjs))
+    fcd_indiv_mm = np.memmap(f"{PROJ_DIR}/data/temp/fcd_memmap.dat", mode='w+', dtype=np.float32, shape=(len(fcd_indiv[0]), n_subjs_valid))
     fcd_indiv_mm[:] = np.array(fcd_indiv).T
     fcd_group = fcd_indiv_mm
 
     print("Calculating group phase CPCs...")
     l = 10 + ncpcs
     _, svals_group, V_group = fbpca.pca(
-        np.hstack([complex_indiv_mm[:, :, i] for i in range(n_subjs)], dtype=np.complex64).T, 
+        np.hstack([complex_indiv_mm[:, :, i] for i in range(n_subjs_valid)], dtype=np.complex64).T, 
         k=ncpcs, 
         n_iter=20, 
         l=l
@@ -160,7 +184,7 @@ if __name__ == "__main__":
             fcd_train.append(np.vstack([fcd_indiv_mm[:, j] for j in train_idx], dtype=np.float32).T)
             fcd_test.append(np.vstack([fcd_indiv_mm[:, j] for j in test_idx], dtype=np.float32).T)
 
-            print("Computing Phase")
+            print("Computing CPCs")
             _, s_train, V_train = fbpca.pca(
                 np.hstack([complex_indiv_mm[:, :, i] for i in train_idx]).T, 
                 k=ncpcs, 
@@ -193,44 +217,44 @@ if __name__ == "__main__":
     subj_ids_valid = np.array(subj_ids_valid, dtype=np.int32)
     train_subjs = np.array(pad_sequences(train_subjs), dtype=np.int32) if args.crossval else None
     test_subjs = np.array(pad_sequences(test_subjs), dtype=np.int32) if args.crossval else None
-    with h5py.File(f"{PROJ_DIR}/data/empirical/hcp-s1200_nsubj-{n_subjs}_desc-bold_{space_desc}_hemi-L_nt-{args.nt_emp}.h5", 'w') as f:
+    with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-bold_{space_desc}_hemi-L_nt-{args.nt_emp}.h5", 'w') as f:
         f.create_dataset('bold', data=bold_all, dtype=np.float32)
         f.create_dataset('subj_ids', data=subj_ids_valid)
         f.create_dataset('medmask', data=medmask)
 
-    with h5py.File(f"{PROJ_DIR}/data/empirical/hcp-s1200_nsubj-{n_subjs}_desc-fc_{space_desc}_hemi-L_nt-{args.nt_emp}.h5", 'w') as h5f:
+    with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fc_{space_desc}_hemi-L_nt-{args.nt_emp}.h5", 'w') as h5f:
         h5f.create_dataset('fc_indiv', data=fc_indiv_mm, dtype=np.float32)
         h5f.create_dataset('fc_group', data=fc_group, dtype=np.float32)
         h5f.create_dataset('medmask', data=medmask)
         h5f.create_dataset('subj_ids', data=subj_ids_valid)
 
-    with h5py.File(f"{PROJ_DIR}/data/empirical/hcp-s1200_nsubj-{n_subjs}_desc-fcd_{space_desc}_hemi-L_freql-{args.band_freq[0]:.1g}_freqh-{args.band_freq[1]:.1g}_nt-{args.nt_emp}.h5", 'w') as h5f:
+    with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fcd_{space_desc}_hemi-L_freql-{args.band_freq[0]:.1g}_freqh-{args.band_freq[1]:.1g}_nt-{args.nt_emp}.h5", 'w') as h5f:
         h5f.create_dataset('fcd_group', data=fcd_indiv_mm, dtype=np.float32)
         h5f.create_dataset('medmask', data=medmask)
         h5f.create_dataset('subj_ids', data=subj_ids_valid)
 
-    with h5py.File(f"{PROJ_DIR}/data/empirical/hcp-s1200_nsubj-{n_subjs}_desc-cpcs_{space_desc}_hemi-L_freql-{args.band_freq[0]:.1g}_freqh-{args.band_freq[1]:.1g}_nt-{args.nt_emp}.h5", 'w') as h5f:
+    with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-cpcs_{space_desc}_hemi-L_freql-{args.band_freq[0]:.1g}_freqh-{args.band_freq[1]:.1g}_nt-{args.nt_emp}.h5", 'w') as h5f:
         h5f.create_dataset('cpcs_group', data=cpcs_group, dtype=np.complex64)
         h5f.create_dataset('svals_group', data=svals_group, dtype=np.float32)
         h5f.create_dataset('medmask', data=medmask)
         h5f.create_dataset('subj_ids', data=subj_ids_valid)
 
     if args.crossval:
-        with h5py.File(f"{PROJ_DIR}/data/empirical/hcp-s1200_nsubj-{n_subjs}_desc-fc-kfold{args.n_splits}_{space_desc}_hemi-L_nt-{args.nt_emp}.h5", 'w') as h5f:
+        with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fc-kfold{args.n_splits}_{space_desc}_hemi-L_nt-{args.nt_emp}.h5", 'w') as h5f:
             h5f.create_dataset('fc_train', data=fc_train, dtype=np.float32)
             h5f.create_dataset('fc_test', data=fc_test, dtype=np.float32)
             h5f.create_dataset('medmask', data=medmask)
             h5f.create_dataset('subj_ids_train', data=train_subjs)
             h5f.create_dataset('subj_ids_test', data=test_subjs)
 
-        with h5py.File(f"{PROJ_DIR}/data/empirical/hcp-s1200_nsubj-{n_subjs}_desc-fcd-kfold{args.n_splits}_{space_desc}_hemi-L_freql-{args.band_freq[0]:.1g}_freqh-{args.band_freq[1]:.1g}_nt-{args.nt_emp}.h5", 'w') as h5f:
+        with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fcd-kfold{args.n_splits}_{space_desc}_hemi-L_freql-{args.band_freq[0]:.1g}_freqh-{args.band_freq[1]:.1g}_nt-{args.nt_emp}.h5", 'w') as h5f:
             h5f.create_dataset('fcd_train', data=fcd_train, dtype=np.float32)
             h5f.create_dataset('fcd_test', data=fcd_test, dtype=np.float32)
             h5f.create_dataset('medmask', data=medmask)
             h5f.create_dataset('subj_ids_train', data=train_subjs)
             h5f.create_dataset('subj_ids_test', data=test_subjs)
 
-        with h5py.File(f"{PROJ_DIR}/data/empirical/hcp-s1200_nsubj-{n_subjs}_desc-cpcs-kfold{args.n_splits}_{space_desc}_hemi-L_freql-{args.band_freq[0]:.1g}_freqh-{args.band_freq[1]:.1g}_nt-{args.nt_emp}.h5", 'w') as h5f:
+        with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-cpcs-kfold{args.n_splits}_{space_desc}_hemi-L_freql-{args.band_freq[0]:.1g}_freqh-{args.band_freq[1]:.1g}_nt-{args.nt_emp}.h5", 'w') as h5f:
             h5f.create_dataset('cpcs_train', data=cpcs_train, dtype=np.complex64)
             h5f.create_dataset('svals_train', data=svals_train, dtype=np.float32)
             h5f.create_dataset('cpcs_test', data=cpcs_test, dtype=np.complex64)
