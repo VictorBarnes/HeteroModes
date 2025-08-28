@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<GIFTI xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:noNamespaceSchemaLocation="http://brainvis.wustl.edu/caret6/xml_schemas/GIFTI_Caret.xsd"
+       Version="1"
+       NumberOfDataArrays="1">
+   <MetaData>
+      <MD>
+         <Name><![CDATA[AnatomicalStructurePrimary]]></Name>
+         <Value><![CDATA[CortexLeft]]></Value>
+      </MD>
+      <MD>
+         <Name><![CDATA[ParentProvenance]]></Name>
+         <Value><![CDATA[/fs03/kg98/vbarnes/nhp_nnp/marmoset/fmri/sub-NIHm28_ses-01_space-fsLR_den-38k_hemi-L_desc-fmri_smooth-2.func.gii:
+/apps/connectome/2.0.0/bin_rh_linux64/../exe_rh_linux64/wb_command -cifti-separate /fs03/kg98/jamesp/atlases/NHP_NNP/Ting_2021_MBMv4/BIDS-preprocessed-surface-fMRI/regrBMWC0/sub-NIHm28/ses-01/sub-NIHm28_ses-01_task-rest_run-RL-1_desc-sm2.dtseries.nii COLUMN -metric CORTEX_LEFT /fs03/kg98/vbarnes/nhp_nnp/marmoset/fmri/sub-NIHm28_ses-01_space-fsLR_den-38k_hemi-L_desc-fmri_smooth-2.func.gii -roi /fs03/kg98/vbarnes/nhp_nnp/marmoset/space-fsLR_den-38k_hemi-L_desc-nomedialwall.func.gii
+
+/fs03/kg98/vbarnes/nhp_nnp/marmoset/MBM_v3.0.1.lh.sphere_centered.surf.gii:
+/apps/connectome/2.0.0/bin_rh_linux64/../exe_rh_linux64/wb_command -surface-modify-sphere /fs03/kg98/jamesp/atlases/NHP_NNP/fsaverage_38k/MBM_v3.0.1.lh.sphere.surf.gii 100 /fs03/kg98/vbarnes/nhp_nnp/marmoset/MBM_v3.0.1.lh.sphere_centered.surf.gii -recenter
+
+/fs03/kg98/vbarnes/HBO-data/neuromaps-data/atlases/fsLR/tpl-fsLR_den-4k_hemi-L_sphere.surf.gii:
+/home/language/jansch/workbench/bin_linux64/../exe_linux64/wb_command -surface-flip-lr Sphere.4k.R.surf.gii Sphere.4k.L.surf.gii
+
+/fs03/kg98/vbarnes/nhp_nnp/marmoset/space-fsLR_den-38k_hemi-L_desc-nomedialwall.func.gii:
+/apps/connectome/2.0.0/bin_rh_linux64/../exe_rh_linux64/wb_command -cifti-separate /fs03/kg98/jamesp/atlases/NHP_NNP/Ting_2021_MBMv4/BIDS-preprocessed-surface-fMRI/regrBMWC0/sub-NIHm28/ses-01/sub-NIHm28_ses-01_task-rest_run-RL-1_desc-sm2.dtseries.nii COLUMN -metric CORTEX_LEFT /fs03/kg98/vbarnes/nhp_nnp/marmoset/fmri/sub-NIHm28_ses-01_space-fsLR_den-38k_hemi-L_desc-fmri_smooth-2.func.gii -roi /fs03/kg98/vbarnes/nhp_nnp/marmoset/space-fsLR_den-38k_hemi-L_desc-nomedialwall.func.gii
+
+]]></Value>
+      </MD>
+      <MD>
+         <Name><![CDATA[ProgramProvenance]]></Name>
+         <Value><![CDATA[Connectome Workbench
+Type: Command Line Application
+Version: 2.0.0
+Qt Compiled Version: 5.7.0
+Qt Runtime Version: 5.7.0
+Commit: a4824b22b46b2d5afa3e543a483f73faea27bcf5
+Commit Date: 2024-06-14 15:38:26 -0500
+Compiler: g++ (/opt/rh/devtoolset-7/root/usr/bin)
+Compiler Version: 7.3.1
+Compiled Debug: NO
+Operating System: Linux
+Compiled with OpenMP: YES
+]]></Value>
+      </MD>
+      <MD>
+         <Name><![CDATA[Provenance]]></Name>
+         <Value><![CDATA[/apps/connectome/2.0.0/bin_rh_linux64/../exe_rh_linux64/wb_command -metric-resample /fs03/kg98/vbarnes/nhp_nnp/marmoset/fmri/sub-NIHm28_ses-01_space-fsLR_den-38k_hemi-L_desc-fmri_smooth-2.func.gii /fs03/kg98/vbarnes/nhp_nnp/marmoset/MBM_v3.0.1.lh.sphere_centered.surf.gii /fs03/kg98/vbarnes/HBO-data/neuromaps-data/atlases/fsLR/tpl-fsLR_den-4k_hemi-L_sphere.surf.gii BARYCENTRIC /fs03/kg98/vbarnes/nhp_nnp/marmoset/fmri/sub-NIHm28_ses-01_space-fsLR_den-4k_hemi-L_desc-fmri_smooth-2.func.gii -current-roi /fs03/kg98/vbarnes/nhp_nnp/marmoset/space-fsLR_den-38k_hemi-L_desc-nomedialwall.func.gii -valid-roi-out /fs03/kg98/vbarnes/nhp_nnp/marmoset/space-fsLR_den-4k_hemi-L_desc-nomedialwall.func.gii]]></Value>
+      </MD>
+      <MD>
+         <Name><![CDATA[WorkingDirectory]]></Name>
+         <Value><![CDATA[/fs04/scratch2/kg98/oldscratch/vbarnes/nhp_nnp/marmoset]]></Value>
+      </MD>
+   </MetaData>
+   <LabelTable>
+      <Label Key="0" Red="1" Green="1" Blue="1" Alpha="0"><![CDATA[???]]></Label>
+   </LabelTable>
+<DataArray Intent="NIFTI_INTENT_NORMAL"
+           DataType="NIFTI_TYPE_FLOAT32"
+           ArrayIndexingOrder="RowMajorOrder"
+           Dimensionality="1"
+           Dim0="4002"
+           Encoding="GZipBase64Binary"
+           Endian="LittleEndian"
+           ExternalFileName=""
+           ExternalFileOffset="0">
+   <MetaData>
+   </MetaData>
+   <Data>eJzt2kEOgyAQBVBu1qv16I3pom7UAQZK7fvJ28gMCoGdpTwf5dSWq5qjvn2ida2p/Z4Rc2WsL2N/st4/s6+2R95puZsAAAAAAAAAAECuu//f07uujN4ZPSNq/13m/3C9/dxX9FxEztBqydqH2rlgs2qyvn/GHN/obekbWR+tjdT1jB+NRZ6dvTPjDv3CvZNPes/I1TgAwHpejGgkQA==</Data>
+</DataArray>
+</GIFTI>

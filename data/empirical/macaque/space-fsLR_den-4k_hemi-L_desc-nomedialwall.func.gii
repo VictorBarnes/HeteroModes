@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<GIFTI xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:noNamespaceSchemaLocation="http://brainvis.wustl.edu/caret6/xml_schemas/GIFTI_Caret.xsd"
+       Version="1"
+       NumberOfDataArrays="1">
+   <MetaData>
+      <MD>
+         <Name><![CDATA[AnatomicalStructurePrimary]]></Name>
+         <Value><![CDATA[Invalid]]></Value>
+      </MD>
+      <MD>
+         <Name><![CDATA[ParentProvenance]]></Name>
+         <Value><![CDATA[/fs03/kg98/jamesp/atlases/NHP_NNP/fsaverage_LR10k/MacaqueYerkes19.L.sphere.10k_fs_LR.surf.gii:
+/home/brainmappers/workbench/fetchdir/wb_command.4479 -surface-flip-lr R.sphere.10k_fs_LR.surf.gii L.sphere.10k_fs_LR.surf.gii
+
+/fs03/kg98/vbarnes/HBO-data/neuromaps-data/atlases/fsLR/tpl-fsLR_den-4k_hemi-L_sphere.surf.gii:
+/home/language/jansch/workbench/bin_linux64/../exe_linux64/wb_command -surface-flip-lr Sphere.4k.R.surf.gii Sphere.4k.L.surf.gii
+
+]]></Value>
+      </MD>
+      <MD>
+         <Name><![CDATA[ProgramProvenance]]></Name>
+         <Value><![CDATA[Connectome Workbench
+Type: Command Line Application
+Version: 2.0.0
+Qt Compiled Version: 5.7.0
+Qt Runtime Version: 5.7.0
+Commit: a4824b22b46b2d5afa3e543a483f73faea27bcf5
+Commit Date: 2024-06-14 15:38:26 -0500
+Compiler: g++ (/opt/rh/devtoolset-7/root/usr/bin)
+Compiler Version: 7.3.1
+Compiled Debug: NO
+Operating System: Linux
+Compiled with OpenMP: YES
+]]></Value>
+      </MD>
+      <MD>
+         <Name><![CDATA[Provenance]]></Name>
+         <Value><![CDATA[/apps/connectome/2.0.0/bin_rh_linux64/../exe_rh_linux64/wb_command -metric-resample /fs03/kg98/vbarnes/nhp_nnp/macaque/fmri-awake/sub-032097_ses-2_space-fsLR_den-10k_hemi-L_desc-fmri_sm3_run-2.func.gii /fs03/kg98/jamesp/atlases/NHP_NNP/fsaverage_LR10k/MacaqueYerkes19.L.sphere.10k_fs_LR.surf.gii /fs03/kg98/vbarnes/HBO-data/neuromaps-data/atlases/fsLR/tpl-fsLR_den-4k_hemi-L_sphere.surf.gii BARYCENTRIC /fs03/kg98/vbarnes/nhp_nnp/macaque/fmri-awake/sub-032097_ses-2_space-fsLR_den-4k_hemi-L_desc-fmri_sm3_run-2.func.gii -current-roi /fs03/kg98/vbarnes/nhp_nnp/macaque/fmri-awake/space-fsLR_den-10k_hemi-L_desc-nomedialwall.func.gii -valid-roi-out /fs03/kg98/vbarnes/nhp_nnp/macaque/fmri-awake/space-fsLR_den-4k_hemi-L_desc-nomedialwall.func.gii]]></Value>
+      </MD>
+      <MD>
+         <Name><![CDATA[WorkingDirectory]]></Name>
+         <Value><![CDATA[/fs04/scratch2/kg98/oldscratch/vbarnes/nhp_nnp/macaque/fmri-awake]]></Value>
+      </MD>
+   </MetaData>
+   <LabelTable>
+      <Label Key="0" Red="1" Green="1" Blue="1" Alpha="0"><![CDATA[???]]></Label>
+   </LabelTable>
+<DataArray Intent="NIFTI_INTENT_NORMAL"
+           DataType="NIFTI_TYPE_FLOAT32"
+           ArrayIndexingOrder="RowMajorOrder"
+           Dimensionality="1"
+           Dim0="4002"
+           Encoding="GZipBase64Binary"
+           Endian="LittleEndian"
+           ExternalFileName=""
+           ExternalFileOffset="0">
+   <MetaData>
+   </MetaData>
+   <Data>eJzt00EOwiAQBdDezKt5dOO2EQrDjzT6JnmbMh+pHY7j+Tia3tV6nqjeb89KnyVRib0S+eoe1WwlN5uZ7R3pT/T01ltrn56fz5y8K2mtd0runTrft/PVbCU3m5n5ZqPfeKTvqqe33lpbqdSsAgAAAAAAAAC/J1m73+X8Xjvy1f+ikpvNVPpTfVc9vfW7zdbKXNz93rBnNtK95gqAtNFK7NHbc6VW8+r+tfuefJr5xL3beQYA+C8v3ORZ+A==</Data>
+</DataArray>
+</GIFTI>
