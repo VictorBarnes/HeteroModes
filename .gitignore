@@ -3,11 +3,9 @@ build/
 # Ignore most of the data folder expect for small files
 data/
 # Allow small datasets (10 subjects or fewer)
-!data/empirical/human/*nsubj-10*
-!data/empirical/human/*.gii
-!data/empirical/human/*desc-subjects.txt
-!data/empirical/macaque/
-!data/empirical/marmoset/
+!data/empirical/**/*nsubj-10*
+!data/empirical/**/*desc-nomedialwall.func.gii
+!data/empirical/**/*desc-subjects.txt
 !data/heteromaps/
 !data/nulls/
 heteromodes.egg-info/
