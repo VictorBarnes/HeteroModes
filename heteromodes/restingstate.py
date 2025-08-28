@@ -100,6 +100,7 @@ def run_model(
     
     # Try solving eigenvalues and eigenvectors
     try:
+        print("Solving eigenvalues and eigenvectors...")
         solver = EigenSolver(surf=surf, medmask=medmask, hetero=hetero, n_modes=n_modes, alpha=alpha, beta=beta,
                              r=r, gamma=gamma, scaling=scaling, q_norm=q_norm, 
                              lump=lump, smoothit=smoothit)
@@ -114,8 +115,9 @@ def run_model(
     nt_model = int((nt_emp - 1) * dt_emp / dt_model)
 
     # Pre-allocate BOLD activity array
-    n_regions = solver.surf.n_points if parc is None else np.sum(parc != 0)
+    n_regions = solver.surf.n_points if parc is None else len(np.unique(parc[medmask]))
     bold = np.empty((n_regions, nt_emp, n_runs), dtype=np.float32)
+    print(f"Running model with {n_runs} runs, {nt_emp} empirical time points, and {n_regions} regions.")
     for i in range(n_runs):
         bold_i = solver.simulate_waves(dt=dt_model, nt=nt_model, tsteady=tsteady, seed=i, bold_out=True,
                                          eig_method=eig_method)
@@ -125,10 +127,7 @@ def run_model(
         
         # Parcellate
         if parc is not None:
-            medmask_parc = np.where(parc != 0, True, False)
-            # Unmask using the vertex mask then re-mask using the parcellationg mask since they are different
-            bold_i_masked = unmask(bold_i, medmask)[medmask_parc, :]
-            bold_i = reduce_by_labels(bold_i_masked, parc[medmask_parc], axis=1)
+            bold_i = reduce_by_labels(bold_i, parc[medmask], axis=1)
 
         bold[:, :, i] = zscore(bold_i, axis=1)
 
@@ -171,7 +170,7 @@ def evaluate_model(model_outputs, emp_outputs,
         Dictionary containing empirical derivatives (fc_mean, phase_map_mean, etc.)
     metrics : list
         List of metrics to compute results for
-        
+
     Returns:
     --------
     results : dict

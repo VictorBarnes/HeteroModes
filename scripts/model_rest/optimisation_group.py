@@ -49,8 +49,8 @@ def parse_arguments():
                         help="The low and high bandpass frequencies for filtering the BOLD data. Defaults to [0.01, 0.1].")
     parser.add_argument("--metrics", type=str, nargs='+', default=["edge_fc_corr", "node_fc_corr", "fcd_ks"], 
                         help="The metrics to use for evaluation. Defaults to ['edge_fc', 'node_fc', 'fcd']")
-    parser.add_argument("--crossval", type=lambda x: x.lower() == "true", default=False, 
-                        help="Whether to perform cross-validation. Defaults to False.")
+    parser.add_argument("--evaluation", type=str, choices=["fit", "crossval"], default="crossval",
+                        help="The type of evaluation to perform. 'fit' evaluates models on the entire empirical dataset, while 'crossval' performs KFold cross-validation. Defaults to 'crossval'.")
     parser.add_argument("--scaling", type=str, default="sigmoid",
                         help="The scaling to apply to the heterogeneity map. Defaults to 'sigmoid'.")
     parser.add_argument('--q_norm', type=lambda x: None if x.lower() == "none" else x, default=None, 
@@ -63,10 +63,11 @@ def parse_arguments():
                         help="The number of time points in the empirical data. Defaults to 1200.")
     parser.add_argument("--species", type=str, default="human",
                         help="The species of the data. Defaults to 'human'.")
-    
+    parser.add_argument("--parc", type=str, default=None,
+                        help="The parcellation to use. Defaults to None (no parcellation).")
     return parser.parse_args()
 
-def model_job(params, surf, medmask, hmap, args, dt_emp, dt, tsteady):
+def model_job(params, surf, medmask, hmap, args, dt_emp, dt, tsteady, parc=None):
     """
     Run model simulation and analyze BOLD data in one step.
     
@@ -89,7 +90,7 @@ def model_job(params, surf, medmask, hmap, args, dt_emp, dt, tsteady):
             medmask=medmask, 
             hetero=hmap, 
             alpha=params[0],
-            r=params[1], 
+            r=params[1],
             gamma=params[2],
             beta=params[3],
             scaling=args.scaling,
@@ -99,7 +100,8 @@ def model_job(params, surf, medmask, hmap, args, dt_emp, dt, tsteady):
             dt_emp=dt_emp,
             nt_emp=args.nt_emp,
             dt_model=dt,
-            tsteady=tsteady
+            tsteady=tsteady,
+            parc=parc,
         )
         
         # Check if simulation was successful
@@ -107,6 +109,7 @@ def model_job(params, surf, medmask, hmap, args, dt_emp, dt, tsteady):
             return None
         
         # Analyze BOLD data
+        print("Analyzing BOLD data...")
         outputs = analyze_bold(
             bold_data, 
             dt_emp=dt_emp, 
@@ -135,7 +138,7 @@ def run_split(model_outputs, emp_outputs_train, emp_outputs_test, args):
         ) for i in range(len(model_outputs))
     )
 
-    # Check if this is the best model so far
+    # Combine results to find the best model
     combined = [
         results.get('edge_fc_corr', 0) + results.get('node_fc_corr', 0) + 1 - results.get('fcd_ks', 0) 
         for results in train_results
@@ -163,9 +166,11 @@ if __name__ == "__main__":
         args.hmap_label = None
     if args.q_norm == "None":
         args.q_norm = None
+    if args.parc == "None":
+        args.parc = None
 
-    TR_SPECIES = {"human": 720, "macaque": 750, "marmoset": 2000} # in ms
-    DT_SPECIES = {"human": 90, "macaque": 50, "marmoset": 50} # in ms
+    TR_SPECIES = {"human": 720, "macaque": 2600, "marmoset": 2000} # in ms
+    DT_SPECIES = {"human": 90, "macaque": 100, "marmoset": 100} # in ms
     DATA_DIR_SPECIES = {
         "human": "/fs03/kg98/vbarnes/HCP",
         "macaque": "/fs03/kg98/vbarnes/nhp_nnp/macaque",
@@ -173,7 +178,7 @@ if __name__ == "__main__":
     }
     DATA_DESC_SPECIES = {
         "human": "hcp-s1200_nsubj-255",
-        "macaque": "_nsubj-10", # TODO:
+        "macaque": "macaque-awake_nsubj-10",
         "marmoset": "mbm-v4_nsubj-39"
     }
 
@@ -189,11 +194,34 @@ if __name__ == "__main__":
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
 
+    # Check if parcellation is provided
+    if args.parc is not None:
+        # Parcellation is only valid for humans
+        if args.species != "human":
+            raise ValueError("Parcellation is only valid for human species.")
+        
+        # Parcellation is only available for 32k density
+        args.den = "32k"
+        parc = nib.load(
+            f"{PROJ_DIR}/data/parcellations/parc-{args.parc}_space-fsLR_den-{args.den}_hemi-L.label.gii"
+        ).darrays[0].data
+
+        out_dir = f"{out_dir}/parc-{args.parc}"
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+
+        # Define string for loading empirical data
+        space_desc = f"space-fsLR_den-{args.den}_parc-{args.parc}"
+    else:
+        space_desc = f"space-fsLR_den-{args.den}"
+
     # Get surface
     fslr = fetch_atlas(atlas='fsLR', density=args.den)
     surf = str(fslr['midthickness'][0])
     # Load medmask
-    medmask = nib.load(f"{PROJ_DIR}/data/empirical/{args.species}/space-fsLR_den-{args.den}_hemi-L_desc-nomedialwall.func.gii").darrays[0].data.astype(bool)
+    medmask = nib.load(
+        f"{PROJ_DIR}/data/empirical/{args.species}/space-fsLR_den-{args.den}_hemi-L_desc-nomedialwall.func.gii"
+    ).darrays[0].data.astype(bool)
 
     # Get hmap and alpha values
     if args.hmap_label is None:
@@ -203,7 +231,7 @@ if __name__ == "__main__":
         # If hmap_label is null, load null map
         if args.hmap_label[:4] == "null":
             null_id = int(args.hmap_label.split('-')[1])
-            hmap = np.load(f"{PROJ_DIR}/data/nulls/data-myelinmap_space-fsLR_den-{args.den}_hemi-L_nmodes-500_nnulls-5000_nulls_resample-True.npy")
+            hmap = np.load(f"{PROJ_DIR}/data/nulls/data-myelinmap_{space_desc}_hemi-L_nmodes-500_nnulls-5000_nulls_resample-True.npy")
             hmap = hmap[null_id, :]
 
             out_dir = out_dir + "/nulls"
@@ -237,7 +265,8 @@ if __name__ == "__main__":
             args=args,
             dt_emp=dt_emp,
             dt=dt,
-            tsteady=tsteady
+            tsteady=tsteady,
+            parc=parc if args.parc is not None else None
         ) for params in tqdm(param_combs, desc="Running models")
     )
 
@@ -249,41 +278,84 @@ if __name__ == "__main__":
     model_outputs = [model_outputs[i] for i in range(len(model_outputs)) if i not in nan_indices]
 
     # Evaluate against empirical data
-    if not args.crossval:
+    if args.evaluation == "fit":
+        out_dir = f"{out_dir}/no-crossval"
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+
         print_heading("Fitting models to empirical data...")
-        
         # Load empirical data and create emp_outputs dictionary
         emp_outputs = {}
-        with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fc_space-fsLR_den-{args.den}_hemi-L.h5", "r") as f:
+        with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fc_{space_desc}_hemi-L_nt-{args.nt_emp}.h5", "r") as f:
             emp_outputs['fc'] = f['fc_group'][:]
 
         if "fcd_ks" in args.metrics:
-            with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fcd_space-fsLR_den-{args.den}_hemi-L_freql-{args.band_freq[1]}_freqh-{args.band_freq[1]}.h5", "r") as f:
-                emp_outputs['fcd_ks'] = f['fcd_group'][:]
+            with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fcd_{space_desc}_hemi-L_freql-{args.band_freq[0]}_freqh-{args.band_freq[1]}_nt-{args.nt_emp}.h5", "r") as f:
+                emp_outputs['fcd'] = f['fcd_group'][:]
         
         # Evaluate all models
-        all_results = []
-        best_score = -np.inf
-        best_ind = 0
-        
-        for param_i in range(len(param_combs)):
-            results = evaluate_model(
-                model_outputs[param_i],
-                emp_outputs,
+        results = Parallel(n_jobs=args.n_jobs, backend="loky")(
+            delayed(evaluate_model)(
+                model_outputs[i],  # Dictionary with fc, phase_map, etc.
+                emp_outputs,       # Dictionary with fc, phase_map, etc.
                 args.metrics
+            ) for i in tqdm(range(len(model_outputs)), desc="Evaluating models")
+        )
+
+        # Save results for each model
+        for i in range(len(param_combs)):
+            results_i = {}
+            for metric in args.metrics:
+                results_i[metric] = results[i].get(metric, np.nan)
+
+            out_file = (
+                f"{out_dir}/results_alpha-{param_combs[i][0]:.1f}_"
+                f"r-{param_combs[i][1]:.1f}_gamma-{param_combs[i][2]:.3f}_"
+                f"beta-{param_combs[i][3]:.1f}.h5"
             )
-            all_results.append(results)
-            
-            # Check if this is the best model
-            combined_score = sum(results.values())
-            if combined_score > best_score:
-                best_score = combined_score
-                best_ind = param_i
+            with h5py.File(out_file, "w") as f:
+                f.create_dataset('fc', data=model_outputs[i].get('fc', np.nan))
+                f.create_dataset('fcd', data=model_outputs[i].get('fcd', np.nan))
 
-        best_combs = param_combs[best_ind]
-        best_model_outputs = model_outputs[best_ind]
+                group = f.create_group('results')
+                for key, value in results_i.items():
+                    group.create_dataset(key, data=value)
 
-    else:
+        # Combine results to find the best model
+        combined = [
+            results[i].get('edge_fc_corr', 0) + results[i].get('node_fc_corr', 0) + 1 - results[i].get('fcd_ks', 0) 
+            for i in range(len(results))
+        ]
+        best_ind = np.argmax(combined)
+
+        # Save best model outputs
+        best_model = model_outputs[best_ind]
+        best_results = results[best_ind]
+        with h5py.File(f"{out_dir}/best_model_results.h5", "w") as f:
+            f.create_dataset('alpha', data=param_combs[best_ind][0])
+            f.create_dataset('r', data=param_combs[best_ind][1])
+            f.create_dataset('gamma', data=param_combs[best_ind][2])
+            f.create_dataset('beta', data=param_combs[best_ind][3])
+            f.create_dataset('fc', data=best_model.get('fc', np.nan))
+            f.create_dataset('fcd', data=best_model.get('fcd', np.nan))
+
+            group = f.create_group('results')
+            for key, value in best_results.items():
+                group.create_dataset(key, data=value)
+
+        # Print final results
+        print_heading("Final Results")
+        results_str = ", ".join([
+            f"{metric}: {best_results.get(metric, np.nan):.3f}" for metric in args.metrics
+        ])
+        print(
+            f"Best Model | alpha: {param_combs[best_ind][0]:.1f} "
+            f"r: {param_combs[best_ind][1]:.1f} "
+            f"gamma: {param_combs[best_ind][2]:.3f} "
+            f"beta: {param_combs[best_ind][3]:.1f} | {results_str}"
+        )
+
+    elif args.evaluation == "crossval":
         print_heading("Fitting models to empirical data using cross validation...")
 
         # Prepare empirical outputs for each split
@@ -291,7 +363,7 @@ if __name__ == "__main__":
         emp_outputs_test = []
         
         # Load empirical cross-validation data
-        with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fc-kfold5_space-fsLR_den-{args.den}_hemi-L_nt-{args.nt_emp}.h5", "r") as f:
+        with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fc-kfold5_{space_desc}_hemi-L_nt-{args.nt_emp}.h5", "r") as f:
             fcs_train = f['fc_train'][:]
             fcs_test = f['fc_test'][:]
         
@@ -302,7 +374,7 @@ if __name__ == "__main__":
             emp_outputs_test.append(emp_test)
 
         if "fcd_ks" in args.metrics:
-            with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fcd-kfold5_space-fsLR_den-{args.den}_hemi-L_freql-{args.band_freq[0]}_freqh-{args.band_freq[1]}_nt-{args.nt_emp}.h5", "r") as f:
+            with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fcd-kfold5_{space_desc}_hemi-L_freql-{args.band_freq[0]}_freqh-{args.band_freq[1]}_nt-{args.nt_emp}.h5", "r") as f:
                 fcds_train = f['fcd_train'][:]
                 fcds_test = f['fcd_test'][:]
                 for i in range(args.n_splits):

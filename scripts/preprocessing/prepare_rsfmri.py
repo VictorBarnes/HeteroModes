@@ -3,11 +3,9 @@ import h5py
 import fbpca
 import argparse
 import numpy as np
-
 import nibabel as nib
 from scipy.stats import zscore
 from dotenv import load_dotenv
-
 from joblib import Parallel, delayed
 from sklearn.model_selection import KFold
 from brainspace.utils.parcellation import reduce_by_labels
@@ -19,12 +17,28 @@ load_dotenv()
 PROJ_DIR = os.getenv("PROJ_DIR")
 DENSITIES = {"4k": 4002, "8k": 7842, "32k": 32492}
 
+def load_bold_data(bold_file, n_verts, n_timepoints):
+    # Check if the file exists and load it
+    if os.path.exists(f"{bold_file}"):
+        bold = np.array(nib.load(bold_file).agg_data(), dtype=np.float32).T
+
+        bold = bold[:, :n_timepoints]  # Ensure we only take the first nt_emp time points
+    else:
+        raise FileNotFoundError(f"BOLD file not found: {bold_file}")
+    
+    # Check that shape is valid
+    if np.shape(bold) != (n_verts, n_timepoints):
+        raise ValueError(f"Shape mismatch for subject {subj}: expected ({n_verts}, "
+                         f"{n_timepoints}), got {np.shape(bold)}")
+    else:
+        print(f"Subject {subj} has valid shape: {np.shape(bold)}")
+
+    return bold
+
 def calc_outputs(bold, fnq, band_freq):
     # Compute FC
     fc = calc_fc(bold).astype(np.float32)
-    
     complex_data = calc_hilbert(bold, fnq=fnq, band_freq=band_freq).astype(np.complex64)
-
     fcd = calc_fcd_efficient(bold, fnq=fnq, band_freq=band_freq).astype(np.float32)
 
     return fc, complex_data, fcd
@@ -33,37 +47,55 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Prepare empirical data for analysis.")
     parser.add_argument("--species", type=str, default="human", help="Species of the data (e.g., 'human', 'macaque', 'marmoset').")
     parser.add_argument("--den", type=str, default="4k", help="Density of the data (e.g., '4k', '8k', '32k').")
-    parser.add_argument("--crossval", action="store_true", default=False, help="Whether to perform cross-validation.")
+    parser.add_argument("--crossval", type=lambda x: x.lower() == "true", default=False, help="Whether to perform cross-validation. Defaults to False.")
     parser.add_argument("--n_splits", type=int, default=5, help="Number of splits for KFold cross-validation.")
     parser.add_argument("--n_jobs", type=int, default=1, help="Number of parallel jobs.")
-    parser.add_argument("--band_freq", type=float, nargs=2, default=(0.04, 0.07), help="Frequency band (low, high) for filtering.")
-    parser.add_argument("--parc", type=str, default=None, help="Parcellation to use (e.g., 'schaefer300', 'hcpmmp1').")
+    parser.add_argument("--band_freq", type=float, nargs=2, default=(0.04, 0.07), help="Frequency band (low, high) for filtering data before phase calculation.")
     parser.add_argument("--nt_emp", type=int, default=600, help="Number of time points in empirical data.")
+    parser.add_argument("--parc", type=str, default=None, help="Parcellation to use (e.g., 'schaefer300', 'hcpmmp1').")
     args = parser.parse_args()
+
+    # Set output directory
+    out_dir = f"{PROJ_DIR}/data/empirical/{args.species}"
 
     # Fixed parameters
     ncpcs = 10
-    TR_SPECIES = {"human": 0.72, "macaque": 0.75, "marmoset": 2.0}
+    TR_SPECIES = {"human": 0.72, "macaque": 2.6, "marmoset": 2.0}   # in seconds
+    MAX_NT_SPECIES = {"human": 1200, "macaque": 250, "marmoset": 510}
     DATA_DIR_SPECIES = {
         "human": "/fs03/kg98/vbarnes/HCP",
-        "macaque": "/fs03/kg98/vbarnes/nhp_nnp/macaque",
-        "marmoset": "/fs03/kg98/vbarnes/nhp_nnp/marmoset"
+        "macaque": "/fs03/kg98/vbarnes/nhp_nnp/macaque/fmri-awake",
+        "marmoset": "/fs03/kg98/vbarnes/nhp_nnp/marmoset/fmri"
     }
     DATA_DESC_SPECIES = {
         "human": "hcp-s1200_nsubj-255",
-        "macaque": "_nsubj-10", # TODO:
+        "macaque": "macaque-awake_nsubj-10",
         "marmoset": "mbm-v4_nsubj-39"
     }
 
     tr = TR_SPECIES[args.species]
+    fnq = 0.5 * 1/tr
     data_dir = DATA_DIR_SPECIES[args.species]
     data_desc = DATA_DESC_SPECIES[args.species]
-    nsubj_expected = int(data_desc.split("nsubj-")[-1])
+    if args.nt_emp > MAX_NT_SPECIES[args.species]:
+        raise ValueError(f"nt_emp ({args.nt_emp}) exceeds maximum for {args.species} ({MAX_NT_SPECIES[args.species]}).")
 
-    fnq = 0.5 * 1/tr
+    if args.parc is not None:
+        if args.species != "human":
+            raise ValueError("Parcellation is only available for human data.")
+        
+        args.den = "32k"  # Parcellation is only available for 32k density
+        parc_file = f"{PROJ_DIR}/data/parcellations/parc-{args.parc}_space-fsLR_den-32k_hemi-L.label.gii"
+        parc = nib.load(parc_file).darrays[0].data.astype(int)
+
+    medmask = nib.load(f"{out_dir}/space-fsLR_den-{args.den}_hemi-L_desc-nomedialwall.func.gii").darrays[0].data.astype(bool)
     
     # Load subject IDs
-    subj_ids = np.loadtxt(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-subjects.txt", dtype=str)
+    subj_ids = np.loadtxt(f"{out_dir}/{data_desc}_desc-subjects.txt", dtype=str) #[:10]  # For testing
+    # This is for when we have a smaller subset of subjects than originally specified
+    if len(subj_ids) != int(data_desc.split("_nsubj-")[1]):
+        data_desc = f"{data_desc.split('_nsubj-')[0]}_nsubj-{len(subj_ids)}"
+    nsubj_expected = len(subj_ids)
 
     bold_all = []
     subj_ids_valid = []
@@ -75,36 +107,40 @@ if __name__ == "__main__":
             if args.den == "32k":
                 bold_folder = f"{data_dir}/{subj}/MNINonLinear/Results/rfMRI_REST1_LR"
                 bold_file = f"{bold_folder}/rfMRI_REST1_LR_Atlas_hp2000_clean.L.func.gii"
-                medmask_dir = f"{data_dir}"
             else:
                 bold_folder = f"{data_dir}/{subj}/MNINonLinear/Results/rfMRI_REST1_LR/resampled"
                 bold_file = f"{bold_folder}/rfMRI_REST1_LR_Atlas_hp2000_clean_{args.den}.L.func.gii"
-                medmask_dir = f"{data_dir}/resampled"
+
+            bold = load_bold_data(bold_file, n_verts=DENSITIES[args.den], n_timepoints=args.nt_emp)
+            nt_emp = args.nt_emp
         elif args.species == "marmoset":
-            bold_folder = f"{data_dir}/fmri"
-            bold_file = f"{bold_folder}/{subj}_space-fsLR_den-{args.den}_hemi-L_desc-fmri_smooth-2.func.gii"
+            bold_file = f"{data_dir}/{subj}_ses-01_space-fsLR_den-{args.den}_hemi-L_desc-fmri_smooth-2.func.gii"
+            bold = load_bold_data(bold_file, n_verts=DENSITIES[args.den], n_timepoints=args.nt_emp)
+            nt_emp = args.nt_emp
         elif args.species == "macaque":
-            bold_folder = f"{data_dir}/fmri"
-            bold_file = f"{bold_folder}/{subj}_space-fsLR_den-{args.den}_hemi-L_desc-fmri_clean.func.gii"
+            # Append runs 1 and 2 since each one is only 250 timepoints
+            for run in [1, 2]:
+                bold_file = f"{data_dir}/{subj}_space-fsLR_den-{args.den}_hemi-L_desc-fmri_sm3_run-{run}.func.gii"
+                if run == 1:
+                    bold = load_bold_data(bold_file, n_verts=DENSITIES[args.den], n_timepoints=args.nt_emp)
+                else:
+                    bold_run2 = load_bold_data(bold_file, n_verts=DENSITIES[args.den], n_timepoints=args.nt_emp)
+                    bold = np.hstack((bold, bold_run2))
+            nt_emp = bold.shape[1]  # Update nt_emp to the total time points after concatenation
         else:
             raise ValueError(f"Unknown species: {args.species}")
-        
-        # Check if the file exists and load it
-        if os.path.exists(f"{bold_file}"):
-            bold = np.array(nib.load(bold_file).agg_data(), dtype=np.float32).T
-            bold = bold[:, :args.nt_emp]  # Ensure we only take the first nt_emp time points
-        else:
-            print(f"File not found ({bold_file}). Skipping... ")
-            continue
-        
-        # Check that shape is valid
-        if np.shape(bold) != (DENSITIES[args.den], args.nt_emp):
-            print(f"Skipping subject {subj} due to invalid shape")
-            continue
 
         # Mask medial wall and Z-score
-        medmask = nib.load(f"{medmask_dir}/space-fsLR_den-{args.den}_hemi-L_desc-nomedialwall.func.gii").darrays[0].data.astype(bool)
-        bold_z = zscore(bold[medmask, :], axis=1)
+        print(f"Number of cortical vertices: {np.count_nonzero(bold[:, 0])}")
+        bold = bold[medmask, :]  # Apply medial wall mask
+
+        # Optionally parcellate data
+        if args.parc is not None:
+            bold = reduce_by_labels(bold, parc[medmask], axis=1)
+            print(f"Reduced BOLD data shape for subject {subj}: {bold.shape}")
+
+        # Z-score data
+        bold_z = zscore(bold, axis=1)
 
         # Check for NaNs
         if np.any(np.isnan(bold_z)):
@@ -128,7 +164,6 @@ if __name__ == "__main__":
     print(f"Number of subjects with valid data: {n_subjs_valid}")
     bold_all = np.dstack(bold_all)
     nverts = np.shape(bold_all)[0]
-    nt_emp = np.shape(bold_all)[1]
 
     # Parallelize the calculation of FC and phase
     print("Calculating empirical outputs from BOLD-fMRI..")
@@ -168,8 +203,8 @@ if __name__ == "__main__":
         fc_test = np.empty((nverts, nverts, args.n_splits))
 
         fcd_train, fcd_test = [], []
-        cpcs_train = np.empty((nverts, ncpcs, args.n_splits))
-        cpcs_test = np.empty((nverts, ncpcs, args.n_splits))
+        cpcs_train = np.empty((nverts, ncpcs, args.n_splits), dtype=np.complex64)
+        cpcs_test = np.empty((nverts, ncpcs, args.n_splits), dtype=np.complex64)
         svals_train, svals_test = np.empty((ncpcs, args.n_splits)), np.empty((ncpcs, args.n_splits))
         phase_combined_train = np.empty((nverts, args.n_splits))
         phase_combined_test = np.empty((nverts, args.n_splits))
@@ -214,47 +249,47 @@ if __name__ == "__main__":
     else:
         space_desc = f"space-fsLR_den-{args.den}"
 
-    subj_ids_valid = np.array(subj_ids_valid, dtype=np.int32)
-    train_subjs = np.array(pad_sequences(train_subjs), dtype=np.int32) if args.crossval else None
-    test_subjs = np.array(pad_sequences(test_subjs), dtype=np.int32) if args.crossval else None
-    with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-bold_{space_desc}_hemi-L_nt-{args.nt_emp}.h5", 'w') as f:
+    subj_ids_valid = np.array(subj_ids_valid, dtype='S20')  # Use byte strings for HDF5 compatibility
+    train_subjs = np.array(pad_sequences(train_subjs), dtype='S20') if args.crossval else None
+    test_subjs = np.array(pad_sequences(test_subjs), dtype='S20') if args.crossval else None
+    with h5py.File(f"{out_dir}/{data_desc}_desc-bold_{space_desc}_hemi-L_nt-{nt_emp}.h5", 'w') as f:
         f.create_dataset('bold', data=bold_all, dtype=np.float32)
         f.create_dataset('subj_ids', data=subj_ids_valid)
         f.create_dataset('medmask', data=medmask)
 
-    with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fc_{space_desc}_hemi-L_nt-{args.nt_emp}.h5", 'w') as h5f:
+    with h5py.File(f"{out_dir}/{data_desc}_desc-fc_{space_desc}_hemi-L_nt-{nt_emp}.h5", 'w') as h5f:
         h5f.create_dataset('fc_indiv', data=fc_indiv_mm, dtype=np.float32)
         h5f.create_dataset('fc_group', data=fc_group, dtype=np.float32)
         h5f.create_dataset('medmask', data=medmask)
         h5f.create_dataset('subj_ids', data=subj_ids_valid)
 
-    with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fcd_{space_desc}_hemi-L_freql-{args.band_freq[0]:.1g}_freqh-{args.band_freq[1]:.1g}_nt-{args.nt_emp}.h5", 'w') as h5f:
+    with h5py.File(f"{out_dir}/{data_desc}_desc-fcd_{space_desc}_hemi-L_freql-{args.band_freq[0]:.1g}_freqh-{args.band_freq[1]:.1g}_nt-{nt_emp}.h5", 'w') as h5f:
         h5f.create_dataset('fcd_group', data=fcd_indiv_mm, dtype=np.float32)
         h5f.create_dataset('medmask', data=medmask)
         h5f.create_dataset('subj_ids', data=subj_ids_valid)
 
-    with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-cpcs_{space_desc}_hemi-L_freql-{args.band_freq[0]:.1g}_freqh-{args.band_freq[1]:.1g}_nt-{args.nt_emp}.h5", 'w') as h5f:
+    with h5py.File(f"{out_dir}/{data_desc}_desc-cpcs_{space_desc}_hemi-L_freql-{args.band_freq[0]:.1g}_freqh-{args.band_freq[1]:.1g}_nt-{nt_emp}.h5", 'w') as h5f:
         h5f.create_dataset('cpcs_group', data=cpcs_group, dtype=np.complex64)
         h5f.create_dataset('svals_group', data=svals_group, dtype=np.float32)
         h5f.create_dataset('medmask', data=medmask)
         h5f.create_dataset('subj_ids', data=subj_ids_valid)
 
     if args.crossval:
-        with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fc-kfold{args.n_splits}_{space_desc}_hemi-L_nt-{args.nt_emp}.h5", 'w') as h5f:
+        with h5py.File(f"{out_dir}/{data_desc}_desc-fc-kfold{args.n_splits}_{space_desc}_hemi-L_nt-{nt_emp}.h5", 'w') as h5f:
             h5f.create_dataset('fc_train', data=fc_train, dtype=np.float32)
             h5f.create_dataset('fc_test', data=fc_test, dtype=np.float32)
             h5f.create_dataset('medmask', data=medmask)
             h5f.create_dataset('subj_ids_train', data=train_subjs)
             h5f.create_dataset('subj_ids_test', data=test_subjs)
 
-        with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fcd-kfold{args.n_splits}_{space_desc}_hemi-L_freql-{args.band_freq[0]:.1g}_freqh-{args.band_freq[1]:.1g}_nt-{args.nt_emp}.h5", 'w') as h5f:
+        with h5py.File(f"{out_dir}/{data_desc}_desc-fcd-kfold{args.n_splits}_{space_desc}_hemi-L_freql-{args.band_freq[0]:.1g}_freqh-{args.band_freq[1]:.1g}_nt-{nt_emp}.h5", 'w') as h5f:
             h5f.create_dataset('fcd_train', data=fcd_train, dtype=np.float32)
             h5f.create_dataset('fcd_test', data=fcd_test, dtype=np.float32)
             h5f.create_dataset('medmask', data=medmask)
             h5f.create_dataset('subj_ids_train', data=train_subjs)
             h5f.create_dataset('subj_ids_test', data=test_subjs)
 
-        with h5py.File(f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-cpcs-kfold{args.n_splits}_{space_desc}_hemi-L_freql-{args.band_freq[0]:.1g}_freqh-{args.band_freq[1]:.1g}_nt-{args.nt_emp}.h5", 'w') as h5f:
+        with h5py.File(f"{out_dir}/{data_desc}_desc-cpcs-kfold{args.n_splits}_{space_desc}_hemi-L_freql-{args.band_freq[0]:.1g}_freqh-{args.band_freq[1]:.1g}_nt-{nt_emp}.h5", 'w') as h5f:
             h5f.create_dataset('cpcs_train', data=cpcs_train, dtype=np.complex64)
             h5f.create_dataset('svals_train', data=svals_train, dtype=np.float32)
             h5f.create_dataset('cpcs_test', data=cpcs_test, dtype=np.complex64)
