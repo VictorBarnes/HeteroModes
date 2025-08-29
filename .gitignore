@@ -8,6 +8,7 @@ data/
 !data/empirical/**/*desc-subjects.txt
 !data/heteromaps/
 !data/nulls/
+figures/
 heteromodes.egg-info/
 results/
 scripts/.ipynb_checkpoints/
@@ -18,6 +19,6 @@ scripts/_console.*
 *.ipynb
 *.sh
 *.json
-.DS_Store
+*.DS_Store
 
 conda-environment.yml
