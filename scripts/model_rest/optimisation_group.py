@@ -48,7 +48,7 @@ def parse_arguments():
     parser.add_argument("--band_freq", type=float, nargs=2, default=[0.04, 0.07], metavar=('low', 'high'), 
                         help="The low and high bandpass frequencies for filtering the BOLD data. Defaults to [0.01, 0.1].")
     parser.add_argument("--metrics", type=str, nargs='+', default=["edge_fc_corr", "node_fc_corr", "fcd_ks"], 
-                        help="The metrics to use for evaluation. Defaults to ['edge_fc', 'node_fc', 'fcd']")
+                        help="The metrics to use for evaluation. Defaults to ['edge_fc_corr', 'node_fc_corr', 'fcd_ks']")
     parser.add_argument("--evaluation", type=str, choices=["fit", "crossval"], default="crossval",
                         help="The type of evaluation to perform. 'fit' evaluates models on the entire empirical dataset, while 'crossval' performs KFold cross-validation. Defaults to 'crossval'.")
     parser.add_argument("--scaling", type=str, default="sigmoid",
@@ -177,9 +177,9 @@ if __name__ == "__main__":
         "marmoset": "/fs03/kg98/vbarnes/nhp_nnp/marmoset"
     }
     DATA_DESC_SPECIES = {
-        "human": "hcp-s1200_nsubj-255",
-        "macaque": "macaque-awake_nsubj-10",
-        "marmoset": "mbm-v4_nsubj-39"
+        "human": f"hcp-s1200_nsubj-{args.n_subjs}",
+        "macaque": f"macaque-awake_nsubj-{args.n_subjs}",
+        "marmoset": f"mbm-v4_nsubj-{args.n_subjs}"
     }
 
     dt_emp = TR_SPECIES[args.species]
@@ -190,7 +190,7 @@ if __name__ == "__main__":
     # Define constants
     tsteady = 5 * 1e4  # burn time to remove transient effects (ms)
 
-    out_dir = f'{PROJ_DIR}/results/{args.species}/model_rest/group/id-{args.id}/{args.hmap_label}'
+    out_dir = f'{PROJ_DIR}/results/{args.species}/model_rest/group/id-{args.id}/{args.evaluation}/{args.hmap_label}'
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
 
@@ -248,14 +248,15 @@ if __name__ == "__main__":
         alpha_vals = np.linspace(alpha_min, alpha_max, alpha_num).round(len(str(alpha_step).split('.')[-1]))
         if alpha_min < 0 < alpha_max:
             alpha_vals = alpha_vals[alpha_vals != 0] # Remove 0 since that is the homogeneous case
-        print(alpha_vals)
-    r_vals = args.r if len(args.r) == 1 else np.arange(args.r[0], args.r[1], args.r[2])
-    gamma_vals = args.gamma if len(args.gamma) == 1 else np.arange(args.gamma[0], args.gamma[1], args.gamma[2])
-    beta_vals = args.beta if len(args.beta) == 1 else np.arange(args.beta[0], args.beta[1], args.beta[2])
+
+    r_vals = args.r if len(args.r) == 1 else np.arange(args.r[0], args.r[1]+args.r[2], args.r[2])
+    gamma_vals = args.gamma if len(args.gamma) == 1 else np.arange(args.gamma[0], args.gamma[1]+args.gamma[2], args.gamma[2])
+    beta_vals = args.beta if len(args.beta) == 1 else np.arange(args.beta[0], args.beta[1]+args.beta[2], args.beta[2])
     param_combs = list(itertools.product(alpha_vals, r_vals, gamma_vals, beta_vals))
 
     # Run all models (i.e. for all parameter combinations) and store outputs in cache
     print_heading(f"Running {args.hmap_label} model for {len(param_combs)} parameter combinations...")
+    print(f"alpha: {alpha_vals}\nr: {r_vals}\ngamma: {gamma_vals}\nbeta: {beta_vals}\n")
     model_outputs = Parallel(n_jobs=args.n_jobs, backend="loky")(
         delayed(model_job)(
             params=params,
@@ -279,10 +280,6 @@ if __name__ == "__main__":
 
     # Evaluate against empirical data
     if args.evaluation == "fit":
-        out_dir = f"{out_dir}/no-crossval"
-        if not os.path.exists(out_dir):
-            os.makedirs(out_dir)
-
         print_heading("Fitting models to empirical data...")
         # Load empirical data and create emp_outputs dictionary
         emp_outputs = {}
@@ -309,7 +306,7 @@ if __name__ == "__main__":
                 results_i[metric] = results[i].get(metric, np.nan)
 
             out_file = (
-                f"{out_dir}/results_alpha-{param_combs[i][0]:.1f}_"
+                f"{out_dir}/model_alpha-{param_combs[i][0]:.1f}_"
                 f"r-{param_combs[i][1]:.1f}_gamma-{param_combs[i][2]:.3f}_"
                 f"beta-{param_combs[i][3]:.1f}.h5"
             )
@@ -331,7 +328,7 @@ if __name__ == "__main__":
         # Save best model outputs
         best_model = model_outputs[best_ind]
         best_results = results[best_ind]
-        with h5py.File(f"{out_dir}/best_model_results.h5", "w") as f:
+        with h5py.File(f"{out_dir}/best_model.h5", "w") as f:
             f.create_dataset('alpha', data=param_combs[best_ind][0])
             f.create_dataset('r', data=param_combs[best_ind][1])
             f.create_dataset('gamma', data=param_combs[best_ind][2])
@@ -409,7 +406,7 @@ if __name__ == "__main__":
             for metric in args.metrics:
                 results_i[metric] = np.array([train_results[j][i][metric] for j in range(args.n_splits)])
 
-            out_file = f"{out_dir}/results_alpha-{param_combs[i][0]:.1f}_r-{param_combs[i][1]:.1f}_gamma-{param_combs[i][2]:.3f}_beta-{param_combs[i][3]:.1f}.h5"
+            out_file = f"{out_dir}/model_alpha-{param_combs[i][0]:.1f}_r-{param_combs[i][1]:.1f}_gamma-{param_combs[i][2]:.3f}_beta-{param_combs[i][3]:.1f}.h5"
             with h5py.File(out_file, "w") as f:
                 f.create_dataset('fc', data=model_outputs[i].get('fc', np.nan))
                 f.create_dataset('fcd', data=model_outputs[i].get('fcd', np.nan))
@@ -426,7 +423,7 @@ if __name__ == "__main__":
         best_results = {metric: np.array([
             split_results_i[i][metric] for i in range(args.n_splits)
         ]) for metric in args.metrics}
-        with h5py.File(f"{out_dir}/best_model_results.h5", "w") as f:
+        with h5py.File(f"{out_dir}/best_model.h5", "w") as f:
             f.create_dataset('alpha', data=best_combs[:, 0])
             f.create_dataset('r', data=best_combs[:, 1])
             f.create_dataset('gamma', data=best_combs[:, 2])

@@ -100,7 +100,6 @@ def run_model(
     
     # Try solving eigenvalues and eigenvectors
     try:
-        print("Solving eigenvalues and eigenvectors...")
         solver = EigenSolver(surf=surf, medmask=medmask, hetero=hetero, n_modes=n_modes, alpha=alpha, beta=beta,
                              r=r, gamma=gamma, scaling=scaling, q_norm=q_norm, 
                              lump=lump, smoothit=smoothit)
@@ -117,7 +116,6 @@ def run_model(
     # Pre-allocate BOLD activity array
     n_regions = solver.surf.n_points if parc is None else len(np.unique(parc[medmask]))
     bold = np.empty((n_regions, nt_emp, n_runs), dtype=np.float32)
-    print(f"Running model with {n_runs} runs, {nt_emp} empirical time points, and {n_regions} regions.")
     for i in range(n_runs):
         bold_i = solver.simulate_waves(dt=dt_model, nt=nt_model, tsteady=tsteady, seed=i, bold_out=True,
                                          eig_method=eig_method)
