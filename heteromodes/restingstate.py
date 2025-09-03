@@ -1,5 +1,4 @@
 import os
-import numexpr as ne
 import fbpca
 import numpy as np
 from scipy.linalg import norm
@@ -118,7 +117,7 @@ def run_model(
     bold = np.empty((n_regions, nt_emp, n_runs), dtype=np.float32)
     for i in range(n_runs):
         bold_i = solver.simulate_waves(dt=dt_model, nt=nt_model, tsteady=tsteady, seed=i, bold_out=True,
-                                         eig_method=eig_method)
+                                         eig_method=eig_method).astype(np.float32)
 
         # Downsample to match empirical time resolution
         bold_i = bold_i[:, ::int(dt_emp // dt_model)]
@@ -127,7 +126,7 @@ def run_model(
         if parc is not None:
             bold_i = reduce_by_labels(bold_i, parc[medmask], axis=1)
 
-        bold[:, :, i] = zscore(bold_i, axis=1)
+        bold[:, :, i] = zscore(bold_i, axis=1).astype(np.float32)
 
     return bold
 
@@ -135,6 +134,9 @@ def analyze_bold(bold, dt_emp=720, band_freq=(0.01, 0.1),
                  metrics=["edge_fc_corr", "node_fc_corr", "fcd_ks"]):
     """Compute all derivatives from BOLD data."""
     outputs = {}
+    
+    # Ensure input is in efficient dtype
+    bold = bold.astype(np.float32, copy=False)
     
     # Calculate FC
     if "edge_fc_corr" in metrics or "node_fc_corr" in metrics:
@@ -150,7 +152,7 @@ def analyze_bold(bold, dt_emp=720, band_freq=(0.01, 0.1),
             fcd = []
             for i in range(bold.shape[2]):
                 fcd.append(calc_fcd_efficient(bold[:, :, i], fnq=fnq, band_freq=band_freq).astype(np.float32))
-            outputs['fcd'] = np.array(fcd).T
+            outputs['fcd'] = np.array(fcd, dtype=np.float32).T
 
     return outputs
 
@@ -200,13 +202,13 @@ def filter_bold(bold, fnq, band_freq=(0.01, 0.1), k=2):
     Wn = [band_freq[0]/fnq, band_freq[1]/fnq]
     bfilt2, afilt2 = butter(k, Wn, btype="bandpass")
 
-    bold_z = zscore(bold, axis=1)
+    bold_z = zscore(bold, axis=1).astype(np.float32)
     bold_filtered = filtfilt(bfilt2, afilt2, bold_z, axis=1)
 
     return bold_filtered
 
 def calc_fc(bold):
-    bold_z = zscore(bold, axis=1)
+    bold_z = zscore(bold, axis=1).astype(np.float32)
     fc_matrix = np.corrcoef(bold_z, dtype=np.float32)
 
     return fc_matrix
@@ -214,6 +216,7 @@ def calc_fc(bold):
 def calc_hilbert(bold, fnq, band_freq=(0.01, 0.1), k=2):
     bold_filtered = filter_bold(bold, fnq, k=k, band_freq=band_freq)
     
+    # Use scipy's hilbert which is optimized with FFTW if available
     return hilbert(bold_filtered, axis=1)
 
 def calc_fcd(bold, fnq, band_freq=(0.01, 0.1), n_avg=3):
@@ -256,7 +259,7 @@ def calc_fcd_efficient(bold, fnq, band_freq=(0.01, 0.1), n_avg=3, chunk_size=50,
     if n_avg < 1:
         raise ValueError("n_avg must be greater than 0")
 
-    bold = bold.astype(np.float32)
+    bold = bold.astype(np.float32, copy=False)
 
     n_regions, nt = bold.shape
     if metric == "amplitude":
@@ -286,7 +289,7 @@ def calc_fcd_efficient(bold, fnq, band_freq=(0.01, 0.1), n_avg=3, chunk_size=50,
         for i in range(chunk_size_actual):
             x = phase_trunc[:, chunk_start + i][:, None]
             y = phase_trunc[:, chunk_start + i][None, :]
-            synchrony_mat = ne.evaluate("cos(x - y)")
+            synchrony_mat = np.cos(x - y)
             synchrony_chunk[i, :] = synchrony_mat[triu_i, triu_j]
 
         for i in range(chunk_size_actual):
@@ -298,7 +301,7 @@ def calc_fcd_efficient(bold, fnq, band_freq=(0.01, 0.1), n_avg=3, chunk_size=50,
                 if end_idx > start_idx:
                     avg_sync = np.mean(synchrony_chunk[start_idx:end_idx, :], axis=0)
 
-                    norm_val = np.sqrt(ne.evaluate("sum(avg_sync ** 2)"))
+                    norm_val = np.sqrt(np.sum(avg_sync ** 2))
                     if norm_val > 1e-6:
                         p_mat[global_t, :] = avg_sync / norm_val
                     else:

@@ -109,7 +109,6 @@ def model_job(params, surf, medmask, hmap, args, dt_emp, dt, tsteady, parc=None)
             return None
         
         # Analyze BOLD data
-        print("Analyzing BOLD data...")
         outputs = analyze_bold(
             bold_data, 
             dt_emp=dt_emp, 
@@ -442,9 +441,9 @@ if __name__ == "__main__":
             for metric in args.metrics
         ])
         print(
-            f"Best Model | alpha: {np.mean(best_combs, axis=0)[0]:.1f} "
-            f"r: {np.mean(best_combs, axis=0)[1]:.1f} "
-            f"gamma: {np.mean(best_combs, axis=0)[2]:.3f} "
+            f"Best Model | alpha: {np.mean(best_combs, axis=0)[0]:.1f}, "
+            f"r: {np.mean(best_combs, axis=0)[1]:.1f}, "
+            f"gamma: {np.mean(best_combs, axis=0)[2]:.3f}, "
             f"beta: {np.mean(best_combs, axis=0)[3]:.1f} | {results_str}"
         )
 
