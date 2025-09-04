@@ -1,16 +1,39 @@
 .vscode/
 build/
-# Ignore most of the data folder expect for small files
-data/
-# Allow small datasets (10 subjects or fewer)
-!data/empirical/**/*nsubj-10*
-!data/empirical/**/*desc-nomedialwall.func.gii
-!data/empirical/**/*desc-subjects.txt
+# Ignore most of the data folder except for small files
+data/*
 !data/heteromaps/
 !data/nulls/
+# Setup intermediate directories
+!data/empirical/
+data/empirical/*
+!data/empirical/*/
+data/empirical/*/*
+# Specify files to keep
+!data/empirical/**/*nsubj-10*
+!data/empirical/**/*desc-nomedialwall.func.gii
+figures/
+heteromodes.egg-info/
 figures/
 heteromodes.egg-info/
 results/
+# # Setup intermediate directories
+# !results/*/
+# results/*/*
+# !results/*/model_rest/
+# results/*/model_rest/*
+# !results/*/model_rest/group/
+# results/*/model_rest/group/*
+# !results/*/model_rest/group/id-*/
+# results/*/model_rest/group/id-*/*
+# !results/*/model_rest/group/id-*/*/
+# results/*/model_rest/group/id-*/*/*
+# !results/*/model_rest/group/id-*/*/*/
+# results/*/model_rest/group/id-*/*/*/*
+# # Specify files to keep
+# !results/*/model_rest/group/*/config.json
+# !results/*/model_rest/group/**/best_model.h5
+# !results/*/model_rest/group/**/parameter_combinations.csv
 scripts/.ipynb_checkpoints/
 scripts/sandbox/
 scripts/_console.*
