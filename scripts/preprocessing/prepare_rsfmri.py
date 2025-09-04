@@ -140,7 +140,7 @@ if __name__ == "__main__":
             print(f"Reduced BOLD data shape for subject {subj}: {bold.shape}")
 
         # Z-score data
-        bold_z = zscore(bold, axis=1)
+        bold_z = zscore(bold, axis=1).astype(np.float32)
 
         # Check for NaNs
         if np.any(np.isnan(bold_z)):

@@ -15,7 +15,6 @@ from heteromodes.restingstate import run_model, analyze_bold, evaluate_model
 
 load_project_env()
 PROJ_DIR = os.getenv("PROJ_DIR")
-os.environ["NUMEXPR_MAX_THREADS"] = "1" # this is for calc_fcd_efficient
 
 def print_heading(text):
     print(f"\n{text}\n{'=' * len(text)}")
@@ -82,6 +81,19 @@ def model_job(params, surf, medmask, hmap, args, dt_emp, dt, tsteady, parc=None)
     results : dict or None
         Dictionary containing fc, phase_map, etc. or None if simulation failed
     """
+    # If model outpts already exist then load them ('fc' and 'fcd')
+    out_file = (
+        f"{PROJ_DIR}/results/{args.species}/model_rest/group/id-{args.id}/{args.evaluation}/"
+        f"{args.hmap_label if args.hmap_label is not None else 'None'}/"
+        f"model_alpha-{params[0]:.1f}_r-{params[1]:.1f}_gamma-{params[2]:.3f}_beta-{params[3]:.1f}.h5"
+    )
+    if os.path.exists(out_file):
+        with h5py.File(out_file, "r") as f:
+            if "edge_fc_corr" in args.metrics or "node_fc_corr" in args.metrics:
+                outputs['fc'] = f['fc'][:]
+            if "fcd_ks" in args.metrics:
+                outputs['fcd'] = f['fcd'][:]
+        return outputs
     
     # Run simulation
     try:
@@ -170,11 +182,6 @@ if __name__ == "__main__":
 
     TR_SPECIES = {"human": 720, "macaque": 2600, "marmoset": 2000} # in ms
     DT_SPECIES = {"human": 90, "macaque": 100, "marmoset": 100} # in ms
-    DATA_DIR_SPECIES = {
-        "human": "/fs03/kg98/vbarnes/HCP",
-        "macaque": "/fs03/kg98/vbarnes/nhp_nnp/macaque",
-        "marmoset": "/fs03/kg98/vbarnes/nhp_nnp/marmoset"
-    }
     DATA_DESC_SPECIES = {
         "human": f"hcp-s1200_nsubj-{args.n_subjs}",
         "macaque": f"macaque-awake_nsubj-{args.n_subjs}",
@@ -183,7 +190,6 @@ if __name__ == "__main__":
 
     dt_emp = TR_SPECIES[args.species]
     dt = DT_SPECIES[args.species]  # model time step (ms)
-    data_dir = DATA_DIR_SPECIES[args.species]
     data_desc = DATA_DESC_SPECIES[args.species]
     
     # Define constants

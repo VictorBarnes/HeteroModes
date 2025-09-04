@@ -1,5 +1,3 @@
-import os
-import fbpca
 import numpy as np
 from scipy.linalg import norm
 from scipy.signal import butter, filtfilt, hilbert
@@ -8,7 +6,6 @@ from scipy.interpolate import PchipInterpolator
 from scipy.ndimage import label
 from scipy.stats import zscore, ks_2samp
 from brainspace.utils.parcellation import reduce_by_labels
-from nsbtools.utils import unmask
 from nsbtools.eigen import EigenSolver
 
 
