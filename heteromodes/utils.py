@@ -6,7 +6,7 @@ from pathlib import Path
 from neuromaps.transforms import fslr_to_fslr
 
 
-def load_hmap(hmap_label, trg_den="32k", data_dir=None):
+def load_hmap(hmap_label, species="human", trg_den="32k", data_dir=None):
     """Load heterogeneity map and transforms it to the target density.
 
     Parameters
@@ -29,11 +29,11 @@ def load_hmap(hmap_label, trg_den="32k", data_dir=None):
 
     # Check if data_dir is provided, otherwise use the default directory
     if data_dir is None:
-        data_dir = Path(os.getenv("PROJ_DIR"), "data", "heteromaps")
+        data_dir = Path(os.getenv("PROJ_DIR"), "data", "heteromaps", species)
     else:
         data_dir = Path(data_dir)
 
-    hmap_file = list((data_dir).glob(f"*desc-{hmap_label}_*.func.gii"))
+    hmap_file = list((data_dir).glob(f"*desc-{hmap_label}*.func.gii"))
     if len(hmap_file) == 0:
         raise FileNotFoundError(f"No heterogeneity map found for label '{hmap_label}'.")
 

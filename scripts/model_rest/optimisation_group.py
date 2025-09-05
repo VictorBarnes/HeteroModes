@@ -88,6 +88,7 @@ def model_job(params, surf, medmask, hmap, args, dt_emp, dt, tsteady, parc=None)
         f"model_alpha-{params[0]:.1f}_r-{params[1]:.1f}_gamma-{params[2]:.3f}_beta-{params[3]:.1f}.h5"
     )
     if os.path.exists(out_file):
+        outputs = {}
         with h5py.File(out_file, "r") as f:
             if "edge_fc_corr" in args.metrics or "node_fc_corr" in args.metrics:
                 outputs['fc'] = f['fc'][:]
@@ -242,7 +243,7 @@ if __name__ == "__main__":
             out_dir = out_dir + "/nulls"
         # Otherwise assume hmap_label is a valid label
         else:
-            hmap = load_hmap(args.hmap_label, trg_den=args.den)
+            hmap = load_hmap(args.hmap_label, species=args.species, trg_den=args.den)
             num_nonmed_zeros = np.sum(np.where(hmap[medmask] == 0, True, False))
             if num_nonmed_zeros > 0 and np.min(hmap[medmask]) == 0:
                 print(f"Warning: {num_nonmed_zeros} vertices on the heterogeneity maps have a "
