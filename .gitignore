@@ -1,10 +1,12 @@
 .vscode/
 build/
-# Ignore most of the data folder except for small files
-data/*
-!data/heteromaps/
-!data/nulls/
-# Setup intermediate directories
+# Ignore most of the data directory
+data/archive/
+data/cache/
+data/parcellations
+data/surfaces
+data/temp/
+# Setup intermediate directories to unignore files within
 !data/empirical/
 data/empirical/*
 !data/empirical/*/

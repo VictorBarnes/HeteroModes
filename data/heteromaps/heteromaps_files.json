@@ -1,9 +1,0 @@
-{
-  "myelinmap": "/fs03/kg98/vbarnes/HBO-data/neuromaps-data/resampled/fsLR/source-hcps1200_desc-myelinmap_space-fsLR_den-32k_hemi-L_feature.func.gii",
-  "SAaxis": "/fs03/kg98/vbarnes/HBO-data/neuromaps-data/resampled/fsLR/source-sydnor2021_desc-SAaxis_space-fsLR_den-32k_hemi-L_feature.func.gii",
-  "thickness": "/fs03/kg98/vbarnes/HBO-data/neuromaps-data/resampled/fsLR/source-hcps1200_desc-thickness_space-fsLR_den-32k_hemi-L_feature.func.gii",
-  "ndi": "/fs03/kg98/vbarnes/HBO-data/balsa-data/source-fukutomi2018_desc-ndi_space-fsLR_den-32k_hemi-L.func.gii",
-  "odi": "/fs03/kg98/vbarnes/HBO-data/balsa-data/source-fukutomi2018_desc-odi_space-fsLR_den-32k_hemi-L.func.gii",
-  "gaba": "data/heteromaps/source-norgaard2021_desc-flumazenil_space-fsLR_den-32k_hemi-L_feature.func.gii",
-  "centralpatch": "/fs04/kg98/vbarnes/HeteroModes/data/heteromaps/source-barnes2024_desc-centralpatch_space-fsLR_den-32k_hemi-L_feature.func.gii"
-}
