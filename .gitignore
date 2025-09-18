@@ -14,6 +14,7 @@ data/empirical/*/*
 # Specify files to keep
 !data/empirical/**/*nsubj-10*
 !data/empirical/**/*desc-nomedialwall.func.gii
+!data/empirical/**/*desc-midthickness.surf.gii
 figures/
 heteromodes.egg-info/
 figures/
