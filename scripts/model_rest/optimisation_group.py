@@ -271,7 +271,6 @@ if __name__ == "__main__":
     # Run all models (i.e. for all parameter combinations) and store outputs in cache
     print_heading(f"Running {args.hmap_label} model for {len(param_combs)} parameter combinations...")
     print(f"alpha: {alpha_vals}\nr: {r_vals}\ngamma: {gamma_vals}\nbeta: {beta_vals}\n")
-    print(f"In optimsation_group.py | parc type: {type(parc)}, parc is None: {parc is None}")
     model_outputs = Parallel(n_jobs=args.n_jobs, backend="loky")(
         delayed(model_job)(
             params=params,
