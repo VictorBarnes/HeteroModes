@@ -236,6 +236,7 @@ if __name__ == "__main__":
     ).darrays[0].data.astype(bool)
 
     # Get hmap and alpha values
+    is_null = False
     if args.hmap_label is None:
         hmap = None
         alpha_vals = [0]
@@ -250,7 +251,6 @@ if __name__ == "__main__":
             out_dir = out_dir + "/nulls"
         # Otherwise assume hmap_label is a valid label
         else:
-            is_null = False
             hmap = load_hmap(args.hmap_label, species=args.species, trg_den=args.den)
             num_nonmed_zeros = np.sum(np.where(hmap[medmask] == 0, True, False))
             if num_nonmed_zeros > 0 and np.min(hmap[medmask]) == 0:
