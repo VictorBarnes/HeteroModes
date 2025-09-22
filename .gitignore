@@ -6,6 +6,7 @@ data/cache/
 data/parcellations
 data/surfaces
 data/temp/
+data/nulls/
 # Setup intermediate directories to unignore files within
 !data/empirical/
 data/empirical/*
@@ -44,7 +45,7 @@ scripts/_console.*
 **/__pycache__/
 *.ipynb
 *.sh
-*.json
+*.png
 *.DS_Store
 
 conda-environment.yml

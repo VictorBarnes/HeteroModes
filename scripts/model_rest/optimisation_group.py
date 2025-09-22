@@ -85,9 +85,11 @@ def model_job(params, surf, medmask, hmap, args, dt_emp, dt, tsteady, parc=None)
     out_file = (
         f"{PROJ_DIR}/results/{args.species}/model_rest/group/id-{args.id}/{args.evaluation}/"
         f"{args.hmap_label if args.hmap_label is not None else 'None'}/"
+        f"{args.parc + '/' if args.parc else ''}"
         f"model_alpha-{params[0]:.1f}_r-{params[1]:.1f}_gamma-{params[2]:.3f}_beta-{params[3]:.1f}.h5"
     )
     if os.path.exists(out_file):
+        print(f"Model already exists. Loading model outputs from {out_file}")
         outputs = {}
         with h5py.File(out_file, "r") as f:
             if "edge_fc_corr" in args.metrics or "node_fc_corr" in args.metrics:
@@ -119,6 +121,7 @@ def model_job(params, surf, medmask, hmap, args, dt_emp, dt, tsteady, parc=None)
         
         # Check if simulation was successful
         if bold_data is None:
+            print(f"Simulation failed for params {params}.")
             return None
         
         # Analyze BOLD data
@@ -222,8 +225,11 @@ if __name__ == "__main__":
         space_desc = f"space-fsLR_den-{args.den}"
 
     # Get surface
-    fslr = fetch_atlas(atlas='fsLR', density=args.den)
-    surf = str(fslr['midthickness'][0])
+    if args.species == "human":
+        fslr = fetch_atlas(atlas='fsLR', density=args.den)
+        surf = str(fslr['midthickness'][0])
+    else:
+        surf = f'{PROJ_DIR}/data/empirical/{args.species}/space-fsLR_den-{args.den}_hemi-L_desc-midthickness.surf.gii'
     # Load medmask
     medmask = nib.load(
         f"{PROJ_DIR}/data/empirical/{args.species}/space-fsLR_den-{args.den}_hemi-L_desc-nomedialwall.func.gii"
@@ -236,13 +242,15 @@ if __name__ == "__main__":
     else:
         # If hmap_label is null, load null map
         if args.hmap_label[:4] == "null":
+            is_null = True
             null_id = int(args.hmap_label.split('-')[1])
-            hmap = np.load(f"{PROJ_DIR}/data/nulls/data-myelinmap_{space_desc}_hemi-L_nmodes-500_nnulls-5000_nulls_resample-True.npy")
+            hmap = np.load(f"{PROJ_DIR}/data/nulls/data-{args.hmap_label}_{space_desc}_hemi-L_nmodes-500_nnulls-1000_nulls_resample-True.npy")
             hmap = hmap[null_id, :]
 
             out_dir = out_dir + "/nulls"
         # Otherwise assume hmap_label is a valid label
         else:
+            is_null = False
             hmap = load_hmap(args.hmap_label, species=args.species, trg_den=args.den)
             num_nonmed_zeros = np.sum(np.where(hmap[medmask] == 0, True, False))
             if num_nonmed_zeros > 0 and np.min(hmap[medmask]) == 0:
@@ -263,6 +271,7 @@ if __name__ == "__main__":
     # Run all models (i.e. for all parameter combinations) and store outputs in cache
     print_heading(f"Running {args.hmap_label} model for {len(param_combs)} parameter combinations...")
     print(f"alpha: {alpha_vals}\nr: {r_vals}\ngamma: {gamma_vals}\nbeta: {beta_vals}\n")
+    print(f"In optimsation_group.py | parc type: {type(parc)}, parc is None: {parc is None}")
     model_outputs = Parallel(n_jobs=args.n_jobs, backend="loky")(
         delayed(model_job)(
             params=params,
@@ -387,7 +396,6 @@ if __name__ == "__main__":
         # Run cross-validation splits
         split_results = []
         for i in range(args.n_splits):
-
             split_results_i = run_split(
                 model_outputs,
                 emp_outputs_train[i], 
@@ -405,21 +413,22 @@ if __name__ == "__main__":
             
             split_results.append(split_results_i)
 
-        # Save results for each model by averaging across splits
-        train_results = [split['train_results'] for split in split_results]
-        for i in range(len(param_combs)):
-            results_i = {}
-            for metric in args.metrics:
-                results_i[metric] = np.array([train_results[j][i][metric] for j in range(args.n_splits)])
+        # Save results for each model by averaging across splits (only if not null model)
+        if not is_null:
+            train_results = [split['train_results'] for split in split_results]
+            for i in range(len(param_combs)):
+                results_i = {}
+                for metric in args.metrics:
+                    results_i[metric] = np.array([train_results[j][i][metric] for j in range(args.n_splits)])
 
-            out_file = f"{out_dir}/model_alpha-{param_combs[i][0]:.1f}_r-{param_combs[i][1]:.1f}_gamma-{param_combs[i][2]:.3f}_beta-{param_combs[i][3]:.1f}.h5"
-            with h5py.File(out_file, "w") as f:
-                f.create_dataset('fc', data=model_outputs[i].get('fc', np.nan))
-                f.create_dataset('fcd', data=model_outputs[i].get('fcd', np.nan))
+                out_file = f"{out_dir}/model_alpha-{param_combs[i][0]:.1f}_r-{param_combs[i][1]:.1f}_gamma-{param_combs[i][2]:.3f}_beta-{param_combs[i][3]:.1f}.h5"
+                with h5py.File(out_file, "w") as f:
+                    f.create_dataset('fc', data=model_outputs[i].get('fc', np.nan))
+                    f.create_dataset('fcd', data=model_outputs[i].get('fcd', np.nan))
 
-                group = f.create_group('results')
-                for key, value in results_i.items():
-                    group.create_dataset(key, data=value)
+                    group = f.create_group('results')
+                    for key, value in results_i.items():
+                        group.create_dataset(key, data=value)
 
         # Save best model outputs
         split_results_i = [split['test_results'] for split in split_results]
