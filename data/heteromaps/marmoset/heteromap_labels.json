@@ -1,0 +1,7 @@
+{
+    "heteromap_labels": {
+        "myelinmap": "T1w/T2w",
+        "thickness": "Cortical thickness",
+        "nissl": "Nissl"
+    }
+}

@@ -1,0 +1,12 @@
+{
+    "heteromap_labels": {
+        "myelinmap": "T1w/T2w",
+        "thickness": "Cortical thickness",
+        "synapticden": "Synaptic density",
+        "odi": "ODI",
+        "ndi": "NDI",
+        "genel4PC1": "Layer IV",
+        "eiratio1.2": "E:I ratio",
+        "megtimescale": "MEG timescale"
+    }
+}

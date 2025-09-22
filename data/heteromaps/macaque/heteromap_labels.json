@@ -1,0 +1,23 @@
+{
+    "heteromap_labels": {
+        "myelinmap": "T1w/T2w",
+        "thickness": "Cortical thickness",
+        "ampa": "AMPA",
+        "cgp5": "GABA-B",
+        "damp": "M3",
+        "dpat": "5HT1A",
+        "dpmg": "Adenosine 1",
+        "exh": "average excitatory",
+        "flum": "GABA-A/BZ",
+        "inh": "average inhibitory",
+        "kain": "kainate",
+        "keta": "5HT2",
+        "mk80": "NMDA",
+        "mod": "average modulatory",
+        "musc": "GABA-A",
+        "oxot": "M2",
+        "pire": "M1",
+        "praz": "alpha1",
+        "uk14": "alpha2"
+    }
+}
