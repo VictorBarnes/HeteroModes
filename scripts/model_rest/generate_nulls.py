@@ -4,11 +4,10 @@ import numpy as np
 import nibabel as nib
 from neuromaps.datasets import fetch_atlas
 from eigenstrapping import SurfaceEigenstrapping
-from nsbtools.utils import load_project_env
-from heteromodes.utils import load_hmap
+from heteromodes.utils import load_hmap, get_project_root
 
-load_project_env()
-PROJ_DIR = os.getenv("PROJ_DIR")
+
+PROJ_DIR = get_project_root()
 
 hetero_labels = {
     "myelinmap": "T1w/T2w",

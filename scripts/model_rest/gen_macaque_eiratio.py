@@ -3,11 +3,12 @@ import os
 import numpy as np
 import nibabel as nib
 import matplotlib.pyplot as plt
-from nsbtools.utils import load_project_env, unmask
+from nsbtools.utils import unmask
 from nsbtools.plotting import plot_brain
+from heteromodes.utils import get_project_root
 
-load_project_env
-PROJ_DIR = os.getenv("PROJ_DIR")
+
+PROJ_DIR = get_project_root()
 
 medmask = nib.load(f"{PROJ_DIR}/data/empirical/macaque/space-fsLR_den-4k_hemi-L_desc-nomedialwall.func.gii").darrays[0].data.astype(bool)
 exh = nib.load(f"{PROJ_DIR}/data/heteromaps/macaque/desc-exh_space-fsLR_den-4k_hemi-L.func.gii").darrays[0].data[medmask]

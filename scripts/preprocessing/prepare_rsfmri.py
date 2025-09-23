@@ -5,16 +5,14 @@ import argparse
 import numpy as np
 import nibabel as nib
 from scipy.stats import zscore
-from dotenv import load_dotenv
 from joblib import Parallel, delayed
 from sklearn.model_selection import KFold
 from brainspace.utils.parcellation import reduce_by_labels
 from heteromodes.restingstate import calc_fc, calc_hilbert, calc_fcd_efficient
-from heteromodes.utils import pad_sequences
+from heteromodes.utils import pad_sequences, get_project_root
 
 
-load_dotenv()
-PROJ_DIR = os.getenv("PROJ_DIR")
+PROJ_DIR = get_project_root()
 DENSITIES = {"4k": 4002, "8k": 7842, "32k": 32492}
 
 def load_bold_data(bold_file, n_verts, n_timepoints):
@@ -185,7 +183,6 @@ if __name__ == "__main__":
     complex_indiv_mm[:] = np.dstack(complex_indiv)
     fcd_indiv_mm = np.memmap(f"{PROJ_DIR}/data/temp/fcd_memmap.dat", mode='w+', dtype=np.float32, shape=(len(fcd_indiv[0]), n_subjs_valid))
     fcd_indiv_mm[:] = np.array(fcd_indiv).T
-    fcd_group = fcd_indiv_mm
 
     print("Calculating group phase CPCs...")
     l = 10 + ncpcs
@@ -241,6 +238,7 @@ if __name__ == "__main__":
             test_subjs.append(subj_ids_valid[test_idx])
 
         fcd_train = np.dstack(fcd_train).astype(np.float32)
+        fcd_test = np.dstack(fcd_test).astype(np.float32)
 
     # Save the results as h5 files
     print("Saving the results...")

@@ -6,6 +6,13 @@ from pathlib import Path
 from neuromaps.transforms import fslr_to_fslr
 
 
+def get_project_root() -> Path:
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / "pyproject.toml").exists() or (parent / ".git").exists():
+            return parent
+    raise RuntimeError("Project root not found.")
+
 def load_hmap(hmap_label, species="human", trg_den="32k", data_dir=None):
     """Load heterogeneity map and transforms it to the target density.
 

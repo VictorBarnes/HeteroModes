@@ -19,7 +19,6 @@ def run_model(
     r=28.9, 
     gamma=0.116, 
     scaling="sigmoid", 
-    q_norm=None, 
     lump=False, 
     smoothit=10,
     n_modes=500, 
@@ -53,8 +52,6 @@ def run_model(
         Decay parameter for interactions (default: 0.116).
     scaling : str
         Type of scaling function ("sigmoid", "linear", etc.).
-    q_norm : float or None
-        Normalization factor for activity.
     lump : bool
         Whether to lump parameters together.
     smoothit : int
@@ -96,10 +93,10 @@ def run_model(
     
     # Try solving eigenvalues and eigenvectors
     try:
-        solver = EigenSolver(surf=surf, medmask=medmask, hetero=hetero, n_modes=n_modes, alpha=alpha, beta=beta,
-                             r=r, gamma=gamma, scaling=scaling, q_norm=q_norm, 
+        solver = EigenSolver(surf=surf, medmask=medmask, hetero=hetero, n_modes=n_modes, 
+                             alpha=alpha, beta=beta, r=r, gamma=gamma, scaling=scaling,
                              lump=lump, smoothit=smoothit)
-        solver.solve(fix_mode1=True, standardise=False)
+        solver.solve(fix_mode1=True, standardize=False)
     except ValueError as e:
         if "Alpha value results in non-physiological wave speeds" in str(e):
             print(f"Invalid parameter combination: alpha={alpha}, r={r}, gamma={gamma}")
@@ -107,18 +104,22 @@ def run_model(
         else:
             raise e
 
-    nt_model = int((nt_emp - 1) * dt_emp / dt_model)
+    nt_model = int(nt_emp*dt_emp/dt_model + tsteady//dt_model)
 
     # Pre-allocate BOLD activity array
-    n_regions = solver.surf.n_points if parc is None else len(np.unique(parc[medmask]))
+    n_regions = solver.n_verts if parc is None else len(np.unique(parc[medmask]))
     bold = np.empty((n_regions, nt_emp, n_runs), dtype=np.float32)
     for i in range(n_runs):
-        bold_i = solver.simulate_waves(dt=dt_model, nt=nt_model, tsteady=tsteady, seed=i, bold_out=True,
+        bold_i = solver.simulate_waves(dt=dt_model, nt=nt_model, seed=i, bold_out=True,
                                          eig_method=eig_method).astype(np.float32)
-
+        
+        # Discard timepoints before steady state
+        tsteady_ind = np.abs(solver.t - tsteady).argmin()
+        bold_i = bold_i[:, tsteady_ind:]
+        
         # Downsample to match empirical time resolution
         bold_i = bold_i[:, ::int(dt_emp // dt_model)]
-        
+
         # Parcellate
         if parc is not None:
             bold_i = reduce_by_labels(bold_i, parc[medmask], axis=1)

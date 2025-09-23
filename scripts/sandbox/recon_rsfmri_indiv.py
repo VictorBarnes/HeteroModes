@@ -6,12 +6,11 @@ from neuromaps.datasets import fetch_fslr
 from joblib import Parallel, delayed
 from memory_profiler import profile
 import argparse
-from heteromodes.eigentools import calc_eigenreconstruction
-from heteromodes import EigenSolver
-from heteromodes.utils import load_project_env
+from heteromodes.utils import get_project_root
+from nsbtools.eigen import EigenSolver
 
-load_project_env()
-PROJ_DIR = os.getenv("PROJ_DIR")
+
+PROJ_DIR = get_project_root()
 
 def recon_subject(bold_subj, method="orthogonal"):
     # Load individual data
@@ -27,13 +26,13 @@ def recon_subject(bold_subj, method="orthogonal"):
     scaler = StandardScaler()
     bold_z = scaler.fit_transform(bold_subj.T).T
 
-    _, _, fc_corr = calc_eigenreconstruction(
+    _, _, fc_corr = EigenSolver.reconstruct(
         bold_z, 
         emodes,
         method=method,
         modesq=None,
         mass=solver.mass,
-        data_type="timeseries"
+        timeseires=True,
     )
 
     return fc_corr

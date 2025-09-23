@@ -9,12 +9,11 @@ import nibabel as nib
 from tqdm import tqdm
 from joblib import Parallel, delayed
 from neuromaps.datasets import fetch_atlas
-from heteromodes.utils import load_hmap
-from nsbtools.utils import load_project_env
+from heteromodes.utils import load_hmap, get_project_root
 from heteromodes.restingstate import run_model, analyze_bold, evaluate_model
 
-load_project_env()
-PROJ_DIR = os.getenv("PROJ_DIR")
+
+PROJ_DIR = get_project_root()
 
 def print_heading(text):
     print(f"\n{text}\n{'=' * len(text)}")
@@ -52,8 +51,6 @@ def parse_arguments():
                         help="The type of evaluation to perform. 'fit' evaluates models on the entire empirical dataset, while 'crossval' performs KFold cross-validation. Defaults to 'crossval'.")
     parser.add_argument("--scaling", type=str, default="sigmoid",
                         help="The scaling to apply to the heterogeneity map. Defaults to 'sigmoid'.")
-    parser.add_argument('--q_norm', type=lambda x: None if x.lower() == "none" else x, default=None, 
-                        help="Type of distribution to match to when doing the quantile normalisation")
     parser.add_argument("--phase_type", type=str, default="cpc1",
                         help="The type of phase to calculate: 'cpc1' or 'combined'. Defaults to 'cpc1'")
     parser.add_argument("--n_comps", type=int, default=3,
@@ -109,7 +106,6 @@ def model_job(params, surf, medmask, hmap, args, dt_emp, dt, tsteady, parc=None)
             gamma=params[2],
             beta=params[3],
             scaling=args.scaling,
-            q_norm=args.q_norm,
             n_modes=args.n_modes,
             n_runs=args.n_runs,
             dt_emp=dt_emp,
@@ -179,8 +175,6 @@ if __name__ == "__main__":
     args = parse_arguments()
     if args.hmap_label == "None":
         args.hmap_label = None
-    if args.q_norm == "None":
-        args.q_norm = None
     if args.parc == "None":
         args.parc = None
 
@@ -267,6 +261,8 @@ if __name__ == "__main__":
     gamma_vals = args.gamma if len(args.gamma) == 1 else np.arange(args.gamma[0], args.gamma[1]+args.gamma[2], args.gamma[2])
     beta_vals = args.beta if len(args.beta) == 1 else np.arange(args.beta[0], args.beta[1]+args.beta[2], args.beta[2])
     param_combs = list(itertools.product(alpha_vals, r_vals, gamma_vals, beta_vals))
+    if len(param_combs) == 1:
+        raise ValueError("At least two parameter combinations are required for optimisation.")
 
     # Run all models (i.e. for all parameter combinations) and store outputs in cache
     print_heading(f"Running {args.hmap_label} model for {len(param_combs)} parameter combinations...")
@@ -467,4 +463,4 @@ if __name__ == "__main__":
     param_combs_df.to_csv(f"{out_dir}/parameter_combinations.csv", index=False)
 
     t2 = time.time()
-    print(f"\nTotal time: {(t2 - t1)/3600:.1f} hours")
+    print(f"\nTotal time: {(t2 - t1)/3600:.2f} hours")

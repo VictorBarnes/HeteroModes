@@ -2,17 +2,16 @@ import os
 import h5py
 import numpy as np
 from sklearn.preprocessing import StandardScaler
-from heteromodes.eigentools import calc_eigenreconstruction
 from neuromaps.datasets import fetch_fslr
 from joblib import Parallel, delayed
 from memory_profiler import profile
 import argparse
-from heteromodes import EigenSolver
-from heteromodes.utils import load_hmap, load_project_env
+from heteromodes.utils import load_hmap, get_project_root
 from heteromodes.restingstate import filter_bold
+from nsbtools.eigen import EigenSolver
 
-load_project_env()
-PROJ_DIR = os.getenv("PROJ_DIR")
+
+PROJ_DIR = get_project_root()
 
 def recon_subject(bold_subj, emodes, mass, method="orthogonal", metric="pearsonr"):
     # remove nan timepoints
@@ -24,13 +23,13 @@ def recon_subject(bold_subj, emodes, mass, method="orthogonal", metric="pearsonr
     # Bandpass filter the data
     bold_zf = filter_bold(bold_z, tr=0.72, lowcut=0.01, highcut=0.1)
 
-    _, _, fc_score = calc_eigenreconstruction(
+    _, _, fc_score = EigenSolver.reconstruct(
         bold_zf, 
         emodes,
         method=method,
         modesq=None,
         mass=mass,
-        data_type="timeseries",
+        timeseires=True,
         metric=metric
     )
 
@@ -48,7 +47,6 @@ def main():
     parser.add_argument('--method', type=str, default="orthogonal", help="Method for eigen-reconstruction")
     parser.add_argument('--metric', type=str, default="pearsonr", help="Metric for calculating reconstruction accuracy")
     parser.add_argument('--scaling', type=str, default="exponential", help="Scaling function to apply to the heterogeneity map")
-    parser.add_argument('--q_norm', type=str, default="normal", help="Type of distribution to match to when doing the quantile normalisation")
     args = parser.parse_args()
 
     print("Loading data...")
@@ -64,8 +62,7 @@ def main():
         hmap = load_hmap(args.hmap_label, "4k")
     else:
         hmap = None
-    solver = EigenSolver(surf, medmask=medmask, hetero=hmap, alpha=args.alpha, scaling=args.scaling,
-                         q_norm=args.q_norm)
+    solver = EigenSolver(surf, medmask=medmask, hetero=hmap, alpha=args.alpha, scaling=args.scaling)
     evals, emodes = solver.solve(n_modes=args.n_modes, fix_mode1=True)
 
     print("Reconstructing data...")

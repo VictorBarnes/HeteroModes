@@ -3,10 +3,10 @@ import h5py
 import numpy as np
 import nibabel as nib
 from neuromaps.datasets import fetch_fslr
-from heteromodes.utils import load_project_env
+from heteromodes.utils import get_project_root
 
-load_project_env()
-PROJ_DIR = os.getenv("PROJ_DIR")
+
+PROJ_DIR = get_project_root()
 medmask = nib.load(fetch_fslr("32k")["medial"][0]).darrays[0].data.astype(bool)
 
 # Load the .mat file
