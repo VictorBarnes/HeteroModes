@@ -204,10 +204,9 @@ if __name__ == "__main__":
             raise ValueError("Parcellation is only valid for human species.")
         
         # Parcellation is only available for 32k density
-        args.den = "32k"
         parc = nib.load(
             f"{PROJ_DIR}/data/parcellations/parc-{args.parc}_space-fsLR_den-{args.den}_hemi-L.label.gii"
-        ).darrays[0].data
+        ).darrays[0].data.astype(int)
 
         out_dir = f"{out_dir}/parc-{args.parc}"
         if not os.path.exists(out_dir):
@@ -215,6 +214,9 @@ if __name__ == "__main__":
 
         # Define string for loading empirical data
         space_desc = f"space-fsLR_den-{args.den}_parc-{args.parc}"
+
+        # Define medial mask here since it depends on parcellation
+        medmask = np.where(parc != 0, True, False)
     else:
         space_desc = f"space-fsLR_den-{args.den}"
 
@@ -224,10 +226,11 @@ if __name__ == "__main__":
         surf = str(fslr['midthickness'][0])
     else:
         surf = f'{PROJ_DIR}/data/empirical/{args.species}/space-fsLR_den-{args.den}_hemi-L_desc-midthickness.surf.gii'
-    # Load medmask
-    medmask = nib.load(
-        f"{PROJ_DIR}/data/empirical/{args.species}/space-fsLR_den-{args.den}_hemi-L_desc-nomedialwall.func.gii"
-    ).darrays[0].data.astype(bool)
+    # Load medmask if not already defined (i.e. if not a parcellation)
+    if args.parc is None:
+        medmask = nib.load(
+            f"{PROJ_DIR}/data/empirical/{args.species}/space-fsLR_den-{args.den}_hemi-L_desc-nomedialwall.func.gii"
+        ).darrays[0].data.astype(bool)
 
     # Get hmap and alpha values
     is_null = False
@@ -243,13 +246,23 @@ if __name__ == "__main__":
             hmap = hmap[null_id, :]
 
             out_dir = out_dir + "/nulls"
-        # Otherwise assume hmap_label is a valid label
+
+        # Otherwise load hmap as normal
         else:
             hmap = load_hmap(args.hmap_label, species=args.species, trg_den=args.den)
-            num_nonmed_zeros = np.sum(np.where(hmap[medmask] == 0, True, False))
-            if num_nonmed_zeros > 0 and np.min(hmap[medmask]) == 0:
-                print(f"Warning: {num_nonmed_zeros} vertices on the heterogeneity maps have a "
-                        f"value of 0.")
+        
+        # sv2a and flumazenil have different medmasks since they were downsampled from fsaverage 164k
+        if args.hmap_label in ["sv2a", "flumazenil"] and args.parc is None:
+            medmask = np.where(hmap != 0, True, False)
+        elif args.hmap_label in ["sv2a", "flumazenil"] and args.parc is not None:
+            # Find intersection of parcellation medmask (already defined) and sv2a medmask
+            medmask_hmap = np.where(hmap != 0, True, False)
+            medmask = np.logical_and(medmask, medmask_hmap)
+        
+        num_nonmed_zeros = np.sum(np.where(hmap[medmask] == 0, True, False))
+        if num_nonmed_zeros > 0 and np.min(hmap[medmask]) == 0:
+            print(f"Warning: {num_nonmed_zeros} vertices on the heterogeneity maps have a "
+                    f"value of 0.")
 
         alpha_min, alpha_max, alpha_step = args.alpha
         alpha_num = int(abs(alpha_max - alpha_min) / alpha_step) + 1
