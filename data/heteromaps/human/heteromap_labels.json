@@ -2,7 +2,7 @@
     "heteromap_labels": {
         "myelinmap": "T1w/T2w",
         "thickness": "Cortical thickness",
-        "synapticden": "Synaptic density",
+        "sv2a": "Synaptic density",
         "odi": "ODI",
         "ndi": "NDI",
         "genel4PC1": "Layer IV",
