@@ -7,6 +7,7 @@ data/parcellations
 data/surfaces
 data/temp/
 data/nulls/
+data/heteromaps/human/*32k*
 # Setup intermediate directories to unignore files within
 !data/empirical/
 data/empirical/*
@@ -41,6 +42,7 @@ results/
 scripts/.ipynb_checkpoints/
 scripts/sandbox/
 scripts/_console.*
+scripts/model_rest/results_config.json
 .env
 **/__pycache__/
 *.ipynb

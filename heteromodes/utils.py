@@ -36,22 +36,27 @@ def load_hmap(hmap_label, species="human", trg_den="32k", data_dir=None):
 
     # Check if data_dir is provided, otherwise use the default directory
     if data_dir is None:
-        data_dir = Path(os.getenv("PROJ_DIR"), "data", "heteromaps", species)
+        PROJ_DIR = get_project_root()
+        data_dir = Path(PROJ_DIR, "data", "heteromaps", species)
     else:
         data_dir = Path(data_dir)
 
-    hmap_file = list((data_dir).glob(f"*desc-{hmap_label}*.func.gii"))
-    if len(hmap_file) == 0:
-        raise FileNotFoundError(f"No heterogeneity map found for label '{hmap_label}'.")
+    matches = list((data_dir).glob(f"*desc-{hmap_label}*den-{trg_den}*.func.gii"))
+    if matches:
+        file = str(matches[0])
+        hmap = nib.load(file).darrays[0].data
+    else:
+        raise FileNotFoundError(f"No heterogeneity map found for label '{hmap_label}' "
+                                f" and density {trg_den}.")
 
     # Extract the source density from the file name    
-    src_den = re.search(r'den-(.*?)_', str(hmap_file)).group(1)
+    # src_den = re.search(r'den-(.*?)_', str(hmap_file)).group(1)
 
     # Load the heterogeneity map and transform it to the desired density if necessary
-    if src_den == trg_den:
-        hmap = nib.load(hmap_file[0]).darrays[0].data
-    else:
-        hmap = fslr_to_fslr(hmap_file[0], trg_den, hemi="L")[0].darrays[0].data
+    # if src_den == trg_den:
+    # hmap = nib.load(hmap_file[0]).darrays[0].data
+    # else:
+    #     hmap = fslr_to_fslr(hmap_file[0], trg_den, hemi="L")[0].darrays[0].data
 
     return hmap
 

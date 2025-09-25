@@ -33,5 +33,5 @@ plt.show()
 # %% Save eiratio as gifti
 from neuromaps.images import construct_shape_gii
 
-eiratio_gii = construct_shape_gii(unmask(eiratio, medmask))
+eiratio_gii = construct_shape_gii(unmask(eiratio, medmask, val=np.nan))
 nib.save(eiratio_gii, f"{PROJ_DIR}/data/heteromaps/macaque/desc-eiratio_space-fsLR_den-4k_hemi-L.func.gii")
