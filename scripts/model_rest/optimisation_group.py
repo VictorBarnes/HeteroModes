@@ -9,7 +9,7 @@ import nibabel as nib
 from tqdm import tqdm
 from joblib import Parallel, delayed
 from neuromaps.datasets import fetch_atlas
-from heteromodes.utils import load_hmap, get_project_root, intersect_medmasks
+from heteromodes.utils import load_hmap, get_project_root
 from heteromodes.restingstate import run_model, analyze_bold, evaluate_model
 
 
@@ -252,12 +252,11 @@ if __name__ == "__main__":
             hmap = load_hmap(args.hmap_label, species=args.species, trg_den=args.den)
         
         # sv2a and flumazenil have different medmasks since they were downsampled from fsaverage 164k
-        if args.hmap_label in ["sv2a", "flumazenil"] and args.parc is None:
-            medmask = np.where(hmap != 0, True, False)
-        elif args.hmap_label in ["sv2a", "flumazenil"] and args.parc is not None:
-            # Find intersection of parcellation medmask (already defined) and sv2a medmask
+        if args.hmap_label in ["sv2a", "flumazenil"]:
+            # Find cortical indices where hmap is undefined (i.e. 0) and set these to the mean
             medmask_hmap = np.where(hmap != 0, True, False)
-            medmask = intersect_medmasks(surf, medmask, medmask_hmap)
+            undefined_verts = np.logical_and(medmask, ~medmask_hmap)  # In cortex AND hmap is zero
+            hmap[undefined_verts] = np.mean(hmap[medmask_hmap])
         
         num_nonmed_zeros = np.sum(np.where(hmap[medmask] == 0, True, False))
         if num_nonmed_zeros > 0 and np.min(hmap[medmask]) == 0:

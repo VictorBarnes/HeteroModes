@@ -65,12 +65,11 @@ def pad_sequences(sequences, val=-1):
 
     return np.array(padded_sequences)
 
-def intersect_medmasks(surf, medmask1, medmask2):
-    """Find intersection of medmasks and remove unreferenced vertices."""
+def clean_medmask(surf, medmask):
+    """Clean medmask by removing unreferenced vertices."""
     surf = check_surf(surf)
 
-    medmask1, medmask2 = np.asarray(medmask1, dtype=bool), np.asarray(medmask2, dtype=bool)
-    medmask = np.logical_and(medmask1, medmask2)
+    medmask = np.asarray(medmask, dtype=bool)
     
     # Create masked mesh to find unreferenced vertices
     v_masked = surf.vertices[medmask]
