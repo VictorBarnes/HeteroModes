@@ -7,6 +7,7 @@ data/parcellations
 data/surfaces
 data/temp/
 data/nulls/
+data/heteromaps/human/archive/
 data/heteromaps/human/*32k*
 # Setup intermediate directories to unignore files within
 !data/empirical/

@@ -86,8 +86,15 @@ if __name__ == "__main__":
         parc_file = f"{PROJ_DIR}/data/parcellations/parc-{args.parc}_space-fsLR_den-32k_hemi-L.label.gii"
         parc = nib.load(parc_file).darrays[0].data.astype(int)
 
-    medmask = nib.load(f"{out_dir}/space-fsLR_den-{args.den}_hemi-L_desc-nomedialwall.func.gii").darrays[0].data.astype(bool)
-    
+        # Define medial mask here since it depends on parcellation
+        medmask = np.where(parc != 0, True, False)
+
+    # Load medmask if not already defined (i.e. if not a parcellation)
+    if args.parc is None:
+        medmask = nib.load(
+            f"{PROJ_DIR}/data/empirical/{args.species}/space-fsLR_den-{args.den}_hemi-L_desc-nomedialwall.func.gii"
+        ).darrays[0].data.astype(bool)
+
     # Load subject IDs
     subj_ids = np.loadtxt(f"{out_dir}/{data_desc}_desc-subjects.txt", dtype=str) #[:10]  # For testing
     # This is for when we have a smaller subset of subjects than originally specified
