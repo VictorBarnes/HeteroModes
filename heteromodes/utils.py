@@ -1,9 +1,8 @@
-import os
-import re
+import trimesh
 import numpy as np
 import nibabel as nib
 from pathlib import Path
-from neuromaps.transforms import fslr_to_fslr
+from nsbtools.eigen import read_surf
 
 
 def get_project_root() -> Path:
@@ -48,16 +47,6 @@ def load_hmap(hmap_label, species="human", trg_den="32k", data_dir=None):
     else:
         raise FileNotFoundError(f"No heterogeneity map found for label '{hmap_label}' "
                                 f" and density {trg_den}.")
-
-    # Extract the source density from the file name    
-    # src_den = re.search(r'den-(.*?)_', str(hmap_file)).group(1)
-
-    # Load the heterogeneity map and transform it to the desired density if necessary
-    # if src_den == trg_den:
-    # hmap = nib.load(hmap_file[0]).darrays[0].data
-    # else:
-    #     hmap = fslr_to_fslr(hmap_file[0], trg_den, hemi="L")[0].darrays[0].data
-
     return hmap
 
 def pad_sequences(sequences, val=-1):
@@ -76,3 +65,22 @@ def pad_sequences(sequences, val=-1):
 
     return np.array(padded_sequences)
 
+def intersect_medmasks(surf, medmask1, medmask2):
+    """Find intersection of medmasks and remove unreferenced vertices."""
+    surf = read_surf(surf)
+
+    medmask1, medmask2 = np.asarray(medmask1, dtype=bool), np.asarray(medmask2, dtype=bool)
+    medmask = np.logical_and(medmask1, medmask2)
+    
+    # Create masked mesh to find unreferenced vertices
+    v_masked = surf.vertices[medmask]
+    idx_map = np.full(len(medmask), -1); idx_map[medmask] = np.arange(np.sum(medmask))
+    f_masked = idx_map[surf.faces[np.all(medmask[surf.faces], axis=1)]]
+    
+    mesh = trimesh.Trimesh(vertices=v_masked, faces=f_masked, process=False)
+    referenced = np.zeros(len(mesh.vertices), dtype=bool); referenced[mesh.faces.flatten()] = True
+    
+    if not np.all(referenced):
+        medmask[np.where(medmask)[0][~referenced]] = False
+        
+    return medmask

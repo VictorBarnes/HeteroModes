@@ -9,7 +9,7 @@ import nibabel as nib
 from tqdm import tqdm
 from joblib import Parallel, delayed
 from neuromaps.datasets import fetch_atlas
-from heteromodes.utils import load_hmap, get_project_root
+from heteromodes.utils import load_hmap, get_project_root, intersect_medmasks
 from heteromodes.restingstate import run_model, analyze_bold, evaluate_model
 
 
@@ -212,8 +212,8 @@ if __name__ == "__main__":
         if not os.path.exists(out_dir):
             os.makedirs(out_dir)
 
-        # Define string for loading empirical data
-        space_desc = f"space-fsLR_den-{args.den}_parc-{args.parc}"
+        # Define string for loading empirical data. Use parcellation downsampled from 32k
+        space_desc = f"space-fsLR_den-32k_parc-{args.parc}"
 
         # Define medial mask here since it depends on parcellation
         medmask = np.where(parc != 0, True, False)
@@ -257,7 +257,7 @@ if __name__ == "__main__":
         elif args.hmap_label in ["sv2a", "flumazenil"] and args.parc is not None:
             # Find intersection of parcellation medmask (already defined) and sv2a medmask
             medmask_hmap = np.where(hmap != 0, True, False)
-            medmask = np.logical_and(medmask, medmask_hmap)
+            medmask = intersect_medmasks(surf, medmask, medmask_hmap)
         
         num_nonmed_zeros = np.sum(np.where(hmap[medmask] == 0, True, False))
         if num_nonmed_zeros > 0 and np.min(hmap[medmask]) == 0:

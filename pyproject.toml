@@ -17,10 +17,8 @@ dependencies = [
     "scikit-learn>=1.6.1",
     "scipy>=1.13.1",
     "seaborn>=0.13.2",
+    "trimesh>=4.8.2",
 ]
-
-[tool.uv.sources]
-nsbtools = { path = "../repos/nsbtools" }
 
 [dependency-groups]
 dev = [
@@ -32,3 +30,6 @@ dev = [
     "scikit-learn>=1.6.1",
     "tqdm>=4.67.1",
 ]
+
+[tool.uv.sources]
+nsbtools = { path = "../repos/nsbtools" }
