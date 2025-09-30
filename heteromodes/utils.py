@@ -2,7 +2,7 @@ import trimesh
 import numpy as np
 import nibabel as nib
 from pathlib import Path
-from nsbtools.eigen import read_surf
+from nsbtools.eigen import check_surf
 
 
 def get_project_root() -> Path:
@@ -67,7 +67,7 @@ def pad_sequences(sequences, val=-1):
 
 def intersect_medmasks(surf, medmask1, medmask2):
     """Find intersection of medmasks and remove unreferenced vertices."""
-    surf = read_surf(surf)
+    surf = check_surf(surf)
 
     medmask1, medmask2 = np.asarray(medmask1, dtype=bool), np.asarray(medmask2, dtype=bool)
     medmask = np.logical_and(medmask1, medmask2)
