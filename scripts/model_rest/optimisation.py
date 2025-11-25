@@ -75,14 +75,15 @@ def parse_arguments():
         help="Number of parallel jobs, -1 for all CPUs (default: -1)."
     )
     parser.add_argument(
-        '--alpha', type=float, nargs=3, default=[-5, 5, 0.1], 
+        '--alpha', type=float, nargs=3, default=[-3, 3, 0.5], 
         metavar=('alpha_min', 'alpha_max', 'alpha_step'), 
         help='Alpha range: min, max, step for heterogeneity scaling.'
     )
     parser.add_argument(
         "--beta", type=float, default=[1.0], nargs="+", 
         metavar="beta_values",
-        help="Beta value(s) for scaling (single value or min/max/step)."
+        help="Beta value(s) for scaling (single value or min/max/step). This paramater "
+             "has not been systematically explored in prior work."
     )
     parser.add_argument(
         "--r", type=float, nargs="+", default=[28.9], 
@@ -105,7 +106,7 @@ def parse_arguments():
     )
     parser.add_argument(
         "--metrics", type=str, nargs='+', 
-        default=["edge_fc_corr", "node_fc_corr"], 
+        default=["edge_fc_corr", "node_fc_corr", "fcd_ks"], 
         help="Evaluation metrics (default: edge_fc_corr, node_fc_corr, fcd_ks). Note that "
              "optimizing using fcd_kw is very computationally intensive. I recommend "
              "using a high-performance computing cluster if including this metric."
@@ -118,10 +119,6 @@ def parse_arguments():
     parser.add_argument(
         "--scaling", type=str, default="sigmoid",
         help="Heterogeneity map scaling function (default: sigmoid)."
-    )
-    parser.add_argument(
-        "--nt_emp", type=int, default=600,
-        help="Number of empirical timepoints. Human: 600, macaque: 500, marmoset: 510 (default: 600)."
     )
     parser.add_argument(
         "--parc", type=str, default=None,
@@ -194,7 +191,7 @@ def model_job(params, surf, medmask, hmap, args, dt_emp, dt, tsteady, parc=None,
             n_modes=args.n_modes,
             n_runs=args.n_runs,
             dt_emp=dt_emp,
-            nt_emp=args.nt_emp,
+            nt_emp=nt_emp,
             dt_model=dt,
             tsteady=tsteady,
             parc=parc,
@@ -284,6 +281,7 @@ if __name__ == "__main__":
         args.parc = None
 
     # Species-specific parameters
+    NT_EMP = {"human": 600, "macaque": 500, "marmoset": 510}
     TR_SPECIES = {"human": 720, "macaque": 2600, "marmoset": 2000}  # ms
     DT_SPECIES = {"human": 90, "macaque": 100, "marmoset": 100}  # ms
     DATA_DESC_SPECIES = {
@@ -292,6 +290,7 @@ if __name__ == "__main__":
         "marmoset": f"mbm-v4_nsubj-{args.n_subjs}"
     }
 
+    nt_emp = NT_EMP[args.species]
     dt_emp = TR_SPECIES[args.species]
     dt = DT_SPECIES[args.species]
     data_desc = DATA_DESC_SPECIES[args.species]
@@ -434,7 +433,7 @@ if __name__ == "__main__":
         emp_outputs = {}
         emp_fc_file = (
             f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fc_"
-            f"{space_desc}_hemi-L_nt-{args.nt_emp}.h5"
+            f"{space_desc}_hemi-L_nt-{nt_emp}.h5"
         )
         with h5py.File(emp_fc_file, "r") as f:
             emp_outputs['fc'] = f['fc_group'][:]
@@ -444,7 +443,7 @@ if __name__ == "__main__":
             emp_fcd_file = (
                 f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fcd_"
                 f"{space_desc}_hemi-L_freql-{args.band_freq[0]}_freqh-{args.band_freq[1]}_"
-                f"nt-{args.nt_emp}.h5"
+                f"nt-{nt_emp}.h5"
             )
             with h5py.File(emp_fcd_file, "r") as f:
                 emp_outputs['fcd'] = f['fcd_group'][:]
@@ -515,7 +514,7 @@ if __name__ == "__main__":
         
         cv_fc_file = (
             f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fc-kfold5_"
-            f"{space_desc}_hemi-L_nt-{args.nt_emp}.h5"
+            f"{space_desc}_hemi-L_nt-{nt_emp}.h5"
         )
         with h5py.File(cv_fc_file, "r") as f:
             fcs_train = f['fc_train'][:]
@@ -530,7 +529,7 @@ if __name__ == "__main__":
             cv_fcd_file = (
                 f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fcd-kfold5_"
                 f"{space_desc}_hemi-L_freql-{args.band_freq[0]}_freqh-{args.band_freq[1]}_"
-                f"nt-{args.nt_emp}.h5"
+                f"nt-{nt_emp}.h5"
             )
             with h5py.File(cv_fcd_file, "r") as f:
                 fcds_train = f['fcd_train'][:]

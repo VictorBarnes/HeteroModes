@@ -11,6 +11,11 @@ cd HeteroModes
 pip install .
 ```
 
+For development with optional dependencies:
+```bash
+pip install -e ".[plotting,dev]"
+```
+
 ## Citing
 If you use this code in your work, please cite the following manuscript: (insert citation here)
 
@@ -18,7 +23,12 @@ If you use this code in your work, please cite the following manuscript: (insert
 The main script to run the main analyses in the manuscript is `optimisation.py`. It has several configurable parameters at the top of the script. To run a simple optimisation, you could use the following command from `scripts/model_rest/`:
 
 ```bash
-python optimisation.py --species human --id 1 --hmap_label myelinmap  --alpha -3 3 0.1 --n_runs 1 --evaluation fit --n_subj 10 --metrics edge_fc_corr node_fc_corr 
+python optimisation.py --species human --id 0 --hmap_label myelinmap  --alpha -3 3 0.5 --n_runs 1 --evaluation fit --n_subj 10 --metrics edge_fc_corr node_fc_corr 
 ```
 
-This command runs an optimisation for the human model, with an id of 1 (used to index different optimization runs), using the myelin map as the heterogeneity map, with alpha values of ranging from [-3, 3] with a step of 0.1, with 10 runs per model, evaluating the model by fitting it to 10 subjects using edge-level and node-level functional connectivity correlation as metrics.
+This command runs an optimisation for the human model, with an id of 1 (used to index different optimization runs), using the myelin map as the heterogeneity map, with alpha values of ranging from [-3, 3] with a step of 0.1, with 10 runs per model, evaluating the model by fitting it to 10 subjects using edge-level and node-level functional connectivity correlation as metrics. 
+
+### Important usage notes
+In the example above we don't optimize using FCD KS metric as it is very computationally intensive. If you wish to include this metric, please ensure you have access to a high-performance computing cluster. 
+
+We have only updated empirical data for 10 subjects in this repository to reduce size. Therefore, `n_subj` will need to be set to 10.
