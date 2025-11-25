@@ -3,5 +3,11 @@
         "myelinmap": "T1w/T2w",
         "thickness": "Cortical thickness",
         "nissl": "Nissl"
+    },
+
+    "heteromap_files": {
+        "myelinmap": "space-fsLR_den-4k_hemi-L_desc-myelinmap.func.gii",
+        "thickness": "space-fsLR_den-4k_hemi-L_desc-thickness.func.gii",
+        "nissl": "space-fsLR_den-4k_hemi-L_desc-nissl.func.gii"
     }
 }

@@ -3,12 +3,14 @@ build/
 # Ignore most of the data directory
 data/archive/
 data/cache/
-data/parcellations
-data/surfaces
+data/parcellations/
+data/surfaces/
 data/temp/
+data/test/
 data/nulls/
 data/heteromaps/human/archive/
 data/heteromaps/human/*32k*
+data/heteromaps/macaque/v2/
 # Setup intermediate directories to unignore files within
 !data/empirical/
 data/empirical/*

@@ -9,100 +9,100 @@ import matplotlib as mpl
 import seaborn as sns
 from neuromaps.datasets import fetch_atlas
 from nsbtools.utils import unmask
-from nsbtools.plotting import plot_brain, plot_heatmap
+from nsbtools.plotting import plot_surf, plot_heatmap
+from heteromodes.utils import get_project_root
 
 sns.set_theme(style="white")
-PROJ_DIR = "/fs04/kg98/vbarnes/HeteroModes"
+PROJ_DIR = get_project_root()  # Project root directory
 
 # %%
 species = "macaque"
-id = 3
+ids = {3: '3'}
 evaluation = "fit"
 
-if species == "human":
-    hmap_labels = {
-        "None": "Homogeneous",
-        "myelinmap": "T1w/T2w",
-        "thickness": "Cortical thickness",
-        "synapticden": "Synaptic density",
-        "odi": "ODI",
-        "ndi": "NDI",
-        "genel4PC1": "Layer IV",
-        "eiratio1.2": "E:I ratio",
-        "megtimescale": "MEG timescale"
-    }
-elif species == "macaque":
-    hmap_labels = {
-        "None": "Homogeneous",
-        "myelinmap": "T1w/T2w",
-        "thickness": "Cortical thickness",
-        "ampa": "AMPA",
-        "cgp5": "GABA-B",
-        "damp": "M3",
-        "dpat": "5HT1A",
-        "dpmg": "Adenosine 1",
-        "exh": "average excitatory",
-        "flum": "GABA-A/BZ",
-        "inh": "average inhibitory",
-        "kain": "kainate",
-        "keta": "5HT2",
-        "mk80": "NMDA",
-        "mod": "average modulatory",
-        "musc": "GABA-A",
-        "oxot": "M2",
-        "pire": "M1",
-        "praz": "alpha1",
-        "uk14": "alpha2"
-    }
-elif species == "marmoset":
-    hmap_labels = {
-        "None": "Homogeneous",
-        "myelinmap": "T1w/T2w",
-        "thickness": "Cortical thickness",
-        "nissl": "Nissl"
-    }
-
-results_dir = f"{PROJ_DIR}/results/{species}/model_rest/group/id-{id}/{evaluation}"
+with open(f"{PROJ_DIR}/data/heteromaps/{species}/heteromap_labels.json", "r") as f:
+    hmap_labels = json.load(f)["heteromap_labels"]
+hmap_labels["None"] = "Homogeneous"
 
 # %%
-edge_fc_xval, node_fc_xval, fcd_ks_xval, fc_matrices_xval, fcd_xval = [], [], [], [], []
-alpha_best_xval, beta_best_xval, r_best_xval, gamma_best_xval = {}, {}, {}, {}
+# Initialize lists to store data for DataFrames
+edge_fc_data, node_fc_data, fcd_data, alpha_data, r_data = [], [], [], [], []
+
+for id in ids.keys():
+    results_dir = f"{PROJ_DIR}/results/{species}/model_rest/group/id-{id}/{evaluation}"
+    
+    # Load metrics from config
+    with open(f"{PROJ_DIR}/results/{species}/model_rest/group/id-{id}/config.json", "r") as f:
+        metrics = json.load(f)["metrics"].split(" ")
+    
+    for hmap_label in hmap_labels.keys():
+        file = f"{results_dir}/{hmap_label}/best_model.h5"
+
+        if not os.path.exists(file):
+            print(f"File {file} does not exist, skipping...")
+            continue
+
+        with h5py.File(file, 'r+') as f:
+            # Extract metric values (flatten to handle cross-validation splits)
+            edge_fc_values = np.array(f['results']['edge_fc_corr']).flatten()
+            node_fc_values = np.array(f['results']['node_fc_corr']).flatten()
+            fcd_values = np.array(f['results']['fcd_ks']).flatten()
+            
+            # Extract parameter values
+            alpha_values = np.array(f['alpha']).flatten()
+            r_values = np.array(f['r']).flatten()
+            
+            # Add data to lists (one row per cross-validation split)
+            for i in range(len(edge_fc_values)):
+                edge_fc_data.append({'hmap_label': hmap_label, 'id': id, 'value': edge_fc_values[i]})
+                node_fc_data.append({'hmap_label': hmap_label, 'id': id, 'value': node_fc_values[i]})
+                fcd_data.append({'hmap_label': hmap_label, 'id': id, 'value': fcd_values[i]})
+                alpha_data.append({'hmap_label': hmap_label, 'id': id, 'value': alpha_values[i]})
+                r_data.append({'hmap_label': hmap_label, 'id': id, 'value': r_values[i]})
+
+# Create DataFrames
+edge_fc_df = pd.DataFrame(edge_fc_data)
+node_fc_df = pd.DataFrame(node_fc_data)
+fcd_df = pd.DataFrame(fcd_data)
+alpha_df = pd.DataFrame(alpha_data)
+r_df = pd.DataFrame(r_data)
+
+# Create combined DataFrame
+combined_data = []
+for _, row in edge_fc_df.iterrows():
+    hmap_label, id_val = row['hmap_label'], row['id']
+    
+    # Get corresponding values from other metrics
+    edge_fc_val = row['value'] if "edge_fc_corr" in metrics else 0
+    node_fc_val = node_fc_df[(node_fc_df['hmap_label'] == hmap_label) & (node_fc_df['id'] == id_val)]['value'].iloc[0] if "node_fc_corr" in metrics else 0
+    fcd_val = fcd_df[(fcd_df['hmap_label'] == hmap_label) & (fcd_df['id'] == id_val)]['value'].iloc[0] if "fcd_ks" in metrics else 0
+    
+    combined_val = edge_fc_val + node_fc_val + (1 - fcd_val if "fcd_ks" in metrics else 0)
+    combined_data.append({'hmap_label': hmap_label, 'id': id_val, 'value': combined_val})
+
+combined_df = pd.DataFrame(combined_data)
+
+#%%
+# Print mean and std for each metric and heterogeneity map
 for hmap_label in hmap_labels.keys():
-    file = f"{results_dir}/{hmap_label}/best_model.h5"
-    if not os.path.exists(file):
-        print(f"File {file} does not exist, skipping...")
-        continue
+    print(f"Heterogeneity map: {hmap_labels[hmap_label]}")
+    if "edge_fc_corr" in metrics:
+        mean_edge_fc = edge_fc_df[edge_fc_df['hmap_label'] == hmap_label]['value'].mean()
+        std_edge_fc = edge_fc_df[edge_fc_df['hmap_label'] == hmap_label]['value'].std()
+        print(f"  Edge-level FC: Mean = {mean_edge_fc:.3f}, Std = {std_edge_fc:.3f}")
+    if "node_fc_corr" in metrics:
+        mean_node_fc = node_fc_df[node_fc_df['hmap_label'] == hmap_label]['value'].mean()
+        std_node_fc = node_fc_df[node_fc_df['hmap_label'] == hmap_label]['value'].std()
+        print(f"  Node-level FC: Mean = {mean_node_fc:.3f}, Std = {std_node_fc:.3f}")
+    if "fcd_ks" in metrics:
+        mean_fcd = fcd_df[fcd_df['hmap_label'] == hmap_label]['value'].mean()
+        std_fcd = fcd_df[fcd_df['hmap_label'] == hmap_label]['value'].std()
+        print(f"  FCD KS: Mean = {mean_fcd:.3f}, Std = {std_fcd:.3f}")
+    mean_combined = combined_df[combined_df['hmap_label'] == hmap_label]['value'].mean()
+    std_combined = combined_df[combined_df['hmap_label'] == hmap_label]['value'].std()
+    print(f"  Combined metric: Mean = {mean_combined:.3f}, Std = {std_combined:.3f}")
+    print()
 
-    with h5py.File(file, 'r+') as f:
-        edge_fc_xval.append(np.array(f['results']['edge_fc_corr']).flatten())
-        node_fc_xval.append(np.array(f['results']['node_fc_corr']).flatten())
-        fcd_ks_xval.append(np.array(f['results']['fcd_ks']).flatten())
-
-        alpha_best_xval[hmap_label] = np.array(f['alpha'])
-        beta_best_xval[hmap_label] = np.array(f['beta'])
-        r_best_xval[hmap_label] = np.array(f['r'])
-        gamma_best_xval[hmap_label] = np.array(f['gamma'])
-
-        fc_matrices_xval.append(f['fc'][:])
-        fcd_xval.append(f['fcd'][:])
-
-with open(f"{PROJ_DIR}/results/{species}/model_rest/group/id-{id}/config.json", "r") as f:
-    metrics = json.load(f)["metrics"].split(" ")
-    # metrics = ["edge_fc_corr", "node_fc_corr"]
-
-combined = np.zeros_like(edge_fc_xval)
-if "edge_fc_corr" in metrics:
-    combined += np.array(edge_fc_xval)
-if "node_fc_corr" in metrics:
-    combined += np.array(node_fc_xval)
-if "fcd_ks" in metrics:
-    combined += 1 - np.array(fcd_ks_xval)
-
-print(f"alpha_best: {alpha_best_xval}")
-print(f"r best: {r_best_xval}")
-print(f"beta best: {beta_best_xval}")
-print(f"gamma best: {gamma_best_xval}")
-print(np.shape(fc_matrices_xval), np.shape(fcd_xval))
 
 # %%
 # Set plotting defaults
@@ -114,27 +114,23 @@ plt.rcParams['xtick.bottom'] = True
 plt.rcParams['ytick.left'] = True
 plt.rcParams['figure.dpi'] = 300
 
-fig, axs = plt.subplots(1, len(metrics)+1, figsize=(len(metrics)*9, 7))
+fig, axs = plt.subplots(1, len(metrics)+1, figsize=(len(metrics)*9, 6))
 if len(metrics) == 1:
     axs = [axs]
 
-pnts = np.linspace(0, np.pi * 2, 24)
-circ = np.c_[np.sin(pnts) / 2, -np.cos(pnts) / 2]
-vert = np.r_[circ, circ[::-1] * .7]
-open_circle = mpl.path.Path(vert)
-
-# Sort the hmaps by lowest combined score
-sorted_inds = np.argsort(combined.mean(axis=1))
+# Sort the hmaps by mean combined score
+combined_means = combined_df.groupby('hmap_label')['value'].mean()
+sorted_hmap_labels = combined_means.sort_values().index.tolist()
+sorteed_plotting_labels = [hmap_labels[label] for label in sorted_hmap_labels]
 
 # Plot edge-level fc
 i = 0
 if "edge_fc_corr" in metrics:
-    sns.barplot(data=np.array(edge_fc_xval)[sorted_inds, :].T, ax=axs[i], errorbar="sd")
-    # sns.stripplot(data=edge_fc_xval, ax=axs[i], marker=open_circle, size=4, alpha=0.5, zorder=1, linewidth=1)
-    # sns.violinplot(data=np.array(edge_fc_xval)[sorted_inds, :].T, ax=axs[i], density_norm="count", fill=False, linewidth=3, inner="box", inner_kws={"box_width": 5, "whis_width": 1, "color": "black"})
-    # sns.violinplot(data=np.array(edge_fc_xval)[sorted_inds, :].T, ax=axs[i], density_norm="count", inner="box")
-    axs[i].set_xticks(ticks=range(len(list(hmap_labels.values()))))
-    axs[i].set_xticklabels(labels=[list(hmap_labels.values())[i] for i in sorted_inds], ha='right', fontsize=15)
+    sns.barplot(data=edge_fc_df, x='hmap_label', y='value', hue="id", order=sorted_hmap_labels, ax=axs[i], errorbar="sd", palette="deep")
+    axs[i].set_xticks(ticks=range(len(list(hmap_labels))), labels=[hmap_labels[label] for label in sorted_hmap_labels], ha="right")
+    # Update legend labels
+    handles, labels = axs[i].get_legend_handles_labels()
+    axs[i].legend(handles, [ids[int(label)] for label in labels])
     axs[i].tick_params(axis='x', labelrotation=45)
     axs[i].tick_params(axis='y', labelsize=fs_ax)
     axs[i].set_title("Edge-level FC fit", fontsize=fs_title)
@@ -143,19 +139,16 @@ if "edge_fc_corr" in metrics:
     axs[i].spines['top'].set_visible(False)
     axs[i].spines['right'].set_visible(False)
     axs[i].set_ylim(0, 1)
-    # for i, violin in enumerate(axs[0].collections[:len(hmap_labels)]):  # ::2 to skip the body parts, focusing on the borders
-    #     violin.set_edgecolor(sns.color_palette()[i])
-    #     violin.set_linewidth(2)
 
     i += 1
 
 # Plot node-level fc
 if "node_fc_corr" in metrics:
-    sns.barplot(data=np.array(node_fc_xval)[sorted_inds, :].T, ax=axs[i], errorbar="sd")
-    # sns.stripplot(data=node_fc_xval, ax=axs[i], marker=open_circle, size=4, alpha=0.5, zorder=1, linewidth=1)
-    # sns.violinplot(data=np.array(node_fc_xval)[sorted_inds, :].T, ax=axs[i], density_norm="count", fill=False, linewidth=3, inner="box", inner_kws={"box_width": 5, "whis_width": 1, "color": "black"})
-    # sns.violinplot(data=np.array(node_fc_xval)[sorted_inds, :].T, ax=axs[i], density_norm="count", inner="box")
-    axs[i].set_xticks(ticks=range(len(list(hmap_labels.values()))), labels=[list(hmap_labels.values())[i] for i in sorted_inds], ha='right', fontsize=15)
+    sns.barplot(data=node_fc_df, x='hmap_label', y='value', hue="id", order=sorted_hmap_labels, ax=axs[i], errorbar="sd", palette="deep")
+    axs[i].set_xticks(ticks=range(len(list(hmap_labels))), labels=[hmap_labels[label] for label in sorted_hmap_labels], ha="right")
+    # Update legend labels
+    handles, labels = axs[i].get_legend_handles_labels()
+    axs[i].legend(handles, [ids[int(label)] for label in labels])
     axs[i].tick_params(axis='x', labelrotation=45)
     axs[i].tick_params(axis='y', labelsize=fs_ax)
     axs[i].set_title("Node-level FC fit", fontsize=fs_title)
@@ -167,13 +160,17 @@ if "node_fc_corr" in metrics:
 
     i += 1
 
-# Plot phase
+# Plot FCD
 if "fcd_ks" in metrics:
-    sns.barplot(data=1-np.array(fcd_ks_xval)[sorted_inds, :].T, ax=axs[i], errorbar="sd")
-    # sns.stripplot(data=fcd_ks_xval, ax=axs[i], marker=open_circle, size=4, alpha=0.5, zorder=1, linewidth=1)
-    # sns.violinplot(data=np.array(fcd_ks_xval)[sorted_inds, :].T, ax=axs[i], density_norm="count", fill=False, linewidth=3, inner="box", inner_kws={"box_width": 5, "whis_width": 1, "color": "black"})
-    # sns.violinplot(data=np.array(fcd_ks_xval)[sorted_inds, :].T, ax=axs[i], density_norm="count", inner="box")
-    axs[i].set_xticks(ticks=range(len(list(hmap_labels.values()))), labels=[list(hmap_labels.values())[i] for i in sorted_inds], ha='right', fontsize=15)
+    # Create a copy with inverted FCD values for plotting
+    fcd_plot_df = fcd_df.copy()
+    fcd_plot_df['value'] = 1 - fcd_plot_df['value']
+    
+    sns.barplot(data=fcd_plot_df, x='hmap_label', y='value', hue="id", order=sorted_hmap_labels, ax=axs[i], errorbar="sd", palette="deep")
+    axs[i].set_xticks(ticks=range(len(list(hmap_labels))), labels=[hmap_labels[label] for label in sorted_hmap_labels], ha="right")
+    # Update legend labels
+    handles, labels = axs[i].get_legend_handles_labels()
+    axs[i].legend(handles, [ids[int(label)] for label in labels])
     axs[i].tick_params(axis='x', labelrotation=45)
     axs[i].tick_params(axis='y', labelsize=fs_ax)
     axs[i].set_title("FCD fit", fontsize=fs_title)
@@ -186,12 +183,11 @@ if "fcd_ks" in metrics:
     i += 1
 
 # Plot combined metric
-# combined = np.array(edge_fc_xval) + np.array(node_fc_xval) + np.array(phase_xval)
-sns.barplot(data=combined[sorted_inds, :].T, ax=axs[i], errorbar="sd")
-# sns.stripplot(data=combined.T, ax=axs[i], marker=open_circle, size=4, alpha=0.5, zorder=1, linewidth=1)
-# sns.violinplot(data=combined[sorted_inds, :].T, ax=axs[i], density_norm="count", fill=False, linewidth=3, inner="box", inner_kws={"box_width": 5, "whis_width": 1, "color": "black"})
-# sns.violinplot(data=combined[sorted_inds, :].T, ax=axs[i], density_norm="count", inner="box")
-axs[i].set_xticks(ticks=range(len(list(hmap_labels.values()))), labels=[list(hmap_labels.values())[i] for i in sorted_inds], ha='right', fontsize=15)
+sns.barplot(data=combined_df, x='hmap_label', y='value', hue="id", order=sorted_hmap_labels, ax=axs[i], errorbar="sd", palette="deep")
+axs[i].set_xticks(ticks=range(len(list(hmap_labels))), labels=[hmap_labels[label] for label in sorted_hmap_labels], ha="right")
+# Update legend labels
+handles, labels = axs[i].get_legend_handles_labels()
+axs[i].legend(handles, [ids[int(label)] for label in labels])
 axs[i].tick_params(axis='x', labelrotation=45)
 axs[i].tick_params(axis='y', labelsize=fs_ax)
 axs[i].set_title("Overall fit", fontsize=fs_title)
@@ -201,6 +197,38 @@ axs[i].spines['top'].set_visible(False)
 axs[i].spines['right'].set_visible(False)
 axs[i].set_ylim(0, 2.25)
 
-plt.suptitle(f"Model fit results for {species} (id={id})", fontsize=fs_title+5)
 plt.tight_layout()
-plt.show()
+# plt.show()
+
+#%%
+# Plot alpha and r parameters
+fig, axs = plt.subplots(1, 2, figsize=(12, 6))
+
+sns.barplot(data=alpha_df, x='hmap_label', y='value', hue="id", order=sorted_hmap_labels, ax=axs[0], palette="deep")
+axs[0].set_xticks(ticks=range(len(list(hmap_labels))), labels=[hmap_labels[label] for label in sorted_hmap_labels], ha="right")
+# Update legend labels
+handles, labels = axs[0].get_legend_handles_labels()
+axs[0].legend(handles, [ids[int(label)] for label in labels])
+axs[0].tick_params(axis='x', labelrotation=45)
+axs[0].tick_params(axis='y', labelsize=fs_ax)
+axs[0].set_title(r"$\alpha$", fontsize=fs_title)
+axs[0].set_xlabel("Heterogeneity map", fontsize=fs_ax)
+axs[0].spines['top'].set_visible(False)
+axs[0].spines['right'].set_visible(False)
+
+sns.barplot(data=r_df, x='hmap_label', y='value', hue="id", order=sorted_hmap_labels, ax=axs[1], palette="deep")
+axs[1].set_xticks(ticks=range(len(list(hmap_labels))), labels=[hmap_labels[label] for label in sorted_hmap_labels], ha="right")
+# Update legend labels
+handles, labels = axs[1].get_legend_handles_labels()
+axs[1].legend(handles, [ids[int(label)] for label in labels])
+axs[1].tick_params(axis='x', labelrotation=45)
+axs[1].tick_params(axis='y', labelsize=fs_ax)
+axs[1].set_title(r"$r_s$", fontsize=fs_title)
+axs[1].set_xlabel("Heterogeneity map", fontsize=fs_ax)
+axs[1].set_ylabel("mm", fontsize=fs_ax)
+# axs[1].set_ylim([15, 20])
+axs[1].spines['top'].set_visible(False)
+axs[1].spines['right'].set_visible(False)
+
+plt.tight_layout()
+# plt.show()

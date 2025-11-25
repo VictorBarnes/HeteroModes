@@ -1,9 +1,7 @@
-import trimesh
+import json
 import numpy as np
 import nibabel as nib
 from pathlib import Path
-from nsbtools.eigen import check_surf
-
 
 def get_project_root() -> Path:
     current = Path(__file__).resolve()
@@ -40,13 +38,16 @@ def load_hmap(hmap_label, species="human", trg_den="32k", data_dir=None):
     else:
         data_dir = Path(data_dir)
 
-    matches = list((data_dir).glob(f"*desc-{hmap_label}*den-{trg_den}*.func.gii"))
-    if matches:
-        file = str(matches[0])
-        hmap = nib.load(file).darrays[0].data
+    config_file = data_dir / "heteromap_labels.json"
+    with open(config_file, "r") as f:
+        hetero_file = json.load(f).get("heteromap_files", {}).get(hmap_label, None)
+
+    if hetero_file is not None:
+        hmap = nib.load(data_dir / hetero_file).darrays[0].data
     else:
-        raise FileNotFoundError(f"No heterogeneity map found for label '{hmap_label}' "
-                                f" and density {trg_den}.")
+        raise FileNotFoundError(f"No heterogeneity map file specified for label "
+                                f"'{hmap_label}' in {config_file}.")
+        
     return hmap
 
 def pad_sequences(sequences, val=-1):
@@ -64,22 +65,3 @@ def pad_sequences(sequences, val=-1):
     ]
 
     return np.array(padded_sequences)
-
-def clean_medmask(surf, medmask):
-    """Clean medmask by removing unreferenced vertices."""
-    surf = check_surf(surf)
-
-    medmask = np.asarray(medmask, dtype=bool)
-    
-    # Create masked mesh to find unreferenced vertices
-    v_masked = surf.vertices[medmask]
-    idx_map = np.full(len(medmask), -1); idx_map[medmask] = np.arange(np.sum(medmask))
-    f_masked = idx_map[surf.faces[np.all(medmask[surf.faces], axis=1)]]
-    
-    mesh = trimesh.Trimesh(vertices=v_masked, faces=f_masked, process=False)
-    referenced = np.zeros(len(mesh.vertices), dtype=bool); referenced[mesh.faces.flatten()] = True
-    
-    if not np.all(referenced):
-        medmask[np.where(medmask)[0][~referenced]] = False
-        
-    return medmask

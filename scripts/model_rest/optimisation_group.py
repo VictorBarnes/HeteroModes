@@ -63,7 +63,7 @@ def parse_arguments():
                         help="The parcellation to use. Defaults to None (no parcellation).")
     return parser.parse_args()
 
-def model_job(params, surf, medmask, hmap, args, dt_emp, dt, tsteady, parc=None):
+def model_job(params, surf, medmask, hmap, args, dt_emp, dt, tsteady, parc=None, out_dir=None):
     """
     Run model simulation and analyze BOLD data in one step.
     
@@ -80,10 +80,7 @@ def model_job(params, surf, medmask, hmap, args, dt_emp, dt, tsteady, parc=None)
     """
     # If model outpts already exist then load them ('fc' and 'fcd')
     out_file = (
-        f"{PROJ_DIR}/results/{args.species}/model_rest/group/id-{args.id}/{args.evaluation}/"
-        f"{args.hmap_label if args.hmap_label is not None else 'None'}/"
-        f"{args.parc + '/' if args.parc else ''}"
-        f"model_alpha-{params[0]:.1f}_r-{params[1]:.1f}_gamma-{params[2]:.3f}_beta-{params[3]:.1f}.h5"
+        f"{out_dir}/model_alpha-{params[0]:.1f}_r-{params[1]:.1f}_gamma-{params[2]:.3f}_beta-{params[3]:.1f}.h5"
     )
     if os.path.exists(out_file):
         print(f"Model already exists. Loading model outputs from {out_file}")
@@ -194,8 +191,6 @@ if __name__ == "__main__":
     tsteady = 5 * 1e4  # burn time to remove transient effects (ms)
 
     out_dir = f'{PROJ_DIR}/results/{args.species}/model_rest/group/id-{args.id}/{args.evaluation}/{args.hmap_label}'
-    if not os.path.exists(out_dir):
-        os.makedirs(out_dir)
 
     # Check if parcellation is provided
     if args.parc is not None:
@@ -207,10 +202,6 @@ if __name__ == "__main__":
         parc = nib.load(
             f"{PROJ_DIR}/data/parcellations/parc-{args.parc}_space-fsLR_den-{args.den}_hemi-L.label.gii"
         ).darrays[0].data.astype(int)
-
-        out_dir = f"{out_dir}/parc-{args.parc}"
-        if not os.path.exists(out_dir):
-            os.makedirs(out_dir)
 
         # Define string for loading empirical data. Use parcellation downsampled from 32k
         space_desc = f"space-fsLR_den-32k_parc-{args.parc}"
@@ -241,22 +232,29 @@ if __name__ == "__main__":
         # If hmap_label is null, load null map
         if args.hmap_label[:4] == "null":
             is_null = True
-            null_id = int(args.hmap_label.split('-')[1])
+            split = args.hmap_label.split('-')  # Format: null-{hmap_label}-{null_id}
+            args.hmap_label = split[1]  # Update hmap_label to actual label
+            null_id = int(split[2])
             hmap = np.load(f"{PROJ_DIR}/data/nulls/data-{args.hmap_label}_{space_desc}_hemi-L_nmodes-500_nnulls-1000_nulls_resample-True.npy")
             hmap = hmap[null_id, :]
 
-            out_dir = out_dir + "/nulls"
+            out_dir = f'{PROJ_DIR}/results/{args.species}/model_rest/group/id-{args.id}/{args.evaluation}/{args.hmap_label}/nulls/null-{null_id}'
 
         # Otherwise load hmap as normal
         else:
             hmap = load_hmap(args.hmap_label, species=args.species, trg_den=args.den)
+
+        # Clip extreme values for numerical stability
+        p_lower = np.percentile(hmap[medmask], 2)
+        p_upper = np.percentile(hmap[medmask], 98)
+        hmap = np.clip(hmap, p_lower, p_upper)
         
-        # sv2a and flumazenil have different medmasks since they were downsampled from fsaverage 164k
-        if args.hmap_label in ["sv2a", "flumazenil"]:
-            # Find cortical indices where hmap is undefined (i.e. 0) and set these to the mean
-            medmask_hmap = np.where(hmap != 0, True, False)
-            undefined_verts = np.logical_and(medmask, ~medmask_hmap)  # In cortex AND hmap is zero
-            hmap[undefined_verts] = np.mean(hmap[medmask_hmap])
+        # sv2a has different medmaska since it was downsampled from fsaverage 164k
+        # if args.hmap_label == "sv2a":
+        #     # Find cortical indices where hmap is undefined (i.e. 0) and set these to the mean
+        #     medmask_hmap = ~np.isnan(hmap)
+        #     undefined_verts = np.logical_and(medmask, ~medmask_hmap)  # In cortex AND hmap is zero
+        #     hmap[undefined_verts] = np.mean(hmap[medmask_hmap])
         
         num_nonmed_zeros = np.sum(np.where(hmap[medmask] == 0, True, False))
         if num_nonmed_zeros > 0 and np.min(hmap[medmask]) == 0:
@@ -276,6 +274,10 @@ if __name__ == "__main__":
     if len(param_combs) == 1:
         raise ValueError("At least two parameter combinations are required for optimisation.")
 
+    # Create output directory
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+
     # Run all models (i.e. for all parameter combinations) and store outputs in cache
     print_heading(f"Running {args.hmap_label} model for {len(param_combs)} parameter combinations...")
     print(f"alpha: {alpha_vals}\nr: {r_vals}\ngamma: {gamma_vals}\nbeta: {beta_vals}\n")
@@ -289,7 +291,8 @@ if __name__ == "__main__":
             dt_emp=dt_emp,
             dt=dt,
             tsteady=tsteady,
-            parc=parc if args.parc is not None else None
+            parc=parc if args.parc is not None else None,
+            out_dir=out_dir
         ) for params in tqdm(param_combs, desc="Running models")
     )
 
@@ -322,23 +325,24 @@ if __name__ == "__main__":
         )
 
         # Save results for each model
-        for i in range(len(param_combs)):
-            results_i = {}
-            for metric in args.metrics:
-                results_i[metric] = results[i].get(metric, np.nan)
+        if not is_null:
+            for i in range(len(param_combs)):
+                results_i = {}
+                for metric in args.metrics:
+                    results_i[metric] = results[i].get(metric, np.nan)
 
-            out_file = (
-                f"{out_dir}/model_alpha-{param_combs[i][0]:.1f}_"
-                f"r-{param_combs[i][1]:.1f}_gamma-{param_combs[i][2]:.3f}_"
-                f"beta-{param_combs[i][3]:.1f}.h5"
-            )
-            with h5py.File(out_file, "w") as f:
-                f.create_dataset('fc', data=model_outputs[i].get('fc', np.nan))
-                f.create_dataset('fcd', data=model_outputs[i].get('fcd', np.nan))
+                out_file = (
+                    f"{out_dir}/model_alpha-{param_combs[i][0]:.1f}_"
+                    f"r-{param_combs[i][1]:.1f}_gamma-{param_combs[i][2]:.3f}_"
+                    f"beta-{param_combs[i][3]:.1f}.h5"
+                )
+                with h5py.File(out_file, "w") as f:
+                    f.create_dataset('fc', data=model_outputs[i].get('fc', np.nan))
+                    f.create_dataset('fcd', data=model_outputs[i].get('fcd', np.nan))
 
-                group = f.create_group('results')
-                for key, value in results_i.items():
-                    group.create_dataset(key, data=value)
+                    group = f.create_group('results')
+                    for key, value in results_i.items():
+                        group.create_dataset(key, data=value)
 
         # Combine results to find the best model
         combined = [
