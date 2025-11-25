@@ -77,8 +77,6 @@ den=$(read_json '.den')
 metrics=$(read_json '.metrics')
 band_freq=$(read_json '.band_freq')
 scaling=$(read_json '.scaling')
-phase_type=$(read_json '.phase_type')
-n_comps=$(read_json '.n_comps')
 nt_emp=$(read_json '.nt_emp')
 parc=$(read_json '.parc')
 
@@ -98,8 +96,6 @@ echo "metrics: $metrics"
 echo "band_freq: $band_freq"
 echo "evaluation: $evaluation"
 echo "scaling: $scaling"
-echo "phase_type: $phase_type"
-echo "n_comps: $n_comps"
 echo "nt_emp: $nt_emp"
 echo "species: $species"
 echo "parc: $parc"
@@ -146,8 +142,6 @@ if [ "$running_in_slurm" = true ]; then
         --band_freq $band_freq \
         --evaluation "$evaluation" \
         --scaling "$scaling" \
-        --phase_type "$phase_type" \
-        --n_comps "$n_comps" \
         --nt_emp "$nt_emp" \
         --species "$species" \
         --parc "$parc"
@@ -178,8 +172,6 @@ else
             --band_freq $band_freq \
             --evaluation "$evaluation" \
             --scaling "$scaling" \
-            --phase_type "$phase_type" \
-            --n_comps "$n_comps" \
             --nt_emp "$nt_emp" \
             --species "$species" \
             --parc "$parc"

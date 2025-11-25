@@ -29,7 +29,7 @@ def run_model(
     nt_emp=1200, 
     dt_emp=720, 
     dt_model=90, 
-    tsteady=0, 
+    tsteady=500, 
     eig_method="orthogonal", 
     parc=None
 ):
@@ -71,8 +71,8 @@ def run_model(
         Empirical sampling interval in milliseconds.
     dt_model : float, default=90
         Model simulation time step in milliseconds.
-    tsteady : float, default=0
-        Steady-state period to discard at start (milliseconds).
+    tsteady : int, default=500
+        Number of initial timepoints to discard as steady-state burn-in.
     eig_method : str, default="orthogonal"
         Eigenmode decomposition method.
     parc : array-like, optional
@@ -88,7 +88,7 @@ def run_model(
     # Initialize eigenmode solver with model parameters
     try:
         solver = EigenSolver(
-            surf=surf, medmask=medmask, hetero=hetero, n_modes=n_modes, 
+            surf=surf, mask=medmask, hetero=hetero, n_modes=n_modes, 
             alpha=alpha, beta=beta, r=r, gamma=gamma, scaling=scaling,
             lump=lump, smoothit=smoothit
         )
@@ -100,7 +100,7 @@ def run_model(
         raise
 
     # Calculate total model timepoints including steady-state period
-    nt_model = int(nt_emp * dt_emp / dt_model + tsteady // dt_model)
+    nt_model = int(nt_emp * dt_emp / dt_model) + tsteady
 
     # Determine output dimensions (vertex-wise or parcellated)
     n_regions = solver.n_verts if parc is None else len(np.unique(parc[medmask]))
@@ -114,8 +114,7 @@ def run_model(
         ).astype(np.float32)
         
         # Remove steady-state period
-        tsteady_ind = np.abs(solver.t - tsteady).argmin()
-        bold_i = bold_i[:, tsteady_ind:]
+        bold_i = bold_i[:, tsteady:]
         
         # Downsample to empirical sampling rate
         downsample_factor = int(dt_emp // dt_model)

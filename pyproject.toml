@@ -3,7 +3,7 @@ name = "heteromodes"
 version = "0.1.0"
 description = "Toolbox for simulating and analyzing heterogeneous wave dynamics based on neural field theory."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "brainspace>=0.1.20",
     "fbpca>=1.0",
@@ -14,6 +14,7 @@ dependencies = [
     "numpy>=2.0.2",
     "scipy>=1.13.1",
     "nsbtools",
+    "setuptools>=80.9.0",
 ]
 
 [project.optional-dependencies]

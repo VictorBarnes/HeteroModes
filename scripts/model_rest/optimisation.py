@@ -41,6 +41,10 @@ def parse_arguments():
         description="Model resting-state fMRI BOLD data and evaluate against empirical data."
     )
     parser.add_argument(
+        "--species", type=str, default="human",
+        help="Species: 'human', 'macaque', or 'marmoset' (default: human)."
+    )
+    parser.add_argument(
         "--id", type=str, default=0, 
         help="Run ID for saving outputs."
     )
@@ -101,8 +105,10 @@ def parse_arguments():
     )
     parser.add_argument(
         "--metrics", type=str, nargs='+', 
-        default=["edge_fc_corr", "node_fc_corr", "fcd_ks"], 
-        help="Evaluation metrics (default: edge_fc_corr, node_fc_corr, fcd_ks)."
+        default=["edge_fc_corr", "node_fc_corr"], 
+        help="Evaluation metrics (default: edge_fc_corr, node_fc_corr, fcd_ks). Note that "
+             "optimizing using fcd_kw is very computationally intensive. I recommend "
+             "using a high-performance computing cluster if including this metric."
     )
     parser.add_argument(
         "--evaluation", type=str, choices=["fit", "crossval"], 
@@ -114,20 +120,8 @@ def parse_arguments():
         help="Heterogeneity map scaling function (default: sigmoid)."
     )
     parser.add_argument(
-        "--phase_type", type=str, default="cpc1",
-        help="Phase calculation type: 'cpc1' or 'combined' (default: cpc1)."
-    )
-    parser.add_argument(
-        "--n_comps", type=int, default=3,
-        help="Number of phase components for 'combined' type (default: 3)."
-    )
-    parser.add_argument(
         "--nt_emp", type=int, default=600,
-        help="Number of empirical timepoints (default: 600)."
-    )
-    parser.add_argument(
-        "--species", type=str, default="human",
-        help="Species: 'human', 'macaque', or 'marmoset' (default: human)."
+        help="Number of empirical timepoints. Human: 600, macaque: 500, marmoset: 510 (default: 600)."
     )
     parser.add_argument(
         "--parc", type=str, default=None,
@@ -159,8 +153,8 @@ def model_job(params, surf, medmask, hmap, args, dt_emp, dt, tsteady, parc=None,
         Empirical sampling interval in milliseconds.
     dt : float
         Model simulation time step in milliseconds.
-    tsteady : float
-        Steady-state burn-in period in milliseconds.
+    tsteady : int
+        Number of initial timepoints to discard as steady-state burn-in.
     parc : np.ndarray, optional
         Parcellation labels.
     out_dir : str, optional
@@ -301,7 +295,7 @@ if __name__ == "__main__":
     dt_emp = TR_SPECIES[args.species]
     dt = DT_SPECIES[args.species]
     data_desc = DATA_DESC_SPECIES[args.species]
-    tsteady = 5e4  # Burn-in period (ms)
+    tsteady = 550  # Number of timepoints to discard as burn-in (~45 seconds at 90ms dt)
 
     out_dir = (
         f'{PROJ_DIR}/results/{args.species}/model_rest/group/id-{args.id}/'
@@ -367,7 +361,7 @@ if __name__ == "__main__":
             )
         else:
             # Load actual heterogeneity map
-            hmap = load_hmap(args.hmap_label, species=args.species, trg_den=args.den)
+            hmap = load_hmap(args.hmap_label, species=args.species)
 
         # Clip extreme values for numerical stability
         p_lower, p_upper = np.percentile(hmap[medmask], [2, 98])
