@@ -1,40 +1,61 @@
+# IDE and environment
 .vscode/
+.venv/
+.github/
+.env
+
+# Python
+**/__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
 build/
-# Ignore most of the data directory
+dist/
+
+# Data directories
 data/archive/
 data/cache/
 data/parcellations/
 data/surfaces/
 data/temp/
 data/test/
+
+# Nulls - only track human myelinmap nulls
 data/nulls/human/*
 !data/nulls/human/data-myelinmap*
+
+# Heteromaps
 data/heteromaps/human/archive/
 data/heteromaps/human/*32k*
 data/heteromaps/macaque/v2/
-# Setup intermediate directories to unignore files within
+
+# Empirical data - setup intermediate directories to unignore files within
 !data/empirical/
 data/empirical/*
 !data/empirical/*/
 data/empirical/*/*
-# Specify files to keep
+# Keep only specific empirical files
 !data/empirical/**/*nsubj-10*
 !data/empirical/**/*desc-nomedialwall.func.gii
 !data/empirical/**/*desc-midthickness.surf.gii
+
+# Results and figures
 figures/
-heteromodes.egg-info/
 results/
+
+# Scripts
 scripts/.ipynb_checkpoints/
 scripts/sandbox/
 scripts/_console.*
-scripts/*.sh
 scripts/model_rest/results_config.json
 scripts/preprocessing/
 scripts/data_generation/
-.env
-**/__pycache__/
+
+# File types
 *.ipynb
 *.png
+*.sh
 *.DS_Store
 
+# Project-specific
 conda-environment.yml
