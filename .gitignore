@@ -23,17 +23,17 @@ data/empirical/*/*
 !data/empirical/**/*desc-midthickness.surf.gii
 figures/
 heteromodes.egg-info/
-figures/
-heteromodes.egg-info/
 results/
 scripts/.ipynb_checkpoints/
 scripts/sandbox/
 scripts/_console.*
+scripts/*.sh
 scripts/model_rest/results_config.json
+scripts/preprocessing/
+scripts/data_generation/
 .env
 **/__pycache__/
 *.ipynb
-*.sh
 *.png
 *.DS_Store
 

@@ -308,7 +308,6 @@ if __name__ == "__main__":
         f'{args.evaluation}/{args.hmap_label}'
     )
 
-
     # Setup parcellation and surface
     parc = None
     if args.parc is not None:

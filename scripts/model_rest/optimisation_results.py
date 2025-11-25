@@ -21,9 +21,9 @@ PROJ_DIR = get_project_root()
 
 # %%
 # Configuration
-species = "macaque"
-ids = {3: '3'}
-evaluation = "fit"
+species = "human"
+ids = {1: '1'}
+evaluation = "crossval"
 
 # Load heterogeneity map labels
 with open(f"{PROJ_DIR}/data/heteromaps/{species}/heteromap_labels.json", "r") as f:

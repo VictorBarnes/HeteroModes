@@ -19,10 +19,10 @@ sns.set_theme(style="white")
 
 # Configuration
 PROJ_DIR = get_project_root()
-species = "macaque"
-id_num = 3
+species = "human"
+id_num = 1
 hmap_label = "myelinmap"
-evaluation = "fit"  # 'fit' or 'crossval'
+evaluation = "crossval"  # 'fit' or 'crossval'
 
 # Parameters to sweep
 param1 = "alpha"  # Note: alpha must be param1 if used
@@ -84,7 +84,6 @@ for i, p1 in enumerate(param1_vals):
             combined_land[i, j] = (
                 edge_fc_land[i, j] + node_fc_land[i, j] + (1 - fcd_land[i, j])
             )
-
 
 # Insert homogeneous model results at alpha=0 if alpha is being swept
 if param1 == 'alpha':
