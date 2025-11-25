@@ -7,7 +7,8 @@ data/parcellations/
 data/surfaces/
 data/temp/
 data/test/
-data/nulls/
+data/nulls/human/*
+!data/nulls/human/data-myelinmap*
 data/heteromaps/human/archive/
 data/heteromaps/human/*32k*
 data/heteromaps/macaque/v2/
@@ -25,23 +26,6 @@ heteromodes.egg-info/
 figures/
 heteromodes.egg-info/
 results/
-# # Setup intermediate directories
-# !results/*/
-# results/*/*
-# !results/*/model_rest/
-# results/*/model_rest/*
-# !results/*/model_rest/group/
-# results/*/model_rest/group/*
-# !results/*/model_rest/group/id-*/
-# results/*/model_rest/group/id-*/*
-# !results/*/model_rest/group/id-*/*/
-# results/*/model_rest/group/id-*/*/*
-# !results/*/model_rest/group/id-*/*/*/
-# results/*/model_rest/group/id-*/*/*/*
-# # Specify files to keep
-# !results/*/model_rest/group/*/config.json
-# !results/*/model_rest/group/**/best_model.h5
-# !results/*/model_rest/group/**/parameter_combinations.csv
 scripts/.ipynb_checkpoints/
 scripts/sandbox/
 scripts/_console.*

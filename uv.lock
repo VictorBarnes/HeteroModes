@@ -25,6 +25,18 @@ wheels = [
 ]
 
 [[package]]
+name = "bctpy"
+version = "0.6.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scipy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/36/4f/c2752f90a37af1c0f92a9eaef5622b0c20c467137604c68274e75f3bc745/bctpy-0.6.1-py3-none-any.whl", hash = "sha256:9c47757596ce386e226353a16ab94e6071a4d3b8acf6c7b2623b45d9e0c5d1a0", size = 110407, upload-time = "2023-07-26T17:03:13.233Z" },
+]
+
+[[package]]
 name = "brainspace"
 version = "0.1.20"
 source = { registry = "https://pypi.org/simple" }
@@ -260,6 +272,15 @@ wheels = [
 ]
 
 [[package]]
+name = "eigenstrapping"
+version = "0.0.1.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/61/35/b8ebc1464d560a0d464ab66dd5544d3da5d3627f759b2f52356fd34c4c1a/eigenstrapping-0.0.1.5.tar.gz", hash = "sha256:5a04fe4cd171e2c79f920903a6e3c75983298b98a049626b4cc5056fe8d98c96", size = 71448, upload-time = "2023-11-30T23:07:33.98Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fe/c1/4e59feb76c83728e663d22bb051337872f1c0b303483a194cd50f2619364/eigenstrapping-0.0.1.5-py3-none-any.whl", hash = "sha256:c83fbc056f4c9a534da72cd31b679663648a58cd2f40a7f71f6a5e4d78ed5c26", size = 75538, upload-time = "2023-11-30T23:07:30.822Z" },
+]
+
+[[package]]
 name = "executing"
 version = "2.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -342,14 +363,25 @@ dependencies = [
     { name = "fbpca" },
     { name = "h5py" },
     { name = "joblib" },
-    { name = "matplotlib" },
     { name = "neuromaps" },
     { name = "nibabel" },
     { name = "nsbtools" },
     { name = "numpy" },
-    { name = "scikit-learn" },
     { name = "scipy" },
+    { name = "setuptools" },
+]
+
+[package.optional-dependencies]
+nulls = [
+    { name = "eigenstrapping" },
+    { name = "netneurotools" },
+]
+plotting = [
+    { name = "matplotlib" },
     { name = "seaborn" },
+]
+preprocessing = [
+    { name = "scikit-learn" },
 ]
 
 [package.dev-dependencies]
@@ -366,18 +398,22 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "brainspace", specifier = ">=0.1.20" },
+    { name = "eigenstrapping", marker = "extra == 'nulls'", specifier = ">=0.0.1.5" },
     { name = "fbpca", specifier = ">=1.0" },
     { name = "h5py", specifier = ">=3.14.0" },
     { name = "joblib", specifier = ">=1.5.1" },
-    { name = "matplotlib", specifier = ">=3.9.4" },
+    { name = "matplotlib", marker = "extra == 'plotting'", specifier = ">=3.10.3" },
+    { name = "netneurotools", marker = "extra == 'nulls'", specifier = "==0.2.4" },
     { name = "neuromaps", specifier = ">=0.0.5" },
     { name = "nibabel", specifier = ">=5.3.2" },
     { name = "nsbtools", editable = "../repos/nsbtools" },
     { name = "numpy", specifier = ">=2.0.2" },
-    { name = "scikit-learn", specifier = ">=1.6.1" },
+    { name = "scikit-learn", marker = "extra == 'preprocessing'", specifier = ">=1.7.0" },
     { name = "scipy", specifier = ">=1.13.1" },
-    { name = "seaborn", specifier = ">=0.13.2" },
+    { name = "seaborn", marker = "extra == 'plotting'", specifier = ">=0.13.2" },
+    { name = "setuptools", specifier = ">=80.9.0" },
 ]
+provides-extras = ["nulls", "preprocessing", "plotting"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -777,6 +813,24 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/83/f8/51569ac65d696c8ecbee95938f89d4abf00f47d58d48f6fbabfe8f0baefe/nest_asyncio-1.6.0.tar.gz", hash = "sha256:6f172d5449aca15afd6c646851f4e31e02c598d553a667e38cafa997cfec55fe", size = 7418, upload-time = "2024-01-21T14:25:19.227Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a0/c4/c2971a3ba4c6103a3d10c4b0f24f461ddc027f0f09763220cf35ca1401b3/nest_asyncio-1.6.0-py3-none-any.whl", hash = "sha256:87af6efd6b5e897c81050477ef65c62e2b2f35d51703cae01aff2905b1852e1c", size = 5195, upload-time = "2024-01-21T14:25:17.223Z" },
+]
+
+[[package]]
+name = "netneurotools"
+version = "0.2.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "bctpy" },
+    { name = "matplotlib" },
+    { name = "nibabel" },
+    { name = "nilearn" },
+    { name = "numpy" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e8/9b/9c70eb4a4c1d9f73f3f36834619b53b6ccf9f3ef6d08832bf2dc8ceba212/netneurotools-0.2.4.tar.gz", hash = "sha256:d878b0893632ce73716334718a45dda5613d6adcf512c32b0d10442aeb0726a8", size = 120407, upload-time = "2024-02-15T20:12:46.806Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ba/11/613f282ded4b835dca247713492f2c0a9ac67cce2da2bb1052f554514eae/netneurotools-0.2.4-py3-none-any.whl", hash = "sha256:e0b85011c7c6d2bd22cb95371ddd715aa9b8aeb3409bee3a9fd34c4500bcc681", size = 111923, upload-time = "2024-02-15T20:12:44.975Z" },
 ]
 
 [[package]]
@@ -1389,6 +1443,15 @@ wheels = [
 ]
 
 [[package]]
+name = "setuptools"
+version = "80.9.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/18/5d/3bf57dcd21979b887f014ea83c24ae194cfcd12b9e0fda66b957c69d1fca/setuptools-80.9.0.tar.gz", hash = "sha256:f36b47402ecde768dbfafc46e8e4207b4360c654f1f3bb84475f0a28628fb19c", size = 1319958, upload-time = "2025-05-27T00:56:51.443Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a3/dc/17031897dae0efacfea57dfd3a82fdd2a2aeb58e0ff71b77b87e44edc772/setuptools-80.9.0-py3-none-any.whl", hash = "sha256:062d34222ad13e0cc312a4c02d73f059e86a4acbfbdea8f8f76b28c99f306922", size = 1201486, upload-time = "2025-05-27T00:56:49.664Z" },
+]
+
+[[package]]
 name = "six"
 version = "1.17.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1479,14 +1542,14 @@ wheels = [
 
 [[package]]
 name = "trimesh"
-version = "4.8.2"
+version = "4.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d2/91/915e5affdfcc06ef4523b2b5645ef319d165cf4618110ba2893a5fb99a35/trimesh-4.8.2.tar.gz", hash = "sha256:1b9e50feb77dac820428b7408f6cea707577342cd37a493e4491765bd5a67da3", size = 824364, upload-time = "2025-09-17T21:44:22.355Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/36/f3/bd9b67575bddcc7e4cca927461bd58006455208a2331262f7c9de0db8bb3/trimesh-4.10.0.tar.gz", hash = "sha256:502710a0b1f0317816507828a41e0cb1c595b895e344567fa42cd47388c2b72b", size = 831462, upload-time = "2025-11-24T19:57:51.693Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ea/70/d4376ceb7fe7ab8f9bf70b4f24f5bb7d436f51dc50cf21432401bc8233b2/trimesh-4.8.2-py3-none-any.whl", hash = "sha256:666f93c143576d0cbe6e1f6a44bde1d864367f274e9ae3917cabd363394a58a1", size = 729114, upload-time = "2025-09-17T21:44:19.3Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/81/951a108396aa850a096be95cd9ccd38ef9f33ae35b40b512be975e2c994d/trimesh-4.10.0-py3-none-any.whl", hash = "sha256:bdafda66d5c8a9564d7d82f5673c06f8b4fc51c86de959fafee0e169fcfea12a", size = 736626, upload-time = "2025-11-24T19:57:49.158Z" },
 ]
 
 [[package]]
