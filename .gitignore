@@ -35,7 +35,7 @@ data/empirical/*
 !data/empirical/*/
 data/empirical/*/*
 # Keep only specific empirical files
-!data/empirical/**/*nsubj-10*
+# !data/empirical/**/*nsubj-10*
 !data/empirical/**/*desc-nomedialwall.func.gii
 !data/empirical/**/*desc-midthickness.surf.gii
 
@@ -56,6 +56,7 @@ scripts/data_generation/
 *.png
 *.sh
 *.DS_Store
+*.h5
 
 # Project-specific
 conda-environment.yml
