@@ -15,11 +15,13 @@ dist/
 # Data directories
 data/archive/
 data/cache/
-data/parcellations/
-data/surfaces/
 data/temp/
 data/test/
-
+# Keep specific parcellations
+data/parcellations/*
+!data/parcellations/
+!data/parcellations/*hcpmmp1*den-32k*
+!data/parcellations/*schaefer300*den-32k*
 # Nulls - only track human myelinmap nulls
 data/nulls/human/*
 !data/nulls/human/data-myelinmap*
@@ -57,6 +59,7 @@ scripts/data_generation/
 *.sh
 *.DS_Store
 *.h5
+*.mat
 
 # Project-specific
 conda-environment.yml

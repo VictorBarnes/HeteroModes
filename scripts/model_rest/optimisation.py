@@ -304,15 +304,17 @@ if __name__ == "__main__":
     # Setup parcellation and surface
     parc = None
     if args.parc is not None:
+        if args.den != "32k":
+            raise ValueError("Parcel-based models must be run at 32k density and then "
+                             "parcellated. This ensures maximal accuracy.")
         if args.species != "human":
             raise ValueError("Parcellation is only valid for human species.")
         
         parc = nib.load(
             f"{PROJ_DIR}/data/parcellations/parc-{args.parc}_space-fsLR_"
-            f"den-{args.den}_hemi-L.label.gii"
+            f"den-32k_hemi-L.label.gii"
         ).darrays[0].data.astype(int)
 
-        # Parcellation uses 32k downsampled data
         space_desc = f"space-fsLR_den-32k_parc-{args.parc}"
         medmask = parc != 0
     else:
@@ -331,7 +333,7 @@ if __name__ == "__main__":
     # Load medial wall mask if not using parcellation
     if args.parc is None:
         medmask = nib.load(
-            f"{PROJ_DIR}/data/empirical/{args.species}/space-fsLR_den-{args.den}_"
+            f"{PROJ_DIR}/data/empirical/{args.species}/space-fsLR_den-32k_"
             f"hemi-L_desc-nomedialwall.func.gii"
         ).darrays[0].data.astype(bool)
 
