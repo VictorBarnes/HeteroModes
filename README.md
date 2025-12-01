@@ -41,6 +41,4 @@ python optimisation.py --species human --id 1 --parc hcpmmp1 --den 32k --hmap_la
 ```
 
 ### Important usage notes
-In the example above we don't optimize using FCD KS metric as it is very computationally intensive. If you wish to include this metric, please ensure you have access to a high-performance computing cluster. 
-
-We have only updated empirical data for 10 subjects in this repository to reduce size. Therefore, `n_subj` will need to be set to 10.
+In the examples above we don't optimize using FCD KS metric as it is very computationally intensive. If you wish to include this metric, please ensure you have access to a high-performance computing cluster. 
