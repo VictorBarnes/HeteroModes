@@ -30,7 +30,7 @@ def get_project_root() -> Path:
     raise RuntimeError("Project root not found. No pyproject.toml or .git found.")
 
 
-def load_hmap(hmap_label, species="human", data_dir=None):
+def load_hmap(hmap_label, species="human", density="4k", data_dir=None):
     """
     Load a heterogeneity map from the data directory.
 
@@ -40,6 +40,8 @@ def load_hmap(hmap_label, species="human", data_dir=None):
         Label identifying the heterogeneity map in heteromap_labels.json.
     species : str, default="human"
         Species identifier ("human", "macaque", etc.).
+    density : str, default="4k"
+        Surface density ("4k" or "32k").
     data_dir : str or Path, optional
         Custom data directory path. If None, uses default project structure
         (data/heteromaps/{species}/).
@@ -54,7 +56,16 @@ def load_hmap(hmap_label, species="human", data_dir=None):
     FileNotFoundError
         If the heterogeneity map label is not found in the configuration file
         or if the referenced file does not exist.
+    ValueError
+        If an invalid density value is provided.
     """
+    # Validate density parameter
+    valid_densities = ["4k", "32k"]
+    if density not in valid_densities:
+        raise ValueError(
+            f"Invalid density '{density}'. Must be one of {valid_densities}."
+        )
+    
     # Use default data directory if not provided
     if data_dir is None:
         proj_dir = get_project_root()
@@ -74,6 +85,9 @@ def load_hmap(hmap_label, species="human", data_dir=None):
             f"No heterogeneity map file specified for label '{hmap_label}' "
             f"in {config_file}."
         )
+    
+    # Replace density in filename
+    hetero_file = hetero_file.replace("den-4k", f"den-{density}")
     
     # Load GIFTI file and extract data from first data array
     hmap = nib.load(data_dir / hetero_file).darrays[0].data

@@ -6,6 +6,7 @@ k-fold cross-validation to identify optimal heterogeneity scaling and model para
 """
 
 import os
+import json
 import h5py
 import time
 import argparse
@@ -15,7 +16,6 @@ import pandas as pd
 import nibabel as nib
 from tqdm import tqdm
 from joblib import Parallel, delayed
-from neuromaps.datasets import fetch_atlas
 from heteromodes.utils import load_hmap, get_project_root
 from heteromodes.restingstate import run_model, analyze_bold, evaluate_model
 
@@ -26,6 +26,57 @@ PROJ_DIR = get_project_root()
 def print_heading(text):
     """Print a formatted section heading."""
     print(f"\n{text}\n{'=' * len(text)}")
+
+
+def save_run_config(args, id_dir):
+    """
+    Save all argparse arguments to a JSON file in the ID directory.
+    
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Command-line arguments.
+    id_dir : str
+        ID directory path (not the full output directory).
+    """
+    config_file = f"{id_dir}/run_config.json"
+    os.makedirs(id_dir, exist_ok=True)
+    
+    # Convert args to dictionary
+    config = vars(args).copy()
+    
+    # Convert non-serializable types to serializable ones
+    for key, value in config.items():
+        if isinstance(value, np.ndarray):
+            config[key] = value.tolist()
+    
+    # Check if config file exists
+    if os.path.exists(config_file):
+        # Load existing config
+        with open(config_file, 'r') as f:
+            existing_config = json.load(f)
+        
+        # Check for conflicts in key parameters
+        conflict_keys = ['alpha', 'r', 'gamma', 'beta', 'n_modes', 'n_runs', 
+                        'hmap_label', 'parc', 'den', 'scaling', 'evaluation']
+        conflicts = []
+        for key in conflict_keys:
+            if key in existing_config and existing_config[key] != config[key]:
+                conflicts.append(f"  {key}: {existing_config[key]} -> {config[key]}")
+        
+        if conflicts:
+            print(f"\nWARNING: Run configuration differs from existing run in {id_dir}:")
+            for conflict in conflicts:
+                print(conflict)
+            response = input("\nContinue and overwrite config? (y/n): ")
+            if response.lower() != 'y':
+                print("Exiting to avoid overwriting existing results.")
+                exit(0)
+    
+    # Save config
+    with open(config_file, 'w') as f:
+        json.dump(config, f, indent=2)
+    print(f"Run configuration saved to {config_file}")
 
 
 def parse_arguments():
@@ -200,7 +251,7 @@ def model_job(params, surf, medmask, hmap, args, dt_emp, dt, tsteady, parc=None,
         if bold_data is None:
             print(f"Simulation failed for params {params}.")
             return None
-        
+
         # Analyze BOLD data
         outputs = analyze_bold(
             bold_data, 
@@ -296,8 +347,14 @@ if __name__ == "__main__":
     data_desc = DATA_DESC_SPECIES[args.species]
     tsteady = 550  # Number of timepoints to discard as burn-in (~45 seconds at 90ms dt)
 
+    # Define ID directory (before hmap-specific subdirectories)
+    id_dir = f'{PROJ_DIR}/results/{args.species}/model_rest/group/id-{args.id}'
+
+    # Save and check run configuration
+    save_run_config(args, id_dir)
+
     out_dir = (
-        f'{PROJ_DIR}/results/{args.species}/model_rest/group/id-{args.id}/'
+        f'{id_dir}/'
         f'{args.evaluation}/{args.hmap_label}'
     )
 
@@ -321,14 +378,10 @@ if __name__ == "__main__":
         space_desc = f"space-fsLR_den-{args.den}"
 
     # Load cortical surface
-    if args.species == "human":
-        fslr = fetch_atlas(atlas='fsLR', density=args.den)
-        surf = str(fslr['midthickness'][0])
-    else:
-        surf = (
-            f'{PROJ_DIR}/data/empirical/{args.species}/space-fsLR_den-{args.den}_'
-            f'hemi-L_desc-midthickness.surf.gii'
-        )
+    surf = (
+        f'{PROJ_DIR}/data/empirical/{args.species}/space-fsLR_den-{args.den}_'
+        f'hemi-L_desc-midthickness.surf.gii'
+    )
     
     # Load medial wall mask if not using parcellation
     if args.parc is None:
@@ -357,12 +410,12 @@ if __name__ == "__main__":
             )[null_id, :]
 
             out_dir = (
-                f'{PROJ_DIR}/results/{args.species}/model_rest/group/id-{args.id}/'
+                f'{id_dir}/'
                 f'{args.evaluation}/{args.hmap_label}/nulls/null-{null_id}'
             )
         else:
             # Load actual heterogeneity map
-            hmap = load_hmap(args.hmap_label, species=args.species)
+            hmap = load_hmap(args.hmap_label, species=args.species, density=args.den)
 
         # Clip extreme values for numerical stability
         p_lower, p_upper = np.percentile(hmap[medmask], [2, 98])
@@ -437,6 +490,7 @@ if __name__ == "__main__":
             f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fc_"
             f"{space_desc}_hemi-L_nt-{nt_emp}.h5"
         )
+
         with h5py.File(emp_fc_file, "r") as f:
             emp_outputs['fc'] = f['fc_group'][:]
 

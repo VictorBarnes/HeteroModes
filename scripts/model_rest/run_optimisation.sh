@@ -3,24 +3,24 @@
 # ========================
 # SLURM settings (ignored when run in terminal)
 # ========================
-#SBATCH --account=kg98
-#SBATCH --output=/fs03/kg98/vbarnes/slurm/%A_%a.out
-#SBATCH --error=/fs03/kg98/vbarnes/slurm/%A_%a.err
-#SBATCH --mail-user=victor.barnes@monash.edu
-#SBATCH --mail-type=FAIL,END
-#SBATCH --ntasks=1
-#SBATCH --time=1-00:00:00
-#SBATCH --cpus-per-task=6
-#SBATCH --mem-per-cpu=20G
-#SBATCH --job-name=OpMac6
-#SBATCH --array=0-15  # only used when run via sbatch
+# SBATCH --account=kg98
+# SBATCH --output=/fs03/kg98/vbarnes/slurm/%A_%a.out
+# SBATCH --error=/fs03/kg98/vbarnes/slurm/%A_%a.err
+# SBATCH --mail-user=victor.barnes@monash.edu
+# SBATCH --mail-type=FAIL,END
+# SBATCH --ntasks=1
+# SBATCH --time=1-00:00:00
+# SBATCH --cpus-per-task=6
+# SBATCH --mem-per-cpu=20G
+# SBATCH --job-name=OpHum1
+# SBATCH --array=0-15  # only used when run via sbatch
 
 # ========================
 # USER SETTINGS
 # ========================
 species="human"      # "human", "marmoset", "macaque"
-id=1
-evaluation="crossval"       # "fit" or "crossval"
+id=0
+evaluation="fit"       # "fit" or "crossval"
 
 # ========================
 # Determine if we're running under SLURM or manually
@@ -59,25 +59,29 @@ fi
 # ========================
 # Load config values from JSON
 # ========================
-CONFIG_FILE="/fs04/kg98/vbarnes/HeteroModes/results/${species}/model_rest/group/id-${id}/config.json"
+CONFIG_FILE="/fs04/kg98/vbarnes/HeteroModes/results/${species}/model_rest/group/id-${id}/run_config.json"
 
+# Read JSON value or exit if missing
 read_json() {
-    jq -e -r "$1" "$CONFIG_FILE" 2>/dev/null || { echo "Error: Missing field $1 in config.json"; exit 1; }
+    jq -e -r "$1" "$CONFIG_FILE" 2>/dev/null || { echo "Error: Missing field $1 in run_config.json"; exit 1; }
+}
+# Read JSON array and convert to space-separated string
+read_json_array() {
+    jq -e -r "$1 | @sh" "$CONFIG_FILE" 2>/dev/null | tr -d "'" || { echo "Error: Missing field $1 in run_config.json"; exit 1; }
 }
 
-nruns=$(read_json '.nruns')
-nsplits=$(read_json '.nsplits')
-nmodes=$(read_json '.nmodes')
-nsubjs=$(read_json '.nsubjs')
-alpha=$(read_json '.alpha')
-beta=$(read_json '.beta')
-r=$(read_json '.r')
-gamma=$(read_json '.gamma')
+nruns=$(read_json '.n_runs')
+nsplits=$(read_json '.n_splits')
+nmodes=$(read_json '.n_modes')
+nsubjs=$(read_json '.n_subjs')
+alpha=$(read_json_array '.alpha')
+beta=$(read_json_array '.beta')
+r=$(read_json_array '.r')
+gamma=$(read_json_array '.gamma')
 den=$(read_json '.den')
-metrics=$(read_json '.metrics')
-band_freq=$(read_json '.band_freq')
+metrics=$(read_json_array '.metrics')
+band_freq=$(read_json_array '.band_freq')
 scaling=$(read_json '.scaling')
-nt_emp=$(read_json '.nt_emp')
 parc=$(read_json '.parc')
 
 # Print variables
@@ -96,7 +100,6 @@ echo "metrics: $metrics"
 echo "band_freq: $band_freq"
 echo "evaluation: $evaluation"
 echo "scaling: $scaling"
-echo "nt_emp: $nt_emp"
 echo "species: $species"
 echo "parc: $parc"
 
@@ -142,7 +145,6 @@ if [ "$running_in_slurm" = true ]; then
         --band_freq $band_freq \
         --evaluation "$evaluation" \
         --scaling "$scaling" \
-        --nt_emp "$nt_emp" \
         --species "$species" \
         --parc "$parc"
 
@@ -172,7 +174,6 @@ else
             --band_freq $band_freq \
             --evaluation "$evaluation" \
             --scaling "$scaling" \
-            --nt_emp "$nt_emp" \
             --species "$species" \
             --parc "$parc"
     done

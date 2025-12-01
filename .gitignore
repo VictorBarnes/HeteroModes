@@ -28,7 +28,6 @@ data/nulls/human/*
 
 # Heteromaps
 data/heteromaps/human/archive/
-data/heteromaps/human/*32k*
 data/heteromaps/macaque/v2/
 
 # Empirical data - setup intermediate directories to unignore files within
