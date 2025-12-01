@@ -48,7 +48,6 @@ results/
 scripts/.ipynb_checkpoints/
 scripts/sandbox/
 scripts/_console.*
-scripts/model_rest/results_config.json
 scripts/preprocessing/
 scripts/data_generation/
 

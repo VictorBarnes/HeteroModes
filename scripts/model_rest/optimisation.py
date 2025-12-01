@@ -42,8 +42,11 @@ def save_run_config(args, id_dir):
     config_file = f"{id_dir}/run_config.json"
     os.makedirs(id_dir, exist_ok=True)
     
-    # Convert args to dictionary
+    # Convert args to dictionary and exclude certain keys
     config = vars(args).copy()
+    excluded_keys = ['hmap_label', 'n_jobs', 'evaluation']
+    for key in excluded_keys:
+        config.pop(key, None)
     
     # Convert non-serializable types to serializable ones
     for key, value in config.items():
@@ -58,7 +61,7 @@ def save_run_config(args, id_dir):
         
         # Check for conflicts in key parameters
         conflict_keys = ['alpha', 'r', 'gamma', 'beta', 'n_modes', 'n_runs', 
-                        'hmap_label', 'parc', 'den', 'scaling', 'evaluation']
+                        'parc', 'den', 'scaling', 'evaluation']
         conflicts = []
         for key in conflict_keys:
             if key in existing_config and existing_config[key] != config[key]:
