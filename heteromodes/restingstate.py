@@ -1,11 +1,8 @@
 """Neural field model simulation and resting-state fMRI analysis."""
 
+import fbpca
 import numpy as np
-from scipy.linalg import norm
 from scipy.signal import butter, filtfilt, hilbert
-from scipy.fft import fft, ifft
-from scipy.interpolate import PchipInterpolator
-from scipy.ndimage import label
 from scipy.stats import zscore, ks_2samp
 from brainspace.utils.parcellation import reduce_by_labels
 from nsbtools.eigen import EigenSolver
@@ -15,7 +12,8 @@ def run_model(
     # Solver parameters
     surf, 
     medmask=None, 
-    hetero=None, 
+    hetero=None,
+    aniso=None,
     alpha=0, 
     beta=1.0,
     r=28.9, 
@@ -86,18 +84,12 @@ def run_model(
     """
     
     # Initialize eigenmode solver with model parameters
-    try:
-        solver = EigenSolver(
-            surf=surf, mask=medmask, hetero=hetero, n_modes=n_modes, 
-            alpha=alpha, beta=beta, r=r, gamma=gamma, scaling=scaling,
-            lump=lump, smoothit=smoothit
-        )
-        solver.solve(fix_mode1=True, standardize=False)
-    except ValueError as e:
-        if "Alpha value results in non-physiological wave speeds" in str(e):
-            print(f"Invalid parameter combination: alpha={alpha}, r={r}, gamma={gamma}")
-            return None, None
-        raise
+    solver = EigenSolver(
+        surf=surf, mask=medmask, hetero=hetero, aniso=aniso, n_modes=n_modes, 
+        alpha=alpha, beta=beta, r=r, gamma=gamma, scaling=scaling,
+        lump=lump, smoothit=smoothit
+    )
+    _, _ = solver.solve(fix_mode1=True, standardize=False)
 
     # Calculate total model timepoints including steady-state period
     nt_model = int(nt_emp * dt_emp / dt_model) + tsteady
@@ -156,20 +148,24 @@ def analyze_bold(bold, dt_emp=720, band_freq=(0.01, 0.1),
     """
     outputs = {}
     bold = bold.astype(np.float32, copy=False)
+    bold_concat = np.hstack([bold[:, :, i] for i in range(bold.shape[2])], dtype=np.float32)
     
     # Compute functional connectivity if needed
     if "edge_fc_corr" in metrics or "node_fc_corr" in metrics:
-        bold_concat = np.hstack([bold[:, :, i] for i in range(bold.shape[2])], dtype=np.float32)
         outputs['fc'] = calc_fc(bold_concat)
     
     # Compute phase-based metrics if needed
-    if "cpc1" in metrics or 'fcd_ks' in metrics:
+    if "cpc1_corr" in metrics or 'fcd_ks' in metrics:
         fnq = 0.5 / (dt_emp / 1e3)  # Nyquist frequency in Hz
 
-        if "cpc1" in metrics:
-            outputs['analytic'] = calc_hilbert(
-                bold, fnq=fnq, band_freq=band_freq, k=2
+        if "cpc1_corr" in metrics:
+            analytic = calc_hilbert(
+                bold_concat, fnq=fnq, band_freq=band_freq, k=2
             ).astype(np.complex64)
+            ncpcs = 10
+            l = 10 + ncpcs
+            _, _, V = fbpca.pca(analytic.T, k=ncpcs, n_iter=20, l=l)
+            outputs['cpcs'] = V.T.astype(np.complex64)
             
         if "fcd_ks" in metrics:
             fcd = [calc_fcd_efficient(bold[:, :, i], fnq=fnq, band_freq=band_freq).astype(np.float32)
@@ -218,6 +214,11 @@ def evaluate_model(model_outputs, emp_outputs,
             model_outputs['fcd'].flatten(), 
             emp_outputs['fcd'].flatten()
         )[0]
+
+    if "cpc1_corr" in metrics:
+        model_cpc1 = np.imag(model_outputs['cpcs'][:, 0])
+        emp_cpc1 = np.imag(emp_outputs['cpcs'][:, 0])
+        results['cpc1_corr'] = np.corrcoef(model_cpc1, emp_cpc1)[0, 1]
     
     return results
 
@@ -294,62 +295,6 @@ def calc_hilbert(bold, fnq, band_freq=(0.01, 0.1), k=2):
     """
     bold_filtered = filter_bold(bold, fnq, k=k, band_freq=band_freq)
     return hilbert(bold_filtered, axis=1)
-
-
-def calc_fcd(bold, fnq, band_freq=(0.01, 0.1), n_avg=3):
-    """
-    Calculate functional connectivity dynamics (FCD) from phase synchrony.
-    
-    Parameters
-    ----------
-    bold : np.ndarray
-        BOLD time series with shape (n_regions, n_timepoints).
-    fnq : float
-        Nyquist frequency in Hz.
-    band_freq : tuple, default=(0.01, 0.1)
-        Frequency band (low, high) in Hz for bandpass filtering.
-    n_avg : int, default=3
-        Number of timepoints to average for sliding window.
-    
-    Returns
-    -------
-    fcd : np.ndarray
-        Upper triangular FCD matrix values.
-    """
-    if n_avg < 1:
-        raise ValueError("n_avg must be greater than 0")
-
-    n_regions, nt = bold.shape
-    
-    # Extract phase from bandpass-filtered signal
-    phase = np.angle(calc_hilbert(bold, fnq, band_freq=band_freq, k=2))
-
-    # Remove edge artifacts from filtering (9 TRs on each end)
-    t_trunc = np.arange(9, nt - 9)
-    nt_trunc = len(t_trunc)
-
-    # Compute instantaneous phase synchrony at each timepoint
-    triu_i, triu_j = np.triu_indices(n_regions, k=1)
-    synchrony_vecs = np.zeros((nt_trunc, len(triu_i)))
-    
-    for t_ind, t in enumerate(t_trunc):
-        phase_diff = np.subtract.outer(phase[:, t], phase[:, t])
-        synchrony_mat = np.cos(phase_diff)
-        synchrony_vecs[t_ind, :] = synchrony_mat[triu_i, triu_j]
-
-    # Compute sliding window average and normalize
-    n_windows = nt_trunc - n_avg - 1
-    p_mat = np.zeros((n_windows, synchrony_vecs.shape[1]))
-    
-    for t_ind in range(n_windows):
-        p_mat[t_ind, :] = np.mean(synchrony_vecs[t_ind:t_ind + n_avg, :], axis=0)
-        p_mat[t_ind, :] /= norm(p_mat[t_ind, :])
-
-    # Compute temporal correlation of synchrony patterns
-    fcd_mat = p_mat @ p_mat.T
-    triu_ind = np.triu_indices(fcd_mat.shape[0], k=1)
-    
-    return fcd_mat[triu_ind]
 
 
 def calc_fcd_efficient(bold, fnq, band_freq=(0.01, 0.1), n_avg=3, 
@@ -491,137 +436,3 @@ def calc_node_fc(fc, eps=1e-7):
     
     return node_fc
 
-
-def calc_gen_phase(bold, tr=0.72, lowcut=0.01, highcut=0.1):
-    """
-    Calculate generalized phase using adaptive instantaneous frequency.
-    
-    Parameters
-    ----------
-    bold : np.ndarray
-        BOLD time series with shape (n_regions, n_timepoints).
-    tr : float, default=0.72
-        Repetition time in seconds.
-    lowcut : float, default=0.01
-        Low-frequency cutoff in Hz.
-    highcut : float, default=0.1
-        High-frequency cutoff in Hz (currently unused).
-    
-    Returns
-    -------
-    phase : np.ndarray
-        Generalized phase angles.
-    """
-    phase_delay = np.empty(bold.shape, dtype=np.complex128)
-    fs = 1 / tr
-    
-    for i in range(bold.shape[0]):
-        phase_delay[i, :] = generalized_phase_vector(bold[i, :], Fs=fs, lp=lowcut)[0]
-
-    return np.angle(phase_delay)
-
-
-def generalized_phase_vector(x, Fs, lp):
-    """
-    Calculate generalized phase vector using adaptive frequency tracking.
-    
-    This method handles negative instantaneous frequencies by interpolating
-    across epochs below the low-frequency cutoff, producing a more robust
-    phase estimate than standard Hilbert transform.
-
-    Parameters
-    ----------
-    x : np.ndarray
-        1D time series data.
-    Fs : float
-        Sampling rate in Hz.
-    lp : float
-        Low-frequency cutoff in Hz.
-
-    Returns
-    -------
-    xgp : np.ndarray
-        Complex-valued generalized phase vector.
-    wt : np.ndarray
-        Instantaneous frequency estimate in Hz.
-    """
-    
-    nwin = 3  # Window multiplier for extending negative frequency epochs
-    npts = len(x)
-    dt = 1 / Fs
-
-    # Helper function to rewrap phase to [-π, π]
-    rewrap = lambda xp: xp - 2 * np.pi * np.floor((xp - np.pi) / (2 * np.pi)) - 2 * np.pi
-    
-    def naninterp(xp):
-        """Interpolate over NaN values using PCHIP interpolation."""
-        not_nan = np.where(~np.isnan(xp))[0]
-        nan_indices = np.where(np.isnan(xp))[0]
-        
-        if len(nan_indices) > 0:
-            interpolator = PchipInterpolator(not_nan, xp[not_nan], extrapolate=True)
-            xp[nan_indices] = interpolator(nan_indices)
-        
-        return xp
-
-    # Compute analytic signal via single-sided spectrum (Marple 1999)
-    xo = fft(x, npts)
-    h = np.zeros(npts)
-    
-    if npts > 0 and npts % 2 == 0:
-        h[0] = 1
-        h[1:npts // 2] = 2
-        h[npts // 2] = 1
-    else:
-        h[0] = 1
-        h[1:(npts + 1) // 2] = 2
-        
-    xo = ifft(xo * h)
-    ph = np.angle(xo)
-    md = np.abs(xo)
-
-    # Compute instantaneous frequency from phase derivative
-    wt = np.zeros_like(xo)
-    wt[:-1] = np.angle(xo[1:] * np.conj(xo[:-1])) / (2 * np.pi * dt)
-
-    # Ensure positive average frequency
-    if np.nanmean(wt) < 0:
-        xo = np.abs(xo) * np.exp(-1j * np.angle(xo))
-        ph = np.angle(xo)
-        md = np.abs(xo)
-        wt[:-1] = np.angle(xo[1:] * np.conj(xo[:-1])) / (2 * np.pi * dt)
-
-    # Handle NaN channels
-    if np.all(np.isnan(ph)):
-        return np.full_like(xo, np.nan), wt
-
-    # Identify and extend epochs with negative frequency (below cutoff)
-    idx = wt < lp
-    idx[0] = False
-    L, n_groups = label(idx)
-    
-    for kk in range(1, n_groups + 1):
-        idxs = np.where(L == kk)[0]
-        start = idxs[0]
-        end = start + int((idxs[-1] - start) * nwin)
-        idx[start:min(end + 1, npts)] = True
-
-    # Interpolate phase across negative frequency epochs
-    p = ph.copy()
-    p[idx] = np.nan
-    
-    if np.all(np.isnan(p)):
-        return np.full_like(xo, np.nan), wt
-
-    # Unwrap non-NaN phase values
-    non_nan_mask = ~np.isnan(p)
-    p[non_nan_mask] = np.unwrap(p[non_nan_mask])
-
-    # Interpolate over gaps and rewrap to [-π, π]
-    p = naninterp(p)
-    p = rewrap(p)
-
-    # Reconstruct analytic signal with corrected phase
-    xgp = md * np.exp(1j * p)
-
-    return xgp, wt

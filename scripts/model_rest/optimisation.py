@@ -61,7 +61,7 @@ def save_run_config(args, id_dir):
         
         # Check for conflicts in key parameters
         conflict_keys = ['alpha', 'r', 'gamma', 'beta', 'n_modes', 'n_runs', 
-                        'parc', 'den', 'scaling', 'evaluation']
+                        'parc', 'den', 'scaling']
         conflicts = []
         for key in conflict_keys:
             if key in existing_config and existing_config[key] != config[key]:
@@ -109,6 +109,10 @@ def parse_arguments():
         help="Heterogeneity map label (None for homogeneous model)."
     )
     parser.add_argument(
+        "--aniso_label", type=str, default=None, 
+        help="Anisotropy map label (currently not used)."
+    )
+    parser.add_argument(
         "--n_runs", type=int, default=10, 
         help="Number of simulation runs (default: 10)."
     )
@@ -129,15 +133,14 @@ def parse_arguments():
         help="Number of parallel jobs, -1 for all CPUs (default: -1)."
     )
     parser.add_argument(
-        '--alpha', type=float, nargs=3, default=[-3, 3, 0.5], 
-        metavar=('alpha_min', 'alpha_max', 'alpha_step'), 
-        help='Alpha range: min, max, step for heterogeneity scaling.'
+        '--alpha', type=float, nargs="+", default=[1.0], 
+        metavar="alpha_values", 
+        help='Alpha range for heterogeneity scaling (single values or min/max/step, default: 1.0).'
     )
     parser.add_argument(
         "--beta", type=float, default=[1.0], nargs="+", 
         metavar="beta_values",
-        help="Beta value(s) for scaling (single value or min/max/step). This paramater "
-             "has not been systematically explored in prior work."
+        help="Beta value(s) for controlling anisotropy scaling (single value or min/max/step)."
     )
     parser.add_argument(
         "--r", type=float, nargs="+", default=[28.9], 
@@ -178,10 +181,14 @@ def parse_arguments():
         "--parc", type=str, default=None,
         help="Parcellation name (None for vertex-wise, default: None)."
     )
+    parser.add_argument(
+        "--save", action=argparse.BooleanOptionalAction, default=True,
+        help="Flag to save model outputs (e.g. FC matrix) for each parameter combination."
+    )
     return parser.parse_args()
 
 
-def model_job(params, surf, medmask, hmap, args, dt_emp, dt, tsteady, parc=None, out_dir=None):
+def model_job(params, surf, medmask, hmap, aniso, args, dt_emp, dt, tsteady, parc=None, out_dir=None):
     """
     Run single model simulation with given parameter combination.
     
@@ -229,45 +236,39 @@ def model_job(params, surf, medmask, hmap, args, dt_emp, dt, tsteady, parc=None,
                 outputs['fc'] = f['fc'][:]
             if "fcd_ks" in args.metrics:
                 outputs['fcd'] = f['fcd'][:]
+            if "cpc1_corr" in args.metrics:
+                outputs['cpcs'] = f['cpcs'][:]
         return outputs
     
     # Run new simulation
-    try:
-        bold_data = run_model(
-            surf=surf, 
-            medmask=medmask, 
-            hetero=hmap, 
-            alpha=params[0],
-            r=params[1],
-            gamma=params[2],
-            beta=params[3],
-            scaling=args.scaling,
-            n_modes=args.n_modes,
-            n_runs=args.n_runs,
-            dt_emp=dt_emp,
-            nt_emp=nt_emp,
-            dt_model=dt,
-            tsteady=tsteady,
-            parc=parc,
-        )
-        
-        if bold_data is None:
-            print(f"Simulation failed for params {params}.")
-            return None
+    bold_data = run_model(
+        surf=surf, 
+        medmask=medmask, 
+        hetero=hmap,
+        aniso=aniso, 
+        alpha=params[0],
+        r=params[1],
+        gamma=params[2],
+        beta=params[3],
+        scaling=args.scaling,
+        n_modes=args.n_modes,
+        n_runs=args.n_runs,
+        dt_emp=dt_emp,
+        nt_emp=nt_emp,
+        dt_model=dt,
+        tsteady=tsteady,
+        parc=parc,
+    )
 
-        # Analyze BOLD data
-        outputs = analyze_bold(
-            bold_data, 
-            dt_emp=dt_emp, 
-            band_freq=args.band_freq,
-            metrics=args.metrics
-        )
+    # Analyze BOLD data
+    outputs = analyze_bold(
+        bold_data, 
+        dt_emp=dt_emp, 
+        band_freq=args.band_freq,
+        metrics=args.metrics
+    )
         
-        return outputs
-        
-    except Exception as e:
-        print(f"Error in model_job with params {params}: {e}")
-        return None
+    return outputs
 
 
 def run_split(model_outputs, emp_outputs_train, emp_outputs_test, args):
@@ -307,6 +308,7 @@ def run_split(model_outputs, emp_outputs_train, emp_outputs_test, args):
         results.get('edge_fc_corr', 0) + 
         results.get('node_fc_corr', 0) + 
         (1 - results.get('fcd_ks', 0) if 'fcd_ks' in args.metrics else 0)
+        (results.get('cpc1_corr', 0) if 'cpc1_corr' in args.metrics else 0)
         for results in train_results
     ]
     best_ind = np.argmax(combined)
@@ -331,8 +333,11 @@ if __name__ == "__main__":
     args = parse_arguments()
     if args.hmap_label == "None":
         args.hmap_label = None
+    if args.aniso_label == "None":
+        args.aniso_label = None
     if args.parc == "None":
         args.parc = None
+    print(args.save)
 
     # Species-specific parameters
     NT_EMP = {"human": 600, "macaque": 500, "marmoset": 510}
@@ -389,7 +394,7 @@ if __name__ == "__main__":
     # Load medial wall mask if not using parcellation
     if args.parc is None:
         medmask = nib.load(
-            f"{PROJ_DIR}/data/empirical/{args.species}/space-fsLR_den-32k_"
+            f"{PROJ_DIR}/data/empirical/{args.species}/space-fsLR_den-{args.den}_"
             f"hemi-L_desc-nomedialwall.func.gii"
         ).darrays[0].data.astype(bool)
 
@@ -430,15 +435,22 @@ if __name__ == "__main__":
             print(f"Warning: {num_zeros} cortical vertices have heterogeneity value of 0.")
 
         # Setup alpha parameter range
-        alpha_min, alpha_max, alpha_step = args.alpha
-        alpha_num = int(abs(alpha_max - alpha_min) / alpha_step) + 1
-        alpha_vals = np.linspace(alpha_min, alpha_max, alpha_num).round(
-            len(str(alpha_step).split('.')[-1])
-        )
-        # Remove alpha=0 (handled by homogeneous model)
-        if alpha_min < 0 < alpha_max:
-            alpha_vals = alpha_vals[alpha_vals != 0]
+        if len(args.alpha) == 1:
+            alpha_vals = args.alpha
+        else:
+            alpha_min, alpha_max, alpha_step = args.alpha
+            alpha_num = int(abs(alpha_max - alpha_min) / alpha_step) + 1
+            alpha_vals = np.linspace(alpha_min, alpha_max, alpha_num).round(
+                len(str(alpha_step).split('.')[-1])
+            )
+            # Remove alpha=0 (handled by homogeneous model)
+            if alpha_min < 0 < alpha_max:
+                alpha_vals = alpha_vals[alpha_vals != 0]
 
+    if args.aniso_label is not None:
+        aniso = load_hmap(args.aniso_label, species=args.species, density=args.den)
+    else:
+        aniso = None
 
     # Setup parameter combinations
     r_vals = args.r if len(args.r) == 1 else np.arange(args.r[0], args.r[1] + args.r[2], args.r[2])
@@ -467,6 +479,7 @@ if __name__ == "__main__":
             surf=surf, 
             medmask=medmask, 
             hmap=hmap,
+            aniso=aniso,
             args=args,
             dt_emp=dt_emp,
             dt=dt,
@@ -489,13 +502,13 @@ if __name__ == "__main__":
         
         # Load empirical FC data
         emp_outputs = {}
-        emp_fc_file = (
-            f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fc_"
-            f"{space_desc}_hemi-L_nt-{nt_emp}.h5"
-        )
-
-        with h5py.File(emp_fc_file, "r") as f:
-            emp_outputs['fc'] = f['fc_group'][:]
+        if "edge_fc_corr" in args.metrics or "node_fc_corr" in args.metrics:
+            emp_fc_file = (
+                f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fc_"
+                f"{space_desc}_hemi-L_nt-{nt_emp}.h5"
+            )
+            with h5py.File(emp_fc_file, "r") as f:
+                emp_outputs['fc'] = f['fc_group'][:]
 
         # Load empirical FCD data if needed
         if "fcd_ks" in args.metrics:
@@ -506,6 +519,15 @@ if __name__ == "__main__":
             )
             with h5py.File(emp_fcd_file, "r") as f:
                 emp_outputs['fcd'] = f['fcd_group'][:]
+
+        if "cpc1_corr" in args.metrics:
+            emp_cpcs_file = (
+                f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-cpcs_"
+                f"{space_desc}_hemi-L_freql-{args.band_freq[0]}_freqh-{args.band_freq[1]}_"
+                f"nt-{nt_emp}.h5"
+            )
+            with h5py.File(emp_cpcs_file, "r") as f:
+                emp_outputs['cpcs'] = f['cpcs_group'][:]
         
         # Evaluate all models
         results = Parallel(n_jobs=args.n_jobs, backend="loky")(
@@ -522,8 +544,10 @@ if __name__ == "__main__":
                     f"beta-{param_combs[i][3]:.1f}.h5"
                 )
                 with h5py.File(out_file, "w") as f:
-                    f.create_dataset('fc', data=model_outputs[i].get('fc', np.nan))
-                    f.create_dataset('fcd', data=model_outputs[i].get('fcd', np.nan))
+                    if args.save:
+                        f.create_dataset('fc', data=model_outputs[i].get('fc', np.nan))
+                        f.create_dataset('fcd', data=model_outputs[i].get('fcd', np.nan))
+                        f.create_dataset('cpcs', data=model_outputs[i].get('cpcs', np.nan))
 
                     results_group = f.create_group('results')
                     for metric in args.metrics:
@@ -531,9 +555,10 @@ if __name__ == "__main__":
 
         # Find best model based on combined metric
         combined = [
-            results[i].get('edge_fc_corr', 0) + 
-            results[i].get('node_fc_corr', 0) + 
-            (1 - results[i].get('fcd_ks', 0) if 'fcd_ks' in args.metrics else 0)
+            (results[i].get('edge_fc_corr', 0) if 'edge_fc_corr' in args.metrics else 0) + 
+            (results[i].get('node_fc_corr', 0) if 'node_fc_corr' in args.metrics else 0) +
+            (1 - results[i].get('fcd_ks', 0) if 'fcd_ks' in args.metrics else 0) +
+            (results[i].get('cpc1_corr', 0) if 'cpc1_corr' in args.metrics else 0)
             for i in range(len(results))
         ]
         best_ind = np.argmax(combined)
@@ -544,8 +569,10 @@ if __name__ == "__main__":
             f.create_dataset('r', data=param_combs[best_ind][1])
             f.create_dataset('gamma', data=param_combs[best_ind][2])
             f.create_dataset('beta', data=param_combs[best_ind][3])
-            f.create_dataset('fc', data=model_outputs[best_ind].get('fc', np.nan))
-            f.create_dataset('fcd', data=model_outputs[best_ind].get('fcd', np.nan))
+            if args.save:
+                f.create_dataset('fc', data=model_outputs[best_ind].get('fc', np.nan))
+                f.create_dataset('fcd', data=model_outputs[best_ind].get('fcd', np.nan))
+                f.create_dataset('cpcs', data=model_outputs[best_ind].get('cpcs', np.nan))
 
             results_group = f.create_group('results')
             for metric in args.metrics:
@@ -571,17 +598,18 @@ if __name__ == "__main__":
         emp_outputs_train = []
         emp_outputs_test = []
         
-        cv_fc_file = (
-            f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fc-kfold5_"
-            f"{space_desc}_hemi-L_nt-{nt_emp}.h5"
-        )
-        with h5py.File(cv_fc_file, "r") as f:
-            fcs_train = f['fc_train'][:]
-            fcs_test = f['fc_test'][:]
-        
-        for i in range(args.n_splits):
-            emp_outputs_train.append({'fc': fcs_train[:, :, i]})
-            emp_outputs_test.append({'fc': fcs_test[:, :, i]})
+        if 'edge_fc_corr' in args.metrics or 'node_fc_corr' in args.metrics:
+            cv_fc_file = (
+                f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-fc-kfold5_"
+                f"{space_desc}_hemi-L_nt-{nt_emp}.h5"
+            )
+            with h5py.File(cv_fc_file, "r") as f:
+                fcs_train = f['fc_train'][:]
+                fcs_test = f['fc_test'][:]
+            
+            for i in range(args.n_splits):
+                emp_outputs_train.append({'fc': fcs_train[:, :, i]})
+                emp_outputs_test.append({'fc': fcs_test[:, :, i]})
 
         # Load FCD data if needed
         if "fcd_ks" in args.metrics:
@@ -597,6 +625,21 @@ if __name__ == "__main__":
                 for i in range(args.n_splits):
                     emp_outputs_train[i]['fcd'] = fcds_train[:, :, i]
                     emp_outputs_test[i]['fcd'] = fcds_test[:, :, i]
+
+        # Load cpcs if needed
+        if "cpc1_corr" in args.metrics:
+            cv_cpcs_file = (
+                f"{PROJ_DIR}/data/empirical/{args.species}/{data_desc}_desc-cpcs-kfold5_"
+                f"{space_desc}_hemi-L_freql-{args.band_freq[0]}_freqh-{args.band_freq[1]}_"
+                f"nt-{nt_emp}.h5"
+            )
+            with h5py.File(cv_cpcs_file, "r") as f:
+                cpcs_train = f['cpcs_train'][:]
+                cpcs_test = f['cpcs_test'][:]
+                
+                for i in range(args.n_splits):
+                    emp_outputs_train[i]['cpcs'] = cpcs_train[:, :, i]
+                    emp_outputs_test[i]['cpcs'] = cpcs_test[:, :, i]
 
         # Run cross-validation
         split_results = []
@@ -632,8 +675,10 @@ if __name__ == "__main__":
                     f"beta-{param_combs[i][3]:.1f}.h5"
                 )
                 with h5py.File(out_file, "w") as f:
-                    f.create_dataset('fc', data=model_outputs[i].get('fc', np.nan))
-                    f.create_dataset('fcd', data=model_outputs[i].get('fcd', np.nan))
+                    if args.save:
+                        f.create_dataset('fc', data=model_outputs[i].get('fc', np.nan))
+                        f.create_dataset('fcd', data=model_outputs[i].get('fcd', np.nan))
+                        f.create_dataset('cpcs', data=model_outputs[i].get('cpcs', np.nan))
 
                     results_group = f.create_group('results')
                     for metric in args.metrics:
@@ -658,14 +703,19 @@ if __name__ == "__main__":
             f.create_dataset('r', data=best_combs[:, 1])
             f.create_dataset('gamma', data=best_combs[:, 2])
             f.create_dataset('beta', data=best_combs[:, 3])
-            f.create_dataset('fc', data=np.dstack([
-                model_outputs[best_indices[i]].get('fc', np.nan) 
-                for i in range(args.n_splits)
-            ]))
-            f.create_dataset('fcd', data=np.dstack([
-                model_outputs[best_indices[i]].get('fcd', np.nan) 
-                for i in range(args.n_splits)
-            ]))
+            if args.save:
+                f.create_dataset('fc', data=np.dstack([
+                    model_outputs[best_indices[i]].get('fc', np.nan) 
+                    for i in range(args.n_splits)
+                ]))
+                f.create_dataset('fcd', data=np.dstack([
+                    model_outputs[best_indices[i]].get('fcd', np.nan) 
+                    for i in range(args.n_splits)
+                ]))
+                f.create_dataset('cpcs', data=np.dstack([
+                    model_outputs[best_indices[i]].get('cpcs', np.nan) 
+                    for i in range(args.n_splits)
+                ]))
             
             results_group = f.create_group('results')
             for metric, values in best_results.items():

@@ -18,8 +18,13 @@ dependencies = [
 
 [project.optional-dependencies]
 plotting = [
+    "imageio[ffmpeg]>=2.37.2",
     "matplotlib>=3.10.3",
+    "nest-asyncio>=1.6.0",
+    "pyvista[jupter,jupyter,notebook,trame]>=0.46.4",
     "seaborn>=0.13.2",
+    "trame-vtk>=2.10.0",
+    "trame-vuetify>=3.1.0",
 ]
 dev = [
     "imageio>=2.37.2",
@@ -42,3 +47,6 @@ packages = ["heteromodes"]
 
 [tool.uv.sources]
 nsbtools = { path = "../repos/nsbtools", editable = true }
+
+[tool.uv.config-settings]
+editable_mode = "strict"
