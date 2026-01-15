@@ -9,6 +9,7 @@ and identification of optimal parameter regions.
 # %%
 import os
 import h5py
+import json
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -20,20 +21,26 @@ sns.set_theme(style="white")
 # Configuration
 PROJ_DIR = get_project_root()
 species = "human"
-id_num = 1
-hmap_label = "myelinmap"
+id_num = 0
+hmap_label = "SAaxis"
 evaluation = "crossval"  # 'fit' or 'crossval'
 
+config_file = f"{PROJ_DIR}/results/{species}/model_rest/group/id-{id_num}/run_config.json"
+with open(config_file, 'r') as f:
+    config = json.load(f)
+metrics = config['metrics']
+print(metrics)
+
 # Parameters to sweep
-param1 = "alpha"  # Note: alpha must be param1 if used
-param2 = "r"
+param1 = "gamma"  # Note: alpha must be param1 if used
+param2 = "beta"
 
 # Default parameter values (used for parameters not being swept)
 default_params = {
     'alpha': 0.0,
-    'r': 18.0,
-    'beta': 1.0,
-    'gamma': 0.116
+    'r': 30.0,
+    'beta': 5.0,
+    'gamma': 0.1
 }
 
 results_dir = f"{PROJ_DIR}/results/{species}/model_rest/group/id-{id_num}/{evaluation}"
@@ -49,7 +56,7 @@ param2_vals = param_combs[param2].unique().round(3)
 edge_fc_land = np.full((len(param1_vals), len(param2_vals)), np.nan)
 node_fc_land = np.full((len(param1_vals), len(param2_vals)), np.nan)
 fcd_land = np.full((len(param1_vals), len(param2_vals)), np.nan)
-combined_land = np.full((len(param1_vals), len(param2_vals)), np.nan)
+combined_land = np.full((len(param1_vals), len(param2_vals)), 0.0)
 
 # Load results for each parameter combination
 for i, p1 in enumerate(param1_vals):
@@ -74,16 +81,21 @@ for i, p1 in enumerate(param1_vals):
             if evaluation == "crossval":
                 edge_fc_land[i, j] = np.mean(f['results']['edge_fc_corr'][:])
                 node_fc_land[i, j] = np.mean(f['results']['node_fc_corr'][:])
-                fcd_land[i, j] = np.mean(f['results']['fcd_ks'][:])
+                if 'fcd_ks' in metrics:
+                    fcd_land[i, j] = np.mean(f['results']['fcd_ks'][:])
             else:
                 edge_fc_land[i, j] = f['results']['edge_fc_corr'][()]
                 node_fc_land[i, j] = f['results']['node_fc_corr'][()]
-                fcd_land[i, j] = f['results']['fcd_ks'][()]
+                if 'fcd_ks' in metrics:
+                    fcd_land[i, j] = f['results']['fcd_ks'][()]
             
-            # Compute combined metric
-            combined_land[i, j] = (
-                edge_fc_land[i, j] + node_fc_land[i, j] + (1 - fcd_land[i, j])
-            )
+        # Compute combined metric
+        if 'edge_fc_corr' in metrics:
+            combined_land[i, j] += edge_fc_land[i, j]
+        if 'node_fc_corr' in metrics:
+            combined_land[i, j] += node_fc_land[i, j]
+        if 'fcd_ks' in metrics:
+            combined_land[i, j] += (1 - fcd_land[i, j])
 
 # Insert homogeneous model results at alpha=0 if alpha is being swept
 if param1 == 'alpha':
@@ -91,7 +103,7 @@ if param1 == 'alpha':
     edge_fc_hom = np.full(len(param2_vals), np.nan)
     node_fc_hom = np.full(len(param2_vals), np.nan)
     fcd_hom = np.full(len(param2_vals), np.nan)
-    combined_hom = np.full(len(param2_vals), np.nan)
+    combined_hom = np.full(len(param2_vals), 0)
     
     # Load homogeneous model results for each param2 value
     for j, p2 in enumerate(param2_vals):
@@ -126,7 +138,7 @@ if param1 == 'alpha':
 
 # %%
 # Generate heatmaps for all performance metrics
-fig, axs = plt.subplots(1, 4, figsize=(18, 3))
+fig, axs = plt.subplots(1, len(metrics)+1, figsize=(len(metrics)+1*10, 3))
 
 # Common heatmap settings
 heatmap_kwargs = {
@@ -162,26 +174,26 @@ axs[1].set_xlabel(param2)
 axs[1].set_ylabel(param1)
 
 # FCD KS statistic
-sns.heatmap(
-    fcd_land, 
-    ax=axs[2], 
-    cbar_kws={'label': 'KS Statistic'},
-    **heatmap_kwargs
-)
-axs[2].set_title("FCD KS")
-axs[2].set_xlabel(param2)
-axs[2].set_ylabel(param1)
+# sns.heatmap(
+#     fcd_land, 
+#     ax=axs[2], 
+#     cbar_kws={'label': 'KS Statistic'},
+#     **heatmap_kwargs
+# )
+# axs[2].set_title("FCD KS")
+# axs[2].set_xlabel(param2)
+# axs[2].set_ylabel(param1)
 
 # Combined score
 sns.heatmap(
     combined_land, 
-    ax=axs[3], 
+    ax=axs[2], 
     cbar_kws={'label': 'Combined Score'},
     **heatmap_kwargs
 )
-axs[3].set_title("Combined Score")
-axs[3].set_xlabel(param2)
-axs[3].set_ylabel(param1)
+axs[2].set_title("Combined Score")
+axs[2].set_xlabel(param2)
+axs[2].set_ylabel(param1)
 
 plt.tight_layout()
 plt.show()
