@@ -307,8 +307,8 @@ def run_split(model_outputs, emp_outputs_train, emp_outputs_test, args):
     combined = [
         results.get('edge_fc_corr', 0) + 
         results.get('node_fc_corr', 0) + 
-        (1 - results.get('fcd_ks', 0) if 'fcd_ks' in args.metrics else 0)
-        (results.get('cpc1_corr', 0) if 'cpc1_corr' in args.metrics else 0)
+        (1 - results.get('fcd_ks', 0)) +
+        results.get('cpc1_corr', 0)
         for results in train_results
     ]
     best_ind = np.argmax(combined)
@@ -555,10 +555,10 @@ if __name__ == "__main__":
 
         # Find best model based on combined metric
         combined = [
-            (results[i].get('edge_fc_corr', 0) if 'edge_fc_corr' in args.metrics else 0) + 
-            (results[i].get('node_fc_corr', 0) if 'node_fc_corr' in args.metrics else 0) +
-            (1 - results[i].get('fcd_ks', 0) if 'fcd_ks' in args.metrics else 0) +
-            (results[i].get('cpc1_corr', 0) if 'cpc1_corr' in args.metrics else 0)
+            results[i].get('edge_fc_corr', 0) + 
+            results[i].get('node_fc_corr', 0) +
+            (1 - results[i].get('fcd_ks', 0)) +
+            results[i].get('cpc1_corr', 0)
             for i in range(len(results))
         ]
         best_ind = np.argmax(combined)
