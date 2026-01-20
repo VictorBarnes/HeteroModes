@@ -5,7 +5,7 @@ import numpy as np
 from scipy.signal import butter, filtfilt, hilbert
 from scipy.stats import zscore, ks_2samp
 from brainspace.utils.parcellation import reduce_by_labels
-from nsbtools.eigen import EigenSolver
+from neuromodes.eigen import EigenSolver
 
 
 def run_model(
@@ -13,9 +13,9 @@ def run_model(
     surf, 
     medmask=None, 
     hetero=None,
-    aniso=None,
     alpha=0, 
-    beta=1.0,
+    # aniso=None,
+    # beta=1.0,
     r=28.9, 
     gamma=0.116, 
     scaling="sigmoid", 
@@ -28,7 +28,8 @@ def run_model(
     dt_emp=720, 
     dt_model=90, 
     tsteady=500, 
-    eig_method="orthogonal", 
+    decomp_method="project",
+    pde_method="fourier",
     parc=None
 ):
     """
@@ -71,7 +72,7 @@ def run_model(
         Model simulation time step in milliseconds.
     tsteady : int, default=500
         Number of initial timepoints to discard as steady-state burn-in.
-    eig_method : str, default="orthogonal"
+    decomp_method : str, default="project"
         Eigenmode decomposition method.
     parc : array-like, optional
         Parcellation labels for aggregating vertex-wise activity.
@@ -85,11 +86,22 @@ def run_model(
     
     # Initialize eigenmode solver with model parameters
     solver = EigenSolver(
-        surf=surf, mask=medmask, hetero=hetero, aniso=aniso, n_modes=n_modes, 
-        alpha=alpha, beta=beta, r=r, gamma=gamma, scaling=scaling,
-        lump=lump, smoothit=smoothit
+        surf=surf, 
+        mask=medmask, 
+        hetero=hetero,
+        alpha=alpha,
+        scaling=scaling, 
+        # aniso=aniso, 
+        # beta=beta, 
     )
-    _, _ = solver.solve(fix_mode1=True, standardize=False)
+    solver = solver.solve(
+        n_modes=n_modes, 
+        fix_mode1=True, 
+        standardize=False,
+        seed=365,
+        lump=lump,
+        smoothit=smoothit,
+    )
 
     # Calculate total model timepoints including steady-state period
     nt_model = int(nt_emp * dt_emp / dt_model) + tsteady
@@ -102,7 +114,14 @@ def run_model(
     for i in range(n_runs):
         # Simulate neural activity and convert to BOLD signal
         bold_i = solver.simulate_waves(
-            dt=dt_model, nt=nt_model, seed=i, bold_out=True, eig_method=eig_method
+            r=r, 
+            gamma=gamma, 
+            dt=dt_model, 
+            nt=nt_model, 
+            seed=i, 
+            bold_out=True, 
+            decomp_method=decomp_method,
+            pde_method=pde_method
         ).astype(np.float32)
         
         # Remove steady-state period

@@ -878,6 +878,7 @@ dependencies = [
     { name = "fbpca" },
     { name = "h5py" },
     { name = "joblib" },
+    { name = "neuromodes" },
     { name = "nibabel" },
     { name = "nsbtools" },
     { name = "numpy" },
@@ -920,6 +921,7 @@ requires-dist = [
     { name = "memory-profiler", marker = "extra == 'dev'", specifier = ">=0.61.0" },
     { name = "nest-asyncio", marker = "extra == 'plotting'", specifier = ">=1.6.0" },
     { name = "neuromaps", marker = "extra == 'dev'", specifier = ">=0.0.5" },
+    { name = "neuromodes", directory = "../repos/neuromodes" },
     { name = "nibabel", specifier = ">=5.3.2" },
     { name = "nsbtools", editable = "../repos/nsbtools" },
     { name = "numba", marker = "extra == 'dev'", specifier = ">=0.62.1" },
@@ -2047,6 +2049,34 @@ sdist = { url = "https://files.pythonhosted.org/packages/7b/61/49ce118a84941b06e
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8f/19/449248987253adcaa4836678438318b88d8f192ec138df4fb5b6c2f2c747/neuromaps-0.0.5-py3-none-any.whl", hash = "sha256:dc4613b8092fe254324c13e007a29c8afd5a1dddef7093b91eae7a9f172cd248", size = 101723, upload-time = "2024-02-01T23:49:59.496Z" },
 ]
+
+[[package]]
+name = "neuromodes"
+version = "0.1.0"
+source = { directory = "../repos/neuromodes" }
+dependencies = [
+    { name = "lapy" },
+    { name = "nibabel" },
+    { name = "numpy" },
+    { name = "scipy" },
+    { name = "trimesh" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ipykernel", marker = "extra == 'tutorials'", specifier = ">=6.31.0" },
+    { name = "joblib", marker = "extra == 'cache'", specifier = ">=1.5.3" },
+    { name = "joblib", marker = "extra == 'testing'", specifier = ">=1.5.3" },
+    { name = "lapy", specifier = ">=1.1.0" },
+    { name = "matplotlib", marker = "extra == 'tutorials'", specifier = ">=3.9.4" },
+    { name = "nibabel", specifier = ">=5.2.1" },
+    { name = "nsbutils", marker = "extra == 'tutorials'", git = "https://github.com/NSBLab/nsbutils.git?rev=dev" },
+    { name = "numpy", specifier = ">=1.24.4" },
+    { name = "pytest", marker = "extra == 'testing'", specifier = ">=8.4.2" },
+    { name = "scipy", specifier = ">=1.10.1" },
+    { name = "trimesh", specifier = ">=4.8.1" },
+]
+provides-extras = ["testing", "tutorials", "cache"]
 
 [[package]]
 name = "nibabel"

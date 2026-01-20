@@ -46,7 +46,4 @@ build-backend = "setuptools.build_meta"
 packages = ["heteromodes"]
 
 [tool.uv.sources]
-nsbtools = { path = "../repos/nsbtools", editable = true }
-
-[tool.uv.config-settings]
-editable_mode = "strict"
+neuromodes = { path = "../repos/neuromodes", editable = true }
