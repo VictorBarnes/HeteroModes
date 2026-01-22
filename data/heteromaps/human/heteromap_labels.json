@@ -6,7 +6,7 @@
         "odi": "ODI",
         "ndi": "NDI",
         "genel4PC1": "Layer IV",
-        "eiratio1.2": "E:I ratio",
+        "eiratio": "E:I ratio",
         "megtimescale": "MEG timescale",
         "SAaxis": "SA axis"
     },
@@ -18,7 +18,7 @@
         "odi": "source-fukutomi2018_desc-odi_space-fsLR_den-4k_hemi-L.func.gii",
         "ndi": "source-fukutomi2018_desc-ndi_space-fsLR_den-4k_hemi-L.func.gii",
         "genel4PC1": "source-wagstyl2024_desc-genel4PC1_space-fsLR_den-4k_hemi-L.func.gii",
-        "eiratio1.2": "source-wagstyl2024_desc-eiratio1.2_space-fsLR_den-4k_hemi-L.func.gii",
+        "eiratio": "source-wagstyl2024_desc-eiratio_space-fsLR_den-4k_hemi-L.func.gii",
         "megtimescale": "source-hcps1200_desc-megtimescale_space-fsLR_den-4k_hemi-L.func.gii",
         "SAaxis": "source-sydnor2021_desc-SAaxis_space-fsLR_den-4k_hemi-L.func.gii"
     }
