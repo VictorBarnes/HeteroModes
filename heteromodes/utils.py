@@ -1,5 +1,7 @@
 """Utility functions for data loading and preprocessing."""
 
+import io
+from PIL import Image
 import json
 import numpy as np
 import nibabel as nib
@@ -132,3 +134,33 @@ def pad_sequences(sequences, val=-1):
     ]
 
     return np.array(padded_sequences)
+
+def fig_to_array(fig, dpi=None, pad_inches=0.0):
+    """
+    Convert a matplotlib figure to a numpy array.
+    
+    Parameters
+    ----------
+    fig : matplotlib.figure.Figure
+        The matplotlib figure to convert.
+    dpi : float, optional
+        Resolution in dots per inch. If None, uses the figure's dpi.
+    pad_inches : float, default=0.0
+        Amount of padding around the figure when saving.
+    
+    Returns
+    -------
+    np.ndarray
+        RGB image array with shape (height, width, 3).
+    """
+    # Save figure to a bytes buffer
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight', pad_inches=pad_inches)
+    buf.seek(0)
+    
+    # Load image from buffer and convert to numpy array
+    img = Image.open(buf)
+    img_array = np.array(img)
+    buf.close()
+    
+    return img_array

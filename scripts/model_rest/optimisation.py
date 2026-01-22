@@ -39,7 +39,7 @@ def save_run_config(args, id_dir):
     id_dir : str
         ID directory path (not the full output directory).
     """
-    config_file = f"{id_dir}/run_config.json"
+    config_file = f"{id_dir}/config.json"
     os.makedirs(id_dir, exist_ok=True)
     
     # Convert args to dictionary and exclude certain keys
@@ -71,10 +71,7 @@ def save_run_config(args, id_dir):
             print(f"\nWARNING: Run configuration differs from existing run in {id_dir}:")
             for conflict in conflicts:
                 print(conflict)
-            response = input("\nContinue and overwrite config? (y/n): ")
-            if response.lower() != 'y':
-                print("Exiting to avoid overwriting existing results.")
-                exit(0)
+            print("\nOverwriting existing config (running in batch mode).")
     
     # Save config
     with open(config_file, 'w') as f:
@@ -331,6 +328,11 @@ if __name__ == "__main__":
 
     # Parse and normalize arguments
     args = parse_arguments()
+    # Define ID directory (before hmap-specific subdirectories)
+    id_dir = f'{PROJ_DIR}/results/{args.species}/model_rest/group/id-{args.id}'
+    # Save and check run configuration
+    save_run_config(args, id_dir)
+    
     if args.hmap_label == "None":
         args.hmap_label = None
     if args.aniso_label == "None":
@@ -355,11 +357,6 @@ if __name__ == "__main__":
     data_desc = DATA_DESC_SPECIES[args.species]
     tsteady = 550  # Number of timepoints to discard as burn-in (~45 seconds at 90ms dt)
 
-    # Define ID directory (before hmap-specific subdirectories)
-    id_dir = f'{PROJ_DIR}/results/{args.species}/model_rest/group/id-{args.id}'
-
-    # Save and check run configuration
-    save_run_config(args, id_dir)
 
     out_dir = (
         f'{id_dir}/'

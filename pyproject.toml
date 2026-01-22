@@ -4,6 +4,10 @@ version = "0.1.0"
 description = "Toolbox for simulating and analyzing heterogeneous wave dynamics based on neural field theory."
 readme = "README.md"
 requires-python = ">=3.10"
+authors = [
+    { name = "Victor Barnes", email = "victor.barnes365@gmail.com" }
+]
+keywords = ["neuroscience", "brain dynamics", "computational modeling"]
 dependencies = [
     "brainspace>=0.1.20",
     "fbpca>=1.0",
@@ -13,7 +17,7 @@ dependencies = [
     "numpy>=2.0.2",
     "scipy>=1.13.1",
     "tqdm>=4.67.1",
-    "neuromodes @ git+https://github.com/VictorBarnes/neuromodes.git@dev"
+    "neuromodes @ git+https://github.com/VictorBarnes/neuromodes.git@dev",
 ]
 
 [project.optional-dependencies]
@@ -25,6 +29,7 @@ plotting = [
     "seaborn>=0.13.2",
     "trame-vtk>=2.10.0",
     "trame-vuetify>=3.1.0",
+    "nsbutils @ git+https://github.com/VictorBarnes/nsbutils.git@dev",
 ]
 dev = [
     "imageio>=2.37.2",

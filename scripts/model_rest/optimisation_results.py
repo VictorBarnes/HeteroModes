@@ -22,7 +22,7 @@ PROJ_DIR = get_project_root()
 # %%
 # Configuration
 species = "human"
-ids = {1: '1'}
+ids = {63: '63'}
 evaluation = "crossval"
 
 # Load heterogeneity map labels
@@ -41,7 +41,7 @@ for id_num in ids.keys():
     
     # Load evaluation metrics from config
     with open(f"{PROJ_DIR}/results/{species}/model_rest/group/id-{id_num}/config.json", "r") as f:
-        metrics = json.load(f)["metrics"].split(" ")
+        metrics = json.load(f)["metrics"]
     
     for hmap_label in hmap_labels.keys():
         file = f"{results_dir}/{hmap_label}/best_model.h5"
@@ -170,7 +170,7 @@ if "edge_fc_corr" in metrics:
         data=edge_fc_df, x='hmap_label', y='value', hue="id", 
         order=sorted_hmap_labels, ax=axs[plot_idx], errorbar="sd", palette="deep"
     )
-    axs[plot_idx].set_xticks(range(len(hmap_labels)))
+    axs[plot_idx].set_xticks(range(len(sorted_hmap_labels)))
     axs[plot_idx].set_xticklabels(sorted_plotting_labels, ha="right", rotation=45)
     
     # Update legend labels
@@ -192,7 +192,7 @@ if "node_fc_corr" in metrics:
         data=node_fc_df, x='hmap_label', y='value', hue="id", 
         order=sorted_hmap_labels, ax=axs[plot_idx], errorbar="sd", palette="deep"
     )
-    axs[plot_idx].set_xticks(range(len(hmap_labels)))
+    axs[plot_idx].set_xticks(range(len(sorted_hmap_labels)))
     axs[plot_idx].set_xticklabels(sorted_plotting_labels, ha="right", rotation=45)
     
     handles, labels = axs[plot_idx].get_legend_handles_labels()
@@ -216,7 +216,7 @@ if "fcd_ks" in metrics:
         data=fcd_plot_df, x='hmap_label', y='value', hue="id", 
         order=sorted_hmap_labels, ax=axs[plot_idx], errorbar="sd", palette="deep"
     )
-    axs[plot_idx].set_xticks(range(len(hmap_labels)))
+    axs[plot_idx].set_xticks(range(len(sorted_hmap_labels)))
     axs[plot_idx].set_xticklabels(sorted_plotting_labels, ha="right", rotation=45)
     
     handles, labels = axs[plot_idx].get_legend_handles_labels()
@@ -236,7 +236,7 @@ sns.barplot(
     data=combined_df, x='hmap_label', y='value', hue="id", 
     order=sorted_hmap_labels, ax=axs[plot_idx], errorbar="sd", palette="deep"
 )
-axs[plot_idx].set_xticks(range(len(hmap_labels)))
+axs[plot_idx].set_xticks(range(len(sorted_hmap_labels)))
 axs[plot_idx].set_xticklabels(sorted_plotting_labels, ha="right", rotation=45)
 
 handles, labels = axs[plot_idx].get_legend_handles_labels()
@@ -262,7 +262,7 @@ sns.barplot(
     data=alpha_df, x='hmap_label', y='value', hue="id", 
     order=sorted_hmap_labels, ax=axs[0], palette="deep"
 )
-axs[0].set_xticks(range(len(hmap_labels)))
+axs[0].set_xticks(range(len(sorted_hmap_labels)))
 axs[0].set_xticklabels(sorted_plotting_labels, ha="right", rotation=45)
 
 handles, labels = axs[0].get_legend_handles_labels()
@@ -279,7 +279,7 @@ sns.barplot(
     data=r_df, x='hmap_label', y='value', hue="id", 
     order=sorted_hmap_labels, ax=axs[1], palette="deep"
 )
-axs[1].set_xticks(range(len(hmap_labels)))
+axs[1].set_xticks(range(len(sorted_hmap_labels)))
 axs[1].set_xticklabels(sorted_plotting_labels, ha="right", rotation=45)
 
 handles, labels = axs[1].get_legend_handles_labels()

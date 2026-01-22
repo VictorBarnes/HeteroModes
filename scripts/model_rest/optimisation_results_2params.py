@@ -21,26 +21,26 @@ sns.set_theme(style="white")
 # Configuration
 PROJ_DIR = get_project_root()
 species = "human"
-id_num = 0
-hmap_label = "SAaxis"
+id_num = 63
+hmap_label = "myelinmap"
 evaluation = "crossval"  # 'fit' or 'crossval'
 
-config_file = f"{PROJ_DIR}/results/{species}/model_rest/group/id-{id_num}/run_config.json"
+config_file = f"{PROJ_DIR}/results/{species}/model_rest/group/id-{id_num}/config.json"
 with open(config_file, 'r') as f:
     config = json.load(f)
 metrics = config['metrics']
 print(metrics)
 
 # Parameters to sweep
-param1 = "gamma"  # Note: alpha must be param1 if used
-param2 = "beta"
+param1 = "alpha"  # Note: alpha must be param1 if used
+param2 = "r"
 
 # Default parameter values (used for parameters not being swept)
 default_params = {
     'alpha': 0.0,
     'r': 30.0,
-    'beta': 5.0,
-    'gamma': 0.1
+    'beta': 1.0,
+    'gamma': 0.116
 }
 
 results_dir = f"{PROJ_DIR}/results/{species}/model_rest/group/id-{id_num}/{evaluation}"
@@ -79,13 +79,17 @@ for i, p1 in enumerate(param1_vals):
         # Load results (average across CV splits if using cross-validation)
         with h5py.File(file_path, "r") as f:
             if evaluation == "crossval":
-                edge_fc_land[i, j] = np.mean(f['results']['edge_fc_corr'][:])
-                node_fc_land[i, j] = np.mean(f['results']['node_fc_corr'][:])
+                if 'edge_fc_corr' in metrics:
+                    edge_fc_land[i, j] = np.mean(f['results']['edge_fc_corr'][:])
+                if 'node_fc_corr' in metrics:
+                    node_fc_land[i, j] = np.mean(f['results']['node_fc_corr'][:])
                 if 'fcd_ks' in metrics:
                     fcd_land[i, j] = np.mean(f['results']['fcd_ks'][:])
             else:
-                edge_fc_land[i, j] = f['results']['edge_fc_corr'][()]
-                node_fc_land[i, j] = f['results']['node_fc_corr'][()]
+                if 'edge_fc_corr' in metrics:
+                    edge_fc_land[i, j] = f['results']['edge_fc_corr'][()]
+                if 'node_fc_corr' in metrics:
+                    node_fc_land[i, j] = f['results']['node_fc_corr'][()]
                 if 'fcd_ks' in metrics:
                     fcd_land[i, j] = f['results']['fcd_ks'][()]
             
@@ -100,9 +104,9 @@ for i, p1 in enumerate(param1_vals):
 # Insert homogeneous model results at alpha=0 if alpha is being swept
 if param1 == 'alpha':
     # Initialize homogeneous result arrays
-    edge_fc_hom = np.full(len(param2_vals), np.nan)
-    node_fc_hom = np.full(len(param2_vals), np.nan)
-    fcd_hom = np.full(len(param2_vals), np.nan)
+    edge_fc_hom = np.full(len(param2_vals), 0)
+    node_fc_hom = np.full(len(param2_vals), 0)
+    fcd_hom = np.full(len(param2_vals), 0)
     combined_hom = np.full(len(param2_vals), 0)
     
     # Load homogeneous model results for each param2 value
@@ -117,13 +121,19 @@ if param1 == 'alpha':
         
         with h5py.File(file_path, 'r') as f:
             if evaluation == "crossval":
-                edge_fc_hom[j] = np.mean(f['results']['edge_fc_corr'][:])
-                node_fc_hom[j] = np.mean(f['results']['node_fc_corr'][:])
-                fcd_hom[j] = np.mean(f['results']['fcd_ks'][:])
+                if 'edge_fc_corr' in metrics:
+                    edge_fc_hom[j] = np.mean(f['results']['edge_fc_corr'][:])
+                if 'node_fc_corr' in metrics:
+                    node_fc_hom[j] = np.mean(f['results']['node_fc_corr'][:])
+                if 'fcd_ks' in metrics:
+                    fcd_hom[j] = np.mean(f['results']['fcd_ks'][:])
             else:
-                edge_fc_hom[j] = f['results']['edge_fc_corr'][()]
-                node_fc_hom[j] = f['results']['node_fc_corr'][()]
-                fcd_hom[j] = f['results']['fcd_ks'][()]
+                if 'edge_fc_corr' in metrics:
+                    edge_fc_hom[j] = f['results']['edge_fc_corr'][()]
+                if 'node_fc_corr' in metrics:
+                    node_fc_hom[j] = f['results']['node_fc_corr'][()]
+                if 'fcd_ks' in metrics:
+                    fcd_hom[j] = f['results']['fcd_ks'][()]
             
             combined_hom[j] = edge_fc_hom[j] + node_fc_hom[j] + (1 - fcd_hom[j])
 
@@ -136,13 +146,14 @@ if param1 == 'alpha':
     param1_vals = np.insert(param1_vals, hom_ind, 0.0)
 
 
+
 # %%
 # Generate heatmaps for all performance metrics
-fig, axs = plt.subplots(1, len(metrics)+1, figsize=(len(metrics)+1*10, 3))
+fig, axs = plt.subplots(len(metrics)+1, 1, figsize=(8, (len(metrics)+1)*4))
 
 # Common heatmap settings
 heatmap_kwargs = {
-    'annot': True,
+    'annot': False,
     'fmt': '.2f',
     'cmap': 'viridis',
     'square': True,
@@ -152,48 +163,56 @@ heatmap_kwargs = {
 }
 
 # Edge-level FC
-sns.heatmap(
-    edge_fc_land, 
-    ax=axs[0], 
-    cbar_kws={'label': "Pearson's r"},
-    **heatmap_kwargs
-)
-axs[0].set_title("Edge-level FC")
-axs[0].set_xlabel(param2)
-axs[0].set_ylabel(param1)
+ax_i = 0
+if 'edge_fc_corr' in metrics:
+    sns.heatmap(
+        edge_fc_land, 
+        ax=axs[ax_i], 
+        cbar_kws={'label': "Pearson's r"},
+        **heatmap_kwargs
+    )
+    axs[ax_i].set_title("Edge-level FC")
+    axs[ax_i].set_xlabel(param2)
+    axs[ax_i].set_ylabel(param1)
+
+    ax_i += 1
 
 # Node-level FC
-sns.heatmap(
-    node_fc_land, 
-    ax=axs[1], 
-    cbar_kws={'label': "Pearson's r"},
-    **heatmap_kwargs
-)
-axs[1].set_title("Node-level FC")
-axs[1].set_xlabel(param2)
-axs[1].set_ylabel(param1)
+if 'node_fc_corr' in metrics:
+    sns.heatmap(
+        node_fc_land, 
+        ax=axs[ax_i], 
+        cbar_kws={'label': "Pearson's r"},
+        **heatmap_kwargs
+    )
+    axs[ax_i].set_title("Node-level FC")
+    axs[ax_i].set_xlabel(param2)
+    axs[ax_i].set_ylabel(param1)
+
+    ax_i += 1
 
 # FCD KS statistic
-# sns.heatmap(
-#     fcd_land, 
-#     ax=axs[2], 
-#     cbar_kws={'label': 'KS Statistic'},
-#     **heatmap_kwargs
-# )
-# axs[2].set_title("FCD KS")
-# axs[2].set_xlabel(param2)
-# axs[2].set_ylabel(param1)
+if 'fcd_ks' in metrics:
+    sns.heatmap(
+        fcd_land, 
+        ax=axs[ax_i], 
+        cbar_kws={'label': 'KS Statistic'},
+        **heatmap_kwargs
+    )
+    axs[ax_i].set_title("FCD KS")
+    axs[ax_i].set_xlabel(param2)
+    axs[ax_i].set_ylabel(param1)
 
 # Combined score
 sns.heatmap(
     combined_land, 
-    ax=axs[2], 
+    ax=axs[ax_i], 
     cbar_kws={'label': 'Combined Score'},
     **heatmap_kwargs
 )
-axs[2].set_title("Combined Score")
-axs[2].set_xlabel(param2)
-axs[2].set_ylabel(param1)
+axs[ax_i].set_title("Combined Score")
+axs[ax_i].set_xlabel(param2)
+axs[ax_i].set_ylabel(param1)
 
 plt.tight_layout()
 plt.show()

@@ -26,7 +26,7 @@ hmap_label = "SAaxis"
 evaluation = "fit"  # 'fit' or 'crossval'
 plot_combined = False
 
-config_file = f"{PROJ_DIR}/results/{species}/model_rest/group/id-{id_num}/run_config.json"
+config_file = f"{PROJ_DIR}/results/{species}/model_rest/group/id-{id_num}/config.json"
 with open(config_file, 'r') as f:
     config = json.load(f)
 metrics = config['metrics']
