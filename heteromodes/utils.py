@@ -39,7 +39,7 @@ def load_hmap(hmap_label, species="human", density="4k", data_dir=None):
     Parameters
     ----------
     hmap_label : str
-        Label identifying the heterogeneity map in heteromap_labels.json.
+        Label identifying the heterogeneity map in heteromaps_config.json.
     species : str, default="human"
         Species identifier ("human", "macaque", etc.).
     density : str, default="4k"
@@ -67,6 +67,8 @@ def load_hmap(hmap_label, species="human", density="4k", data_dir=None):
         raise ValueError(
             f"Invalid density '{density}'. Must be one of {valid_densities}."
         )
+    if density == "32k" and species != "human":
+        raise ValueError("32k density is only available for human species.")
     
     # Use default data directory if not provided
     if data_dir is None:
@@ -76,11 +78,11 @@ def load_hmap(hmap_label, species="human", density="4k", data_dir=None):
         data_dir = Path(data_dir)
 
     # Load heterogeneity map file path from configuration
-    config_file = data_dir / "heteromap_labels.json"
+    config_file = data_dir / "heteromaps_config.json"
     with open(config_file, "r") as f:
         config = json.load(f)
     
-    hetero_file = config.get("heteromap_files", {}).get(hmap_label)
+    hetero_file = config.get(hmap_label, {}).get("file", None)
     
     if hetero_file is None:
         raise FileNotFoundError(

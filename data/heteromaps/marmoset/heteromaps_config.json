@@ -1,0 +1,14 @@
+{
+    "myelinmap": {
+        "label": "T1w/T2w",
+        "file": "source-liu2021_space-fsLR_den-4k_hemi-L_desc-myelinmap.func.gii"
+    },
+    "thickness": {
+        "label": "Cortical thickness",
+        "file": "source-liu2021_space-fsLR_den-4k_hemi-L_desc-thickness.func.gii"
+    },
+    "nissl": {
+        "label": "Nissl",
+        "file": "source-majka2021_space-fsLR_den-4k_hemi-L_desc-nissl.func.gii"
+    }
+}

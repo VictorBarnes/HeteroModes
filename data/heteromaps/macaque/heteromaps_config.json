@@ -1,0 +1,78 @@
+{
+    "myelinmap": {
+        "label": "T1w/T2w",
+        "file": "source-hayashi2021_space-fsLR_den-4k_hemi-L_desc-myelinmap.func.gii"
+    },
+    "thickness": {
+        "label": "Cortical thickness",
+        "file": "source-hayashi2021_space-fsLR_den-4k_hemi-L_desc-thickness.func.gii"
+    },
+    "ampa": {
+        "label": "AMPA",
+        "file": "source-funck2022_space-fsLR_den-4k_hemi-L_desc-ampa.func.gii"
+    },
+    "cgp5": {
+        "label": "GABA-B",
+        "file": "source-funck2022_space-fsLR_den-4k_hemi-L_desc-cgp5.func.gii"
+    },
+    "damp": {
+        "label": "M3",
+        "file": "source-funck2022_space-fsLR_den-4k_hemi-L_desc-damp.func.gii"
+    },
+    "dpat": {
+        "label": "5-HT1A",
+        "file": "source-funck2022_space-fsLR_den-4k_hemi-L_desc-dpat.func.gii"
+    },
+    "exh": {
+        "label": "Avg. excitatory",
+        "file": "source-funck2022_space-fsLR_den-4k_hemi-L_desc-exh.func.gii"
+    },
+    "flum": {
+        "label": "GABA-A/BZ",
+        "file": "source-funck2022_space-fsLR_den-4k_hemi-L_desc-flum.func.gii"
+    },
+    "inh": {
+        "label": "Avg. inhibitory",
+        "file": "source-funck2022_space-fsLR_den-4k_hemi-L_desc-inh.func.gii"
+    },
+    "kain": {
+        "label": "Kainate",
+        "file": "source-funck2022_space-fsLR_den-4k_hemi-L_desc-kain.func.gii"
+    },
+    "keta": {
+        "label": "5-HT2",
+        "file": "source-funck2022_space-fsLR_den-4k_hemi-L_desc-keta.func.gii"
+    },
+    "mk80": {
+        "label": "NMDA",
+        "file": "source-funck2022_space-fsLR_den-4k_hemi-L_desc-mk80.func.gii"
+    },
+    "mod": {
+        "label": "Avg. modulatory",
+        "file": "source-funck2022_space-fsLR_den-4k_hemi-L_desc-mod.func.gii"
+    },
+    "musc": {
+        "label": "GABA-A",
+        "file": "source-funck2022_space-fsLR_den-4k_hemi-L_desc-musc.func.gii"
+    },
+    "oxot": {
+        "label": "M2",
+        "file": "source-funck2022_space-fsLR_den-4k_hemi-L_desc-oxot.func.gii"
+    },
+    "pire": {
+        "label": "M1",
+        "file": "source-funck2022_space-fsLR_den-4k_hemi-L_desc-pire.func.gii"
+    },
+    "praz": {
+        "label": "alpha-1",
+        "file": "source-funck2022_space-fsLR_den-4k_hemi-L_desc-praz.func.gii"
+    },
+    "uk14": {
+        "label": "alpha-2",
+        "file": "source-funck2022_space-fsLR_den-4k_hemi-L_desc-uk14.func.gii"
+    },
+    "eiratio": {
+        "label": "E:I ratio",
+        "file": "source-funck2022_space-fsLR_den-4k_hemi-L_desc-eiratio.func.gii"
+    }
+}

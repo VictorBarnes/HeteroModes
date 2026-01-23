@@ -26,8 +26,9 @@ ids = {63: '63'}
 evaluation = "crossval"
 
 # Load heterogeneity map labels
-with open(f"{PROJ_DIR}/data/heteromaps/{species}/heteromap_labels.json", "r") as f:
-    hmap_labels = json.load(f)["heteromap_labels"]
+with open(f"{PROJ_DIR}/data/heteromaps/{species}/heteromaps_config.json", "r") as f:
+    config = json.load(f)
+    hmap_labels = {key: val["label"] for key, val in config.items()}
 hmap_labels["None"] = "Homogeneous"
 
 

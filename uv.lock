@@ -880,7 +880,6 @@ dependencies = [
     { name = "joblib" },
     { name = "neuromodes" },
     { name = "nibabel" },
-    { name = "nsbtools" },
     { name = "numpy" },
     { name = "scipy" },
     { name = "tqdm" },
@@ -896,12 +895,14 @@ dev = [
     { name = "numexpr" },
     { name = "scikit-learn" },
     { name = "setuptools" },
+    { name = "tetgen" },
     { name = "tqdm" },
 ]
 plotting = [
     { name = "imageio", extra = ["ffmpeg"] },
     { name = "matplotlib" },
     { name = "nest-asyncio" },
+    { name = "nsbutils" },
     { name = "pyvista", extra = ["jupyter"] },
     { name = "seaborn" },
     { name = "trame-vtk" },
@@ -921,9 +922,9 @@ requires-dist = [
     { name = "memory-profiler", marker = "extra == 'dev'", specifier = ">=0.61.0" },
     { name = "nest-asyncio", marker = "extra == 'plotting'", specifier = ">=1.6.0" },
     { name = "neuromaps", marker = "extra == 'dev'", specifier = ">=0.0.5" },
-    { name = "neuromodes", directory = "../repos/neuromodes" },
+    { name = "neuromodes", git = "https://github.com/VictorBarnes/neuromodes.git?rev=dev" },
     { name = "nibabel", specifier = ">=5.3.2" },
-    { name = "nsbtools", editable = "../repos/nsbtools" },
+    { name = "nsbutils", marker = "extra == 'plotting'", git = "https://github.com/VictorBarnes/nsbutils.git?rev=dev" },
     { name = "numba", marker = "extra == 'dev'", specifier = ">=0.62.1" },
     { name = "numexpr", marker = "extra == 'dev'", specifier = ">=2.14.1" },
     { name = "numpy", specifier = ">=2.0.2" },
@@ -932,6 +933,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.13.1" },
     { name = "seaborn", marker = "extra == 'plotting'", specifier = ">=0.13.2" },
     { name = "setuptools", marker = "extra == 'dev'", specifier = ">=80.9.0" },
+    { name = "tetgen", marker = "extra == 'dev'", specifier = ">=0.7.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "tqdm", marker = "extra == 'dev'", specifier = ">=4.67.1" },
     { name = "trame-vtk", marker = "extra == 'plotting'", specifier = ">=2.10.0" },
@@ -2053,7 +2055,7 @@ wheels = [
 [[package]]
 name = "neuromodes"
 version = "0.1.0"
-source = { directory = "../repos/neuromodes" }
+source = { git = "https://github.com/VictorBarnes/neuromodes.git?rev=dev#db30e56bec307801c01f2ede6d9000c9aa1ff4a1" }
 dependencies = [
     { name = "lapy" },
     { name = "nibabel" },
@@ -2061,22 +2063,6 @@ dependencies = [
     { name = "scipy" },
     { name = "trimesh" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "ipykernel", marker = "extra == 'tutorials'", specifier = ">=6.31.0" },
-    { name = "joblib", marker = "extra == 'cache'", specifier = ">=1.5.3" },
-    { name = "joblib", marker = "extra == 'testing'", specifier = ">=1.5.3" },
-    { name = "lapy", specifier = ">=1.1.0" },
-    { name = "matplotlib", marker = "extra == 'tutorials'", specifier = ">=3.9.4" },
-    { name = "nibabel", specifier = ">=5.2.1" },
-    { name = "nsbutils", marker = "extra == 'tutorials'", git = "https://github.com/NSBLab/nsbutils.git?rev=dev" },
-    { name = "numpy", specifier = ">=1.24.4" },
-    { name = "pytest", marker = "extra == 'testing'", specifier = ">=8.4.2" },
-    { name = "scipy", specifier = ">=1.10.1" },
-    { name = "trimesh", specifier = ">=4.8.1" },
-]
-provides-extras = ["testing", "tutorials", "cache"]
 
 [[package]]
 name = "nibabel"
@@ -2114,42 +2100,15 @@ wheels = [
 ]
 
 [[package]]
-name = "nsbtools"
+name = "nsbutils"
 version = "0.1.0"
-source = { editable = "../repos/nsbtools" }
+source = { git = "https://github.com/VictorBarnes/nsbutils.git?rev=dev#5a098c9c734e0349d12e3b1cfb939e2be9c389e8" }
 dependencies = [
-    { name = "brainspace" },
-    { name = "joblib" },
-    { name = "lapy" },
     { name = "matplotlib" },
-    { name = "nibabel" },
     { name = "numpy" },
     { name = "scipy" },
     { name = "surfplot" },
-    { name = "trimesh" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "brainspace", specifier = ">=0.1.20" },
-    { name = "ipykernel", marker = "extra == 'tutorials'", specifier = ">=6.31.0" },
-    { name = "joblib", specifier = ">=1.4.2" },
-    { name = "kaleido", marker = "extra == 'tutorials'", specifier = ">=1.1.0" },
-    { name = "lapy", specifier = ">=1.1.0" },
-    { name = "matplotlib", specifier = ">=3.7.5" },
-    { name = "nbformat", marker = "extra == 'tutorials'", specifier = ">=5.10.4" },
-    { name = "neuromaps", marker = "extra == 'tutorials'", specifier = ">=0.0.5" },
-    { name = "nibabel", specifier = ">=5.2.1" },
-    { name = "numpy", specifier = ">=1.24.4" },
-    { name = "pytest", marker = "extra == 'testing'", specifier = ">=8.4.2" },
-    { name = "scipy", specifier = ">=1.10.1" },
-    { name = "surfplot", specifier = ">=0.2.0" },
-    { name = "trimesh", specifier = ">=4.8.1" },
-]
-provides-extras = ["testing", "tutorials"]
-
-[package.metadata.requires-dev]
-plotly = []
 
 [[package]]
 name = "numba"
@@ -3317,6 +3276,30 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8a/11/965c6fd8e5cc254f1fe142d547387da17a8ebfd75a3455f637c663fb38a0/terminado-0.18.1.tar.gz", hash = "sha256:de09f2c4b85de4765f7714688fff57d3e75bad1f909b589fde880460c753fd2e", size = 32701, upload-time = "2024-03-12T14:34:39.026Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6a/9e/2064975477fdc887e47ad42157e214526dcad8f317a948dee17e1659a62f/terminado-0.18.1-py3-none-any.whl", hash = "sha256:a4468e1b37bb318f8a86514f65814e1afc977cf29b3992a4500d9dd305dcceb0", size = 14154, upload-time = "2024-03-12T14:34:36.569Z" },
+]
+
+[[package]]
+name = "tetgen"
+version = "0.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pyvista" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6d/ba/dccbdad0ab662ff7533d55d9a39872e98ae02172daf967d4b9523c1d474e/tetgen-0.7.0.tar.gz", hash = "sha256:9b0778d210b20a4ac3c9105fa1f7fd40d74ad5afb3ab404daa6df348b411f826", size = 528744, upload-time = "2025-11-25T20:34:30.7Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d6/d1/18ba4813e51d53e0bd6b29b2807080b7b7c313243d371dee9a716e828e50/tetgen-0.7.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:2f3a592e84db4d81d62bb62e6fc1b7126dae913ce502f683607f2a6cc3aa6a3d", size = 456652, upload-time = "2025-11-25T20:34:08.082Z" },
+    { url = "https://files.pythonhosted.org/packages/00/89/37cf2412071fea04e8c7ad828108f614bdb24ae7ced3f52d78205a351fc1/tetgen-0.7.0-cp310-cp310-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:23789e4fdf34c2615b59c7ab2f119c51b5ff49a413876d901ecc01fd60a5d811", size = 2216515, upload-time = "2025-11-25T20:34:10.275Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/fb/6cd60c9f779d76d6c9b1e39c8114ddee986fa16053eea756ee36b1de8c3e/tetgen-0.7.0-cp310-cp310-win_amd64.whl", hash = "sha256:3de49c4be8a4fbaa8b40d1128966f32afb6302528a257ce8aa94222106a74583", size = 353188, upload-time = "2025-11-25T20:34:12.029Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/c6/b805d39d1cdf5452c10756d95be2059fae393a95cf86197e202e3a7a661b/tetgen-0.7.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:a94f965c87b78315bf0ea0178aec9d67fe6a65c74f6547b4b68db5987aa95ffd", size = 458268, upload-time = "2025-11-25T20:34:13.62Z" },
+    { url = "https://files.pythonhosted.org/packages/38/42/8fdf579385ba52c7a4ff19cfe44c35123b432a0374d7ddcdd9bf891dc726/tetgen-0.7.0-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:9fbe32e96685f5f594f0f8512ee59839975b1d6a7182424427c1d3363d721ac8", size = 2255344, upload-time = "2025-11-25T20:34:15.674Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/08/c769740601c073f5952b0e8175e4df5894f07de5267f7bbbbcbdbac096eb/tetgen-0.7.0-cp311-cp311-win_amd64.whl", hash = "sha256:7f9590da2c7a0a077f7582634b7980d663a406048166160b44a6da85a17723af", size = 353185, upload-time = "2025-11-25T20:34:17.245Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/fd/71686ced199170bac3b14e9d3798d0b272391e1760154100294683ecab3b/tetgen-0.7.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:7d500c26b6188fb06a8a5e983227f25de7d2b5dfbfc21fc16274743d2d358ffa", size = 457522, upload-time = "2025-11-25T20:34:18.99Z" },
+    { url = "https://files.pythonhosted.org/packages/53/9d/2824cd01d204151f57f33c1a8ac0064b96c474adb27066a35dedaf6b0651/tetgen-0.7.0-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:b66a15c4fade6b7e25d975fe87a38b2ae346463ba7de21c147774b5add6d90ab", size = 2268315, upload-time = "2025-11-25T20:34:21.542Z" },
+    { url = "https://files.pythonhosted.org/packages/60/b5/0fd1f5af64909f0140e12ab6d5d66f9927a1679aa63f706a9d91bebb1dd9/tetgen-0.7.0-cp312-cp312-win_amd64.whl", hash = "sha256:5968d8f7ae72ea5da8f1477ed065455c05190f826db5581926760552216c6d89", size = 354484, upload-time = "2025-11-25T20:34:23.102Z" },
+    { url = "https://files.pythonhosted.org/packages/56/56/0e0a44ac76f6bb4c0e448f15c1740a0fb1454330a865df8e2912f43ab535/tetgen-0.7.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:a1cf6125305f652d0a4d061c3915047bd36dcac118f01ddf9abbbf01a9679a3b", size = 456671, upload-time = "2025-11-25T20:34:24.58Z" },
+    { url = "https://files.pythonhosted.org/packages/04/64/e3a596ded9f24db18635e07f61d6aa1d50932b68254909e56c06c954a581/tetgen-0.7.0-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:9414de626f625a6e28c17c826dc3623f6a3728f23c98c675339f1479f1359917", size = 2264968, upload-time = "2025-11-25T20:34:26.875Z" },
+    { url = "https://files.pythonhosted.org/packages/91/0c/bedb5f11f806aaecada5bb84e73d56f530985227801f8bc21320b2244908/tetgen-0.7.0-cp313-cp313-win_amd64.whl", hash = "sha256:d78a1f13b7c82018e2d7ee1a64c94ec0e87c9a79bc9742d043b94839fc97d753", size = 354389, upload-time = "2025-11-25T20:34:28.836Z" },
 ]
 
 [[package]]

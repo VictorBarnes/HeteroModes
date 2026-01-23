@@ -13,8 +13,9 @@ species = "human"
 
 #%%
 # Load heteromap labels
-with open(f"{PROJ_DIR}/data/heteromaps/{species}/heteromap_labels.json", "r") as f:
-    hetero_labels = json.load(f)["heteromap_labels"]
+with open(f"{PROJ_DIR}/data/heteromaps/{species}/heteromaps_config.json", "r") as f:
+    config = json.load(f)
+    hetero_labels = {key: val["label"] for key, val in config.items()}
 
 print(f"Found {len(hetero_labels)} heteromap labels: {hetero_labels}")
 

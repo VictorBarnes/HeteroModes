@@ -40,6 +40,7 @@ dev = [
     "numexpr>=2.14.1",
     "scikit-learn>=1.7.0",
     "setuptools>=80.9.0",
+    "tetgen>=0.7.0",
     "tqdm>=4.67.1",
 ]
 

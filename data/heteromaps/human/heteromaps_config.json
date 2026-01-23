@@ -1,0 +1,38 @@
+{
+    "myelinmap": {
+        "label": "T1w/T2w",
+        "file": "source-hcps1200_desc-myelinmap_space-fsLR_den-4k_hemi-L.func.gii"
+    },
+    "thickness": {
+        "label": "Cortical thickness",
+        "file": "source-hcps1200_desc-thickness_space-fsLR_den-4k_hemi-L.func.gii"
+    },
+    "sv2a": {
+        "label": "Synaptic density",
+        "file": "source-johansen2024_desc-sv2a_space-fsLR_den-4k_hemi-L.func.gii"
+    },
+    "odi": {
+        "label": "ODI",
+        "file": "source-fukutomi2018_desc-odi_space-fsLR_den-4k_hemi-L.func.gii"
+    },
+    "ndi": {
+        "label": "NDI",
+        "file": "source-fukutomi2018_desc-ndi_space-fsLR_den-4k_hemi-L.func.gii"
+    },
+    "genel4PC1": {
+        "label": "Layer IV",
+        "file": "source-wagstyl2024_desc-genel4PC1_space-fsLR_den-4k_hemi-L.func.gii"
+    },
+    "eiratio": {
+        "label": "E:I ratio",
+        "file": "source-wagstyl2024_desc-eiratio_space-fsLR_den-4k_hemi-L.func.gii"
+    },
+    "megtimescale": {
+        "label": "MEG timescale",
+        "file": "source-hcps1200_desc-megtimescale_space-fsLR_den-4k_hemi-L.func.gii"
+    },
+    "SAaxis": {
+        "label": "SA axis",
+        "file": "source-sydnor2021_desc-SAaxis_space-fsLR_den-4k_hemi-L.func.gii"
+    }
+}
