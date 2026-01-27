@@ -22,9 +22,6 @@ data/parcellations/*
 !data/parcellations/
 !data/parcellations/*hcpmmp1*den-32k*
 !data/parcellations/*schaefer300*den-32k*
-# Nulls - only track human myelinmap nulls
-data/nulls/human/*
-!data/nulls/human/data-myelinmap*
 
 # Heteromaps
 data/heteromaps/human/archive/

@@ -357,7 +357,6 @@ if __name__ == "__main__":
     data_desc = DATA_DESC_SPECIES[args.species]
     tsteady = 550  # Number of timepoints to discard as burn-in (~45 seconds at 90ms dt)
 
-
     out_dir = (
         f'{id_dir}/'
         f'{args.evaluation}/{args.hmap_label}'
