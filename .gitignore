@@ -38,6 +38,11 @@ data/empirical/*/*
 !data/empirical/**/*desc-nomedialwall.func.gii
 !data/empirical/**/*desc-midthickness.surf.gii
 
+# Nulls - do not track macaque receptor nulls
+data/nulls/macaque/*
+!data/nulls/macaque/data-mylinmap*
+!data/nulls/macaque/data-thickness*
+
 # Results and figures
 figures/
 results/
