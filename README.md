@@ -3,7 +3,7 @@
 This repository contains data, code and results for the manuscript: (insert link here) by Victor Barnes et al. We investigated the role of regional heterogeneity in shaping macroscopic wave dynamics across species using a wave model based on Neural Field Theory (NFT). 
 
 ## Installation
-This repository works with Python 3.10 and above. It can be installed by cloning the repository and installing the required packages listed in `pyproject.toml`. 
+This repository works with Python 3.10 and above. It can be installed by cloning the repository and installing the required packages listed in `pyproject.toml`. This should take less than a minute on a standard machine.
 
 ```bash
 git clone
@@ -20,7 +20,7 @@ pip install -e ".[plotting,dev]"
 If you use this code in your work, please cite the following manuscript: (insert citation here)
 
 ## Usage
-The main script to run the main analyses in the manuscript is `optimisation.py`. It has several configurable parameters at the top of the script. To run a simple optimisation, you could use the following command from `scripts/model_rest/`:
+The main script to run the main analyses in the manuscript is `optimisation.py`. It has several configurable parameters at the top of the script. To run a simple optimisation (that takes less than 5 minutes), you could use the following command from `scripts/model_rest/`:
 
 ```bash
 python optimisation.py --species human --id 0 --hmap_label myelinmap  --alpha -3 3 0.5 --n_runs 1 --evaluation fit --n_subj 10 --metrics edge_fc_corr node_fc_corr 
@@ -42,3 +42,7 @@ python optimisation.py --species human --id 1 --parc hcpmmp1 --den 32k --hmap_la
 
 ### Important usage notes
 In the examples above we don't optimize using FCD KS metric as it is very computationally intensive. If you wish to include this metric, please ensure you have access to a high-performance computing cluster. 
+
+License information
+-------------------
+This work is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License (``cc-by-nc-sa``). See the `LICENSE <LICENCE-CC-BY-NC-SA-4.0.md>`_ file for details.
