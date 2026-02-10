@@ -22,7 +22,7 @@ PROJ_DIR = get_project_root()
 # %%
 # Configuration
 species = "human"
-ids = {63: '63'}
+ids = {55: '#runs = 10', 65: '#runs = 255 (no FCD)'}
 evaluation = "crossval"
 
 # Load heterogeneity map labels
@@ -30,7 +30,11 @@ with open(f"{PROJ_DIR}/data/heteromaps/{species}/heteromaps_config.json", "r") a
     config = json.load(f)
     hmap_labels = {key: val["label"] for key, val in config.items()}
 hmap_labels["None"] = "Homogeneous"
-
+hmap_labels = {
+    "None": "Homogeneous",
+    "myelinmap": "T1w/T2w",
+    "eiratio": "E:I ratio",
+}
 
 # %%
 # Load results from all heterogeneity maps
@@ -53,9 +57,12 @@ for id_num in ids.keys():
 
         with h5py.File(file, 'r') as f:
             # Extract metric values (handles both single values and cross-validation splits)
-            edge_fc_values = np.array(f['results']['edge_fc_corr']).flatten()
-            node_fc_values = np.array(f['results']['node_fc_corr']).flatten()
-            fcd_values = np.array(f['results']['fcd_ks']).flatten()
+            if 'edge_fc_corr' in metrics:
+                edge_fc_values = np.array(f['results']['edge_fc_corr']).flatten()
+            if 'node_fc_corr' in metrics:
+                node_fc_values = np.array(f['results']['node_fc_corr']).flatten()
+            if 'fcd_ks' in metrics:
+                fcd_values = np.array(f['results']['fcd_ks']).flatten()
             
             # Extract parameter values
             alpha_values = np.array(f['alpha']).flatten()
@@ -63,21 +70,24 @@ for id_num in ids.keys():
             
             # Store data (one entry per cross-validation split)
             for i in range(len(edge_fc_values)):
-                edge_fc_data.append({
-                    'hmap_label': hmap_label, 
-                    'id': id_num, 
-                    'value': edge_fc_values[i]
-                })
-                node_fc_data.append({
-                    'hmap_label': hmap_label, 
-                    'id': id_num, 
-                    'value': node_fc_values[i]
-                })
-                fcd_data.append({
-                    'hmap_label': hmap_label, 
-                    'id': id_num, 
-                    'value': fcd_values[i]
-                })
+                if 'edge_fc_corr' in metrics:
+                    edge_fc_data.append({
+                        'hmap_label': hmap_label, 
+                        'id': id_num, 
+                        'value': edge_fc_values[i]
+                    })
+                if 'node_fc_corr' in metrics:
+                    node_fc_data.append({
+                        'hmap_label': hmap_label, 
+                        'id': id_num, 
+                        'value': node_fc_values[i]
+                    })
+                if 'fcd_ks' in metrics:
+                    fcd_data.append({
+                        'hmap_label': hmap_label, 
+                        'id': id_num, 
+                        'value': fcd_values[i]
+                    })
                 alpha_data.append({
                     'hmap_label': hmap_label, 
                     'id': id_num, 

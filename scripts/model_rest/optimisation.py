@@ -185,7 +185,7 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def model_job(params, surf, medmask, hmap, aniso, args, dt_emp, dt, tsteady, parc=None, out_dir=None):
+def model_job(params, surf, medmask, hmap, aniso, args, dt_emp, dt, tsteady, parc=None, out_dir=None, save=True):
     """
     Run single model simulation with given parameter combination.
     
@@ -214,13 +214,15 @@ def model_job(params, surf, medmask, hmap, aniso, args, dt_emp, dt, tsteady, par
         Parcellation labels.
     out_dir : str, optional
         Output directory for saving results.
+    save : bool, optional
+        Whether to save model outputs to disk (default: True).
     
     Returns
     -------
     outputs : dict or None
         Dictionary containing 'fc', 'fcd', etc., or None if simulation failed.
     """
-    # Check for cached results
+    # Check for previously saved results
     out_file = (
         f"{out_dir}/model_alpha-{params[0]:.1f}_r-{params[1]:.1f}_"
         f"gamma-{params[2]:.3f}_beta-{params[3]:.1f}.h5"
@@ -264,6 +266,16 @@ def model_job(params, surf, medmask, hmap, aniso, args, dt_emp, dt, tsteady, par
         band_freq=args.band_freq,
         metrics=args.metrics
     )
+    
+    # Save outputs to avoid re-running simulations in future
+    if save:
+        with h5py.File(out_file, "w") as f:
+            if 'fc' in outputs:
+                f.create_dataset('fc', data=outputs['fc'])
+            if 'fcd' in outputs:
+                f.create_dataset('fcd', data=outputs['fcd'])
+            if 'cpcs' in outputs:
+                f.create_dataset('cpcs', data=outputs['cpcs'])
         
     return outputs
 
@@ -481,7 +493,8 @@ if __name__ == "__main__":
             dt=dt,
             tsteady=tsteady,
             parc=parc,
-            out_dir=out_dir
+            out_dir=out_dir,
+            save=args.save
         ) for params in tqdm(param_combs, desc="Running models")
     )
 
@@ -539,12 +552,7 @@ if __name__ == "__main__":
                     f"r-{param_combs[i][1]:.1f}_gamma-{param_combs[i][2]:.3f}_"
                     f"beta-{param_combs[i][3]:.1f}.h5"
                 )
-                with h5py.File(out_file, "w") as f:
-                    if args.save:
-                        f.create_dataset('fc', data=model_outputs[i].get('fc', np.nan))
-                        f.create_dataset('fcd', data=model_outputs[i].get('fcd', np.nan))
-                        f.create_dataset('cpcs', data=model_outputs[i].get('cpcs', np.nan))
-
+                with h5py.File(out_file, "a") as f:
                     results_group = f.create_group('results')
                     for metric in args.metrics:
                         results_group.create_dataset(metric, data=results[i].get(metric, np.nan))
@@ -559,16 +567,15 @@ if __name__ == "__main__":
         ]
         best_ind = np.argmax(combined)
 
-        # Save best model
+        # Save best model (always save all data for best model)
         with h5py.File(f"{out_dir}/best_model.h5", "w") as f:
             f.create_dataset('alpha', data=param_combs[best_ind][0])
             f.create_dataset('r', data=param_combs[best_ind][1])
             f.create_dataset('gamma', data=param_combs[best_ind][2])
             f.create_dataset('beta', data=param_combs[best_ind][3])
-            if args.save:
-                f.create_dataset('fc', data=model_outputs[best_ind].get('fc', np.nan))
-                f.create_dataset('fcd', data=model_outputs[best_ind].get('fcd', np.nan))
-                f.create_dataset('cpcs', data=model_outputs[best_ind].get('cpcs', np.nan))
+            f.create_dataset('fc', data=model_outputs[best_ind].get('fc', np.nan))
+            f.create_dataset('fcd', data=model_outputs[best_ind].get('fcd', np.nan))
+            f.create_dataset('cpcs', data=model_outputs[best_ind].get('cpcs', np.nan))
 
             results_group = f.create_group('results')
             for metric in args.metrics:
@@ -670,12 +677,7 @@ if __name__ == "__main__":
                     f"r-{param_combs[i][1]:.1f}_gamma-{param_combs[i][2]:.3f}_"
                     f"beta-{param_combs[i][3]:.1f}.h5"
                 )
-                with h5py.File(out_file, "w") as f:
-                    if args.save:
-                        f.create_dataset('fc', data=model_outputs[i].get('fc', np.nan))
-                        f.create_dataset('fcd', data=model_outputs[i].get('fcd', np.nan))
-                        f.create_dataset('cpcs', data=model_outputs[i].get('cpcs', np.nan))
-
+                with h5py.File(out_file, "a") as f:
                     results_group = f.create_group('results')
                     for metric in args.metrics:
                         metric_vals = np.array([
@@ -693,25 +695,24 @@ if __name__ == "__main__":
             ]) for metric in args.metrics
         }
         
-        # Save best model
+        # Save best model (always save all data for best model)
         with h5py.File(f"{out_dir}/best_model.h5", "w") as f:
             f.create_dataset('alpha', data=best_combs[:, 0])
             f.create_dataset('r', data=best_combs[:, 1])
             f.create_dataset('gamma', data=best_combs[:, 2])
             f.create_dataset('beta', data=best_combs[:, 3])
-            if args.save:
-                f.create_dataset('fc', data=np.dstack([
-                    model_outputs[best_indices[i]].get('fc', np.nan) 
-                    for i in range(args.n_splits)
-                ]))
-                f.create_dataset('fcd', data=np.dstack([
-                    model_outputs[best_indices[i]].get('fcd', np.nan) 
-                    for i in range(args.n_splits)
-                ]))
-                f.create_dataset('cpcs', data=np.dstack([
-                    model_outputs[best_indices[i]].get('cpcs', np.nan) 
-                    for i in range(args.n_splits)
-                ]))
+            f.create_dataset('fc', data=np.dstack([
+                model_outputs[best_indices[i]].get('fc', np.nan) 
+                for i in range(args.n_splits)
+            ]))
+            f.create_dataset('fcd', data=np.dstack([
+                model_outputs[best_indices[i]].get('fcd', np.nan) 
+                for i in range(args.n_splits)
+            ]))
+            f.create_dataset('cpcs', data=np.dstack([
+                model_outputs[best_indices[i]].get('cpcs', np.nan) 
+                for i in range(args.n_splits)
+            ]))
             
             results_group = f.create_group('results')
             for metric, values in best_results.items():
