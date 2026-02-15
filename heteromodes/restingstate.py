@@ -17,7 +17,7 @@ def run_model(
     aniso=None,
     beta=1.0,
     r=28.9, 
-    gamma=0.116, 
+    gamma=116, 
     scaling="sigmoid", 
     lump=False, 
     smoothit=10,
@@ -25,8 +25,8 @@ def run_model(
     # Simulation parameters
     n_runs=5, 
     nt_emp=1200, 
-    dt_emp=720, 
-    dt_model=90, 
+    dt_emp=0.72, 
+    dt_model=0.09, 
     tsteady=500, 
     decomp_method="project",
     pde_method="fourier",
@@ -51,9 +51,9 @@ def run_model(
     beta : float, default=1.0
         Spatial smoothing parameter.
     r : float, default=28.9
-        Global coupling strength.
-    gamma : float, default=0.116
-        Decay parameter for spatial interactions.
+        Global coupling strength (mm).
+    gamma : float, default=116
+        Decay parameter for spatial interactions (s^-1)
     scaling : str, default="sigmoid"
         Scaling function type for spatial interactions.
     lump : bool, default=False
@@ -66,10 +66,10 @@ def run_model(
         Number of independent simulation runs.
     nt_emp : int, default=1200
         Number of empirical timepoints to return.
-    dt_emp : float, default=720
-        Empirical sampling interval in milliseconds.
-    dt_model : float, default=90
-        Model simulation time step in milliseconds.
+    dt_emp : float, default=0.72
+        Empirical sampling interval in seconds.
+    dt_model : float, default=0.09
+        Model simulation time step in seconds.
     tsteady : int, default=500
         Number of initial timepoints to discard as steady-state burn-in.
     decomp_method : str, default="project"
@@ -141,7 +141,7 @@ def run_model(
     return bold
 
 
-def analyze_bold(bold, dt_emp=720, band_freq=(0.01, 0.1), 
+def analyze_bold(bold, dt_emp=0.72, band_freq=(0.01, 0.1), 
                  metrics=["edge_fc_corr", "node_fc_corr", "fcd_ks"]):
     """
     Compute functional connectivity metrics from BOLD time series.
@@ -151,7 +151,7 @@ def analyze_bold(bold, dt_emp=720, band_freq=(0.01, 0.1),
     bold : np.ndarray
         BOLD time series with shape (n_regions, n_timepoints, n_runs).
     dt_emp : float, default=720
-        Empirical sampling interval in milliseconds.
+        Empirical sampling interval in seconds.
     band_freq : tuple, default=(0.01, 0.1)
         Frequency band (low, high) in Hz for bandpass filtering.
     metrics : list, default=["edge_fc_corr", "node_fc_corr", "fcd_ks"]
@@ -175,7 +175,7 @@ def analyze_bold(bold, dt_emp=720, band_freq=(0.01, 0.1),
     
     # Compute phase-based metrics if needed
     if "cpc1_corr" in metrics or 'fcd_ks' in metrics:
-        fnq = 0.5 / (dt_emp / 1e3)  # Nyquist frequency in Hz
+        fnq = 0.5 / dt_emp  # Nyquist frequency in Hz
 
         if "cpc1_corr" in metrics:
             analytic = calc_hilbert(

@@ -145,7 +145,7 @@ def parse_arguments():
         help="Spatial length scale in mm (single value or min/max/step, default: 28.9)."
     )
     parser.add_argument(
-        "--gamma", type=float, nargs="+", default=[0.116], 
+        "--gamma", type=float, nargs="+", default=[116], 
         metavar="gamma_values",
         help="Damping rate in s^-1 (single value or min/max/step, default: 0.116)."
     )
@@ -185,7 +185,7 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def model_job(params, surf, medmask, hmap, aniso, args, dt_emp, dt, tsteady, parc=None, out_dir=None, save=True):
+def model_job(params, surf, medmask, hmap, aniso, args, dt_emp, dt_model, tsteady, parc=None, out_dir=None, save=True):
     """
     Run single model simulation with given parameter combination.
     
@@ -254,7 +254,7 @@ def model_job(params, surf, medmask, hmap, aniso, args, dt_emp, dt, tsteady, par
         n_runs=args.n_runs,
         dt_emp=dt_emp,
         nt_emp=nt_emp,
-        dt_model=dt,
+        dt_model=dt_model,
         tsteady=tsteady,
         parc=parc,
     )
@@ -355,8 +355,8 @@ if __name__ == "__main__":
 
     # Species-specific parameters
     NT_EMP = {"human": 600, "macaque": 500, "marmoset": 510}
-    TR_SPECIES = {"human": 720, "macaque": 2600, "marmoset": 2000}  # ms
-    DT_SPECIES = {"human": 90, "macaque": 100, "marmoset": 100}  # ms
+    TR_SPECIES = {"human": 0.72, "macaque": 2.6, "marmoset": 2.0}  # seconds
+    DT_SPECIES = {"human": 0.09, "macaque": 0.1, "marmoset": 0.1}  # seconds
     DATA_DESC_SPECIES = {
         "human": f"hcp-s1200_nsubj-{args.n_subjs}",
         "macaque": f"macaque-awake_nsubj-{args.n_subjs}",
@@ -365,9 +365,9 @@ if __name__ == "__main__":
 
     nt_emp = NT_EMP[args.species]
     dt_emp = TR_SPECIES[args.species]
-    dt = DT_SPECIES[args.species]
+    dt_model = DT_SPECIES[args.species]
     data_desc = DATA_DESC_SPECIES[args.species]
-    tsteady = 550  # Number of timepoints to discard as burn-in (~45 seconds at 90ms dt)
+    tsteady = 550  # Number of timepoints to discard as burn-in
 
     out_dir = (
         f'{id_dir}/'
@@ -490,7 +490,7 @@ if __name__ == "__main__":
             aniso=aniso,
             args=args,
             dt_emp=dt_emp,
-            dt=dt,
+            dt_model=dt_model,
             tsteady=tsteady,
             parc=parc,
             out_dir=out_dir,
