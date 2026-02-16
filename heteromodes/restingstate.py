@@ -104,7 +104,8 @@ def run_model(
     )
 
     # Calculate total model timepoints including steady-state period
-    nt_model = int(nt_emp * dt_emp / dt_model) + tsteady
+    downsample_factor = int(dt_emp / dt_model)
+    nt_model = int(nt_emp * downsample_factor) + tsteady
 
     # Determine output dimensions (vertex-wise or parcellated)
     n_regions = solver.n_verts if parc is None else len(np.unique(parc[medmask]))
@@ -128,7 +129,6 @@ def run_model(
         bold_i = bold_i[:, tsteady:]
         
         # Downsample to empirical sampling rate
-        downsample_factor = int(dt_emp // dt_model)
         bold_i = bold_i[:, ::downsample_factor]
 
         # Apply parcellation if provided

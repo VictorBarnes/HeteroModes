@@ -23,7 +23,7 @@ If you use this code in your work, please cite the following manuscript: (insert
 The main script to run the main analyses in the manuscript is `optimisation.py`. It has several configurable parameters at the top of the script. To run a simple optimisation (that takes less than 5 minutes), you could use the following command from `scripts/model_rest/`:
 
 ```bash
-python optimisation.py --species human --id 0 --hmap_label myelinmap  --alpha -3 3 0.5 --n_runs 1 --evaluation fit --n_subj 10 --metrics edge_fc_corr node_fc_corr 
+python optimisation.py --species human --id 0 --hmap_label myelinmap  --alpha -3 3 0.5 --n_runs 1 --evaluation fit --n_subjs 10 --metrics edge_fc_corr node_fc_corr 
 ```
 
 This command runs an optimisation for the human model, with an id of 1 (used to index different optimization runs), using the myelin map as the heterogeneity map, with alpha values of ranging from [-3, 3] with a step of 0.1, with 10 runs per model, evaluating the model by fitting it to 10 subjects using edge-level and node-level functional connectivity correlation as metrics. 
@@ -31,13 +31,13 @@ This command runs an optimisation for the human model, with an id of 1 (used to 
 Optimising across multiple parameters can also be done. For example, to optimise across both alpha and r parameters, you could use the following command:
 
 ```bash
-python optimisation.py --species human --id 2 --hmap_label myelinmap  --alpha -3 3 1 --r 10 50 10 --n_runs 1 --evaluation fit --n_subj 10 --metrics edge_fc_corr node_fc_corr 
+python optimisation.py --species human --id 2 --hmap_label myelinmap  --alpha -3 3 1 --r 10 50 10 --n_runs 1 --evaluation fit --n_subjs 10 --metrics edge_fc_corr node_fc_corr 
 ```
 
 To run a parcellated model, you can add the `--parc` argument. Note that `--den` must be set to `32k` when using parcellations, for maximal accuracy and comparability with empirical data. For example, to run the same optimisation as above but using the HCP-MMP1 parcellation, you would use the following. Note that you should use a different `--id` for each optimisation run to avoid overwriting results:
 
 ```bash
-python optimisation.py --species human --id 1 --parc hcpmmp1 --den 32k --hmap_label myelinmap  --alpha -3 3 0.5 --n_runs 1 --evaluation fit --n_subj 10 --metrics edge_fc_corr node_fc_corr 
+python optimisation.py --species human --id 1 --parc hcpmmp1 --den 32k --hmap_label myelinmap  --alpha -3 3 0.5 --n_runs 1 --evaluation fit --n_subjs 10 --metrics edge_fc_corr node_fc_corr 
 ```
 
 ### Important usage notes
