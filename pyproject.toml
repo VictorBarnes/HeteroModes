@@ -17,7 +17,8 @@ dependencies = [
     "numpy>=2.0.2",
     "scipy>=1.13.1",
     "tqdm>=4.67.1",
-    "neuromodes @ git+https://github.com/VictorBarnes/neuromodes.git@dev",
+    "ipykernel>=7.1.0",
+    "neuromodes @ git+https://github.com/VictorBarnes/neuromodes.git@feature/anisotropy",
 ]
 
 [project.optional-dependencies]
@@ -25,15 +26,14 @@ plotting = [
     "imageio[ffmpeg]>=2.37.2",
     "matplotlib>=3.10.3",
     "nest-asyncio>=1.6.0",
+    "nsbutils[plotting] @ git+https://github.com/VictorBarnes/nsbutils.git@feature/pyvista-plotter",
     "pyvista[jupter,jupyter,notebook,trame]>=0.46.4",
     "seaborn>=0.13.2",
     "trame-vtk>=2.10.0",
     "trame-vuetify>=3.1.0",
-    "nsbutils @ git+https://github.com/VictorBarnes/nsbutils.git@dev",
 ]
 dev = [
     "imageio>=2.37.2",
-    "ipykernel>=7.1.0",
     "memory-profiler>=0.61.0",
     "neuromaps>=0.0.5",
     "numba>=0.62.1",
