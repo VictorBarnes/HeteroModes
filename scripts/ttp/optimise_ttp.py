@@ -214,10 +214,10 @@ def main() -> None:
     print(f"Optimising with beta in [{beta_spec.lo}, {beta_spec.hi}] step {beta_spec.step}")
 
     # Simulation constants (keep simple; edit here if needed)
-    dt = 1e-4
-    nt = 1100
-    r = 28.9
-    gamma = 116
+    dt = 1e-4   # seconds
+    nt = 1000
+    r = 28.9        # mm
+    gamma = 116     # seconds^-1
     stimulation_amplitude = 20.0
     stim_start = 10
     stim_stop = 20
@@ -251,8 +251,8 @@ def main() -> None:
     ext_input = ext_input[medmask, :]
 
     config = {
-        "schema_version": 1,
-        "objective_version": OBJECTIVE_VERSION,
+        "schema_version": 1,    # Increment if config structure changes in a non-backwards-compatible way
+        "objective_version": OBJECTIVE_VERSION, # Increment if objective function changes in a non-backwards-compatible way
         "run_id": run_id,
         "hetero_label": hetero_label,
         "aniso_label": aniso_label,
