@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import time
+import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, Tuple
@@ -70,21 +71,41 @@ def _parse_grid3(values: Tuple[float, float, float], name: str) -> GridSpec:
         raise ValueError(f"{name} step must be > 0")
     return GridSpec(lo=lo, hi=hi, step=step)
 
+
+def _next_run_id(results_dir: Path) -> int:
+    run_ids = []
+    if results_dir.exists():
+        for child in results_dir.iterdir():
+            if child.is_dir() and child.name.isdigit():
+                run_ids.append(int(child.name))
+    return (max(run_ids) + 1) if run_ids else 0
+
 class TimingCallback:
-    def __init__(self, alpha_spec: GridSpec, beta_spec: GridSpec) -> None:
-        self.alpha_spec = alpha_spec
-        self.beta_spec = beta_spec
+    def __init__(self, param_specs: Dict[str, GridSpec]) -> None:
+        """Initialize with only the parameters being optimized.
+        
+        Parameters
+        ----------
+        param_specs : Dict[str, GridSpec]
+            Dictionary mapping parameter name to GridSpec (e.g. {"alpha": GridSpec(...), "beta": GridSpec(...)})
+        """
+        self.param_specs = param_specs
+        self.param_names = list(param_specs.keys())
         self.iteration_times: list[float] = []
 
     def __call__(self, xk: np.ndarray, convergence: float) -> None:
         self.iteration_times.append(time.time())
-        alpha_val = _snap_to_grid(float(xk[0]), self.alpha_spec.lo, self.alpha_spec.hi, self.alpha_spec.step)
-        beta_val = _snap_to_grid(float(xk[1]), self.beta_spec.lo, self.beta_spec.hi, self.beta_spec.step)
+        param_vals = {}
+        for i, name in enumerate(self.param_names):
+            spec = self.param_specs[name]
+            param_vals[name] = _snap_to_grid(float(xk[i]), spec.lo, spec.hi, spec.step)
+        
+        param_str = ", ".join([f"{name}={val:.2f}" for name, val in param_vals.items()])
         if len(self.iteration_times) > 1:
             elapsed = self.iteration_times[-1] - self.iteration_times[-2]
-            print(f"  Iteration {len(self.iteration_times)}: {elapsed/60:.3f}min | alpha={alpha_val:.2f}, beta={beta_val:.2f}, convergence={convergence:.4f}")
+            print(f"  Iteration {len(self.iteration_times)}: {elapsed/60:.3f}min | {param_str}, convergence={convergence:.4f}")
         else:
-            print(f"  Iteration 1 (initial): alpha={alpha_val:.2f}, beta={beta_val:.2f}, convergence={convergence:.4f}")
+            print(f"  Iteration 1 (initial): {param_str}, convergence={convergence:.4f}")
 
 
 class ObjectiveEvaluator:
@@ -98,8 +119,7 @@ class ObjectiveEvaluator:
         proxy_hierarchy: np.ndarray,
         hetero_map: np.ndarray,
         aniso_map: np.ndarray,
-        alpha_spec: GridSpec,
-        beta_spec: GridSpec,
+        param_specs: Dict[str, GridSpec],
         n_modes: int,
         dt: float,
         nt: int,
@@ -117,8 +137,8 @@ class ObjectiveEvaluator:
         self.proxy_hierarchy = proxy_hierarchy
         self.hetero_map = hetero_map
         self.aniso_map = aniso_map
-        self.alpha_spec = alpha_spec
-        self.beta_spec = beta_spec
+        self.param_specs = param_specs
+        self.param_names = list(param_specs.keys())
         self.n_modes = int(n_modes)
         self.dt = float(dt)
         self.nt = int(nt)
@@ -129,35 +149,49 @@ class ObjectiveEvaluator:
         self.eval_dir = eval_dir
         self.meta_base = meta_base
 
-    def _cache_key_and_path(self, alpha: float, beta: float) -> Tuple[str, Path]:
+    def _cache_key_and_path(self, param_values: Dict[str, float]) -> Tuple[str, Path]:
         meta = dict(self.meta_base)
-        meta.update({"alpha": float(alpha), "beta": float(beta)})
+        meta.update(param_values)
         key = _hash_key(meta)
         return key, (self.cache_dir / f"eval_{key}.npz")
 
     def __call__(self, x: np.ndarray) -> float:
-        alpha = _snap_to_grid(float(x[0]), self.alpha_spec.lo, self.alpha_spec.hi, self.alpha_spec.step)
-        beta = _snap_to_grid(float(x[1]), self.beta_spec.lo, self.beta_spec.hi, self.beta_spec.step)
-        cache_key, cache_path = self._cache_key_and_path(alpha, beta)
+        param_values = {}
+        for i, name in enumerate(self.param_names):
+            spec = self.param_specs[name]
+            param_values[name] = _snap_to_grid(float(x[i]), spec.lo, spec.hi, spec.step)
+        
+        cache_key, cache_path = self._cache_key_and_path(param_values)
 
         if cache_path.exists():
             cached = np.load(cache_path, allow_pickle=False)
             abs_rho = float(cached["abs_rho"])
-            _safe_write_json_once(
-                self.eval_dir / f"{cache_key}.json",
-                {"cache_key": cache_key, "alpha": alpha, "beta": beta, "abs_rho": abs_rho},
-            )
+            json_data = dict(param_values)
+            json_data["cache_key"] = cache_key
+            json_data["abs_rho"] = abs_rho
+            _safe_write_json_once(self.eval_dir / f"{cache_key}.json", json_data)
             return -abs_rho
 
         try:
-            solver = EigenSolver(
-                surf=self.mesh,
-                mask=self.medmask,
-                hetero=self.hetero_map if alpha != 0 else None,
-                alpha=alpha if alpha != 0 else None,
-                aniso_map=self.aniso_map if beta != 0 else None,
-                beta=beta if beta != 0 else None,
-            ).solve(n_modes=self.n_modes)
+            solver_kwargs = {"surf": self.mesh, "mask": self.medmask}
+            
+            if "alpha" in param_values:
+                alpha = param_values.get("alpha", 0)
+                solver_kwargs["hetero"] = self.hetero_map if alpha != 0 else None
+                solver_kwargs["alpha"] = alpha if alpha != 0 else None
+            
+            if "beta" in param_values:
+                beta = param_values.get("beta", 0)
+                solver_kwargs["aniso_map"] = self.aniso_map if beta != 0 else None
+                solver_kwargs["beta"] = beta if beta != 0 else None
+            
+            if "aniso_curv1" in param_values or "aniso_curv2" in param_values:
+                aniso_curv1 = param_values.get("aniso_curv1", 0)
+                aniso_curv2 = param_values.get("aniso_curv2", 0)
+                if aniso_curv1 != 0 or aniso_curv2 != 0:
+                    solver_kwargs["aniso_curv"] = (aniso_curv1, aniso_curv2)
+            
+            solver = EigenSolver(**solver_kwargs).solve(n_modes=self.n_modes)
             neural = solver.simulate_waves(
                 ext_input=self.ext_input,
                 nt=self.nt,
@@ -172,34 +206,38 @@ class ObjectiveEvaluator:
             rho = float(spearmanr(self.proxy_hierarchy, ttp_hierarchy).correlation)
 
             if not np.isfinite(rho):
-                print(f"  WARNING: Non-finite rho at alpha={alpha:.4f}, beta={beta:.4f}. Assigning large penalty.")
+                param_str = ", ".join([f"{name}={val:.4f}" for name, val in param_values.items()])
+                print(f"  WARNING: Non-finite rho at {param_str}. Assigning large penalty.")
                 return 1e6
 
             abs_rho = float(abs(rho))
             meta = dict(self.meta_base)
-            meta.update({"alpha": alpha, "beta": beta, "cache_key": cache_key})
-            _atomic_savez(
-                cache_path,
-                rho=rho,
-                abs_rho=abs_rho,
-                alpha=alpha,
-                beta=beta,
-                ttp_hierarchy=np.asarray(ttp_hierarchy, dtype=np.float32),
-                meta_json=json.dumps(meta, sort_keys=True),
-            )
-            _safe_write_json_once(
-                self.eval_dir / f"{cache_key}.json",
-                {"cache_key": cache_key, "alpha": alpha, "beta": beta, "abs_rho": abs_rho},
-            )
+            meta.update(param_values)
+            meta.update({"cache_key": cache_key})
+            save_arrays = {
+                "rho": rho,
+                "abs_rho": abs_rho,
+                "ttp_hierarchy": np.asarray(ttp_hierarchy, dtype=np.float32),
+                "meta_json": json.dumps(meta, sort_keys=True),
+            }
+            save_arrays.update(param_values)
+            _atomic_savez(cache_path, **save_arrays)
+            
+            json_data = dict(param_values)
+            json_data["cache_key"] = cache_key
+            json_data["abs_rho"] = abs_rho
+            _safe_write_json_once(self.eval_dir / f"{cache_key}.json", json_data)
             return -abs_rho
         except Exception as e:
-            print(f"  ERROR at alpha={alpha:.4f}, beta={beta:.4f}: {type(e).__name__}: {e}")
+            param_str = ", ".join([f"{name}={val:.4f}" for name, val in param_values.items()])
+            print(f"  ERROR at {param_str}: {type(e).__name__}: {e}")
             return 1e6
 
 
 def plot_optimization_landscape(run_dir: Path, save_path: Path | None = None) -> None:
     """
-    Plot alpha vs beta colored by abs_rho from manifest.csv.
+    Plot optimization landscape from manifest.csv.
+    Handles 2D (alpha vs beta) or 3D (alpha vs beta vs aniso_curv1) plots.
     
     Parameters
     ----------
@@ -209,7 +247,6 @@ def plot_optimization_landscape(run_dir: Path, save_path: Path | None = None) ->
         If provided, save the figure here instead of displaying
     """
     import matplotlib.pyplot as plt
-    from matplotlib.colors import Normalize
     import pandas as pd
     
     manifest_path = Path(run_dir) / "manifest.csv"
@@ -219,35 +256,67 @@ def plot_optimization_landscape(run_dir: Path, save_path: Path | None = None) ->
     
     df = pd.read_csv(manifest_path)
     
-    fig, ax = plt.subplots(figsize=(10, 8))
+    # Determine which parameters we have
+    params = [col for col in df.columns if col not in ["cache_key", "abs_rho"]]
     
-    # Create scatter plot with alpha on x, beta on y, color = abs_rho
-    scatter = ax.scatter(
-        df["alpha"],
-        df["beta"],
-        c=df["abs_rho"],
-        cmap="turbo",
-        s=50,
-        alpha=0.7,
-        edgecolors="black",
-        linewidth=0.5
-    )
+    if len(params) == 2:
+        # 2D plot
+        fig, ax = plt.subplots(figsize=(10, 8))
+        scatter = ax.scatter(
+            df[params[0]],
+            df[params[1]],
+            c=df["abs_rho"],
+            cmap="turbo",
+            s=50,
+            alpha=0.7,
+            edgecolors="black",
+            linewidth=0.5
+        )
+        ax.set_xlabel(params[0].capitalize(), fontsize=12)
+        ax.set_ylabel(params[1].capitalize(), fontsize=12)
+        
+        # Mark the best point
+        best_idx = df["abs_rho"].idxmax()
+        best_x = df.loc[best_idx, params[0]]
+        best_y = df.loc[best_idx, params[1]]
+        best_rho = df.loc[best_idx, "abs_rho"]
+        ax.plot(best_x, best_y, "r*", markersize=20, label=f"Best: rho={best_rho:.4f}")
+        
+    elif len(params) >= 3:
+        # 3D plot (or higher dimensional - just use first 3)
+        from mpl_toolkits.mplot3d import Axes3D
+        fig = plt.figure(figsize=(12, 9))
+        ax = fig.add_subplot(111, projection="3d")
+        scatter = ax.scatter(
+            df[params[0]],
+            df[params[1]],
+            df[params[2]],
+            c=df["abs_rho"],
+            cmap="turbo",
+            s=50,
+            alpha=0.7,
+            edgecolors="black",
+            linewidth=0.5
+        )
+        ax.set_xlabel(params[0].capitalize(), fontsize=11)
+        ax.set_ylabel(params[1].capitalize(), fontsize=11)
+        ax.set_zlabel(params[2].capitalize(), fontsize=11)
+        
+        # Mark the best point
+        best_idx = df["abs_rho"].idxmax()
+        best_x = df.loc[best_idx, params[0]]
+        best_y = df.loc[best_idx, params[1]]
+        best_z = df.loc[best_idx, params[2]]
+        best_rho = df.loc[best_idx, "abs_rho"]
+        ax.scatter([best_x], [best_y], [best_z], color="red", s=500, marker="*", label=f"Best: rho={best_rho:.4f}")
+    else:
+        print("Insufficient parameters in manifest.csv for plotting")
+        return
     
-    ax.set_xlabel("Alpha", fontsize=12)
-    ax.set_ylabel("Beta", fontsize=12)
     ax.set_title(f"Optimization Landscape (Run {Path(run_dir).name})", fontsize=14)
     ax.grid(True, alpha=0.3)
-    
     cbar = fig.colorbar(scatter, ax=ax)
     cbar.set_label("|Spearman rho|", fontsize=12)
-    
-    # Mark the best point
-    best_idx = df["abs_rho"].idxmax()
-    best_alpha = df.loc[best_idx, "alpha"]
-    best_beta = df.loc[best_idx, "beta"]
-    best_rho = df.loc[best_idx, "abs_rho"]
-    
-    ax.plot(best_alpha, best_beta, "r*", markersize=20, label=f"Best: rho={best_rho:.4f}")
     ax.legend(fontsize=11)
     
     plt.tight_layout()
@@ -261,13 +330,15 @@ def plot_optimization_landscape(run_dir: Path, save_path: Path | None = None) ->
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Optimise TTP alpha/beta to maximise |Spearman rho|.")
-    p.add_argument("--id", type=int, default=0, help="Run ID (integer). Default: 0.")
+    p.add_argument("--test", action="store_true", help="Run in test mode using folder 0 and _cache_test.")
     p.add_argument("--hetero_label", type=str, default="SAaxis", help="Heterogeneity map label.")
     p.add_argument("--aniso_label", type=str, default="SAaxis", help="Anisotropy map label")
     p.add_argument("--density", type=str, default="32k", help="Surface density for mesh and parcellation.")
     p.add_argument("--n_modes", type=int, default=1000, help="Number of eigenmodes.")
-    p.add_argument("--alpha", type=float, nargs=3, required=True, metavar=("MIN", "MAX", "STEP"))
-    p.add_argument("--beta", type=float, nargs=3, required=True, metavar=("MIN", "MAX", "STEP"))
+    p.add_argument("--alpha", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"), help="Alpha optimization range: MIN MAX STEP")
+    p.add_argument("--beta", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"), help="Beta optimization range: MIN MAX STEP")
+    p.add_argument("--aniso_curv1", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"), help="Aniso_curv1 optimization range: MIN MAX STEP")
+    p.add_argument("--aniso_curv2", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"), help="Aniso_curv2 optimization range: MIN MAX STEP")
     p.add_argument("--n_jobs", type=int, default=-1, help="Parallel workers for DE (-1 = all).")
     p.add_argument("--maxiter", type=int, default=50, help="DE max iterations.")
     p.add_argument("--popsize", type=int, default=16, help="DE population size multiplier.")
@@ -280,19 +351,69 @@ def main() -> None:
     t1 = time.time()
     args = parse_args()
 
-    run_id = str(args.id)
     results_dir = Path(PROJ_DIR) / "results" / "ttp"
-    run_dir = results_dir / run_id
-    cache_dir = results_dir / "_cache"
+    if args.test:
+        run_id = 0
+        run_dir = results_dir / "0"
+        cache_dir = results_dir / "_cache_test"
+        if run_dir.exists():
+            shutil.rmtree(run_dir)
+    else:
+        run_id = _next_run_id(results_dir)
+        run_dir = results_dir / str(run_id)
+        cache_dir = results_dir / "_cache"
+        while True:
+            try:
+                run_dir.mkdir(parents=True, exist_ok=False)
+                break
+            except FileExistsError:
+                run_id = _next_run_id(results_dir)
+                run_dir = results_dir / str(run_id)
+
     eval_dir = run_dir / "evals"
-    run_dir.mkdir(parents=True, exist_ok=True)
     eval_dir.mkdir(parents=True, exist_ok=True)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    alpha_spec = _parse_grid3(tuple(args.alpha), "alpha")
-    print(f"Optimising with alpha in [{alpha_spec.lo}, {alpha_spec.hi}] step {alpha_spec.step}")
-    beta_spec = _parse_grid3(tuple(args.beta), "beta")
-    print(f"Optimising with beta in [{beta_spec.lo}, {beta_spec.hi}] step {beta_spec.step}")
+    # Build parameter specs dict with only the parameters provided
+    param_specs = {}
+    bounds = []
+    
+    if args.alpha is not None:
+        alpha_spec = _parse_grid3(tuple(args.alpha), "alpha")
+        print(f"Optimising with alpha in [{alpha_spec.lo}, {alpha_spec.hi}] step {alpha_spec.step}")
+        param_specs["alpha"] = alpha_spec
+        bounds.append((alpha_spec.lo, alpha_spec.hi))
+    else:
+        print("Not optimising alpha (using default: 0)")
+    
+    if args.beta is not None:
+        beta_spec = _parse_grid3(tuple(args.beta), "beta")
+        print(f"Optimising with beta in [{beta_spec.lo}, {beta_spec.hi}] step {beta_spec.step}")
+        param_specs["beta"] = beta_spec
+        bounds.append((beta_spec.lo, beta_spec.hi))
+    else:
+        print("Not optimising beta (using default: 0)")
+    
+    if args.aniso_curv1 is not None:
+        aniso_curv1_spec = _parse_grid3(tuple(args.aniso_curv1), "aniso_curv1")
+        print(f"Optimising with aniso_curv1 in [{aniso_curv1_spec.lo}, {aniso_curv1_spec.hi}] step {aniso_curv1_spec.step}")
+        param_specs["aniso_curv1"] = aniso_curv1_spec
+        bounds.append((aniso_curv1_spec.lo, aniso_curv1_spec.hi))
+    else:
+        print("Not optimising aniso_curv1 (using default: 0)")
+    
+    if args.aniso_curv2 is not None:
+        aniso_curv2_spec = _parse_grid3(tuple(args.aniso_curv2), "aniso_curv2")
+        print(f"Optimising with aniso_curv2 in [{aniso_curv2_spec.lo}, {aniso_curv2_spec.hi}] step {aniso_curv2_spec.step}")
+        param_specs["aniso_curv2"] = aniso_curv2_spec
+        bounds.append((aniso_curv2_spec.lo, aniso_curv2_spec.hi))
+    else:
+        print("Not optimising aniso_curv2 (using default: 0)")
+    
+    if not param_specs:
+        raise ValueError("At least one parameter must be provided for optimization (--alpha, --beta, --aniso_curv1, or --aniso_curv2)")
+    
+    print(f"\nTotal optimization dimensions: {len(param_specs)}")
 
     # Simulation constants (keep simple; edit here if needed)
     dt = 1e-4   # seconds
@@ -335,11 +456,10 @@ def main() -> None:
         "schema_version": 1,    # Increment if config structure changes in a non-backwards-compatible way
         "objective_version": OBJECTIVE_VERSION, # Increment if objective function changes in a non-backwards-compatible way
         "run_id": run_id,
+        "test_mode": bool(args.test),
         "hetero_label": hetero_label,
         "aniso_label": aniso_label,
         "n_modes": int(args.n_modes),
-        "alpha": asdict(alpha_spec),
-        "beta": asdict(beta_spec),
         "n_jobs": int(args.n_jobs),
         "maxiter": int(args.maxiter),
         "popsize": int(args.popsize),
@@ -354,6 +474,8 @@ def main() -> None:
         "stim_stop": int(stim_stop),
         "density": args.density,
     }
+    for name, spec in param_specs.items():
+        config[name] = asdict(spec)
     (run_dir / "config.json").write_text(json.dumps(config, indent=2, sort_keys=True), encoding="utf-8")
 
     meta_base = {
@@ -379,8 +501,7 @@ def main() -> None:
         proxy_hierarchy=proxy_hierarchy,
         hetero_map=hetero_map,
         aniso_map=aniso_map,
-        alpha_spec=alpha_spec,
-        beta_spec=beta_spec,
+        param_specs=param_specs,
         n_modes=int(args.n_modes),
         dt=dt,
         nt=nt,
@@ -392,10 +513,8 @@ def main() -> None:
         meta_base=meta_base,
     )
 
-    bounds = [(alpha_spec.lo, alpha_spec.hi), (beta_spec.lo, beta_spec.hi)]
-    
     # Use a custom callback to track iteration times and print progress
-    timing_callback = TimingCallback(alpha_spec, beta_spec)
+    timing_callback = TimingCallback(param_specs)
     
     res = differential_evolution(
         evaluator,
@@ -410,18 +529,18 @@ def main() -> None:
         disp=True,
     )
 
-    best_alpha = _snap_to_grid(float(res.x[0]), alpha_spec.lo, alpha_spec.hi, alpha_spec.step)
-    best_beta = _snap_to_grid(float(res.x[1]), beta_spec.lo, beta_spec.hi, beta_spec.step)
-    best_key, best_cache_path = evaluator._cache_key_and_path(best_alpha, best_beta)
+    best_params = {}
+    for i, name in enumerate(param_specs.keys()):
+        spec = param_specs[name]
+        best_params[name] = _snap_to_grid(float(res.x[i]), spec.lo, spec.hi, spec.step)
+    
+    best_key, best_cache_path = evaluator._cache_key_and_path(best_params)
     cached = np.load(best_cache_path, allow_pickle=False)
 
-    best = {
-        "alpha": best_alpha,
-        "beta": best_beta,
-        "rho": float(cached["rho"]),
-        "abs_rho": float(cached["abs_rho"]),
-        "cache_key": best_key,
-    }
+    best = dict(best_params)
+    best["rho"] = float(cached["rho"])
+    best["abs_rho"] = float(cached["abs_rho"])
+    best["cache_key"] = best_key
     (run_dir / "best.json").write_text(json.dumps(best, indent=2, sort_keys=True), encoding="utf-8")
 
     de_result = {
@@ -447,13 +566,21 @@ def main() -> None:
     rows = sorted(rows, key=lambda d: float(d.get("abs_rho", -np.inf)), reverse=True)
     if rows:
         import csv
-
+        
+        # Build fieldnames from the current optimization parameters plus any
+        # extra keys already present in older eval JSON rows.
+        fieldnames = ["cache_key"] + list(param_specs.keys()) + ["abs_rho"]
+        for row in rows:
+            for key in row.keys():
+                if key not in fieldnames:
+                    fieldnames.append(key)
         with (run_dir / "manifest.csv").open("w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=["cache_key", "alpha", "beta", "abs_rho"])
+            w = csv.DictWriter(f, fieldnames=fieldnames)
             w.writeheader()
             w.writerows(rows)
 
-    print(f"\nBest |rho| = {best['abs_rho']:.4f} at alpha={best_alpha}, beta={best_beta}")
+    param_str = ", ".join([f"{name}={val:.4f}" for name, val in best_params.items()])
+    print(f"\nBest |rho| = {best['abs_rho']:.4f} at {param_str}")
     print(f"Run folder: {run_dir}")
     print(f"Total optimisation time: {(time.time() - t1)/60:.2f}min")
     
