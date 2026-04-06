@@ -225,7 +225,7 @@ def model_job(params, surf, medmask, hmap, aniso, args, dt_emp, dt_model, tstead
     # Check for previously saved results
     out_file = (
         f"{out_dir}/model_alpha-{params[0]:.1f}_r-{params[1]:.1f}_"
-        f"gamma-{params[2]:.3f}_beta-{params[3]:.1f}.h5"
+        f"gamma-{params[2]:.1f}_beta-{params[3]:.1f}.h5"
     )
     if os.path.exists(out_file):
         print(f"Loading cached model outputs from {out_file}")

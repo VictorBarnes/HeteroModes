@@ -6,19 +6,21 @@ import matplotlib.pyplot as plt
 import json
 from heteromodes.utils import get_project_root
 import nibabel as nib
+import matplotlib as mpl
 
 PROJ_DIR = get_project_root()
 
-id = 55
+species = "macaque"
+id = 7
+evaluation = "fit"
 n_nulls = 500
-hmap_label = "myelinmap"
+hmap_label = "flum"
 
 #%%
-# Load homogeneous and myelinmap results
 hmap_labels = ["None", hmap_label]
 edge_fc_model, node_fc_model, fcd_model, obj_model = {}, {}, {}, {}
 for hmap_label in hmap_labels:
-    file = f"{PROJ_DIR}/results/human/model_rest/group/id-{id}/crossval/{hmap_label}/best_model.h5"
+    file = f"{PROJ_DIR}/results/{species}/model_rest/group/id-{id}/{evaluation}/{hmap_label}/best_model.h5"
 
     with h5py.File(file, 'r') as f:
         edge_fc_model[hmap_label] = np.mean(np.array(f['results']['edge_fc_corr']).flatten())
@@ -32,7 +34,7 @@ edge_fc_null, node_fc_null, fcd_null, obj_null = [], [], [], []
 # Loop through null files
 for i in range(n_nulls):
     # Append edge fc, node fc and fcd
-    file = f"{PROJ_DIR}/results/human/model_rest/group/id-{id}/crossval/{hmap_label}/nulls/null-{i}/best_model.h5"
+    file = f"{PROJ_DIR}/results/{species}/model_rest/group/id-{id}/{evaluation}/{hmap_label}/nulls/null-{i}/best_model.h5"
 
     try:
         with h5py.File(file, 'r') as f:
@@ -93,8 +95,8 @@ axs[3].set_ylabel("Count")
 axs[3].legend()
 
 #%%
-null_maps = np.load(f"{PROJ_DIR}/data/nulls/human/data-{hmap_labels[1]}_space-fsLR_den-4k_hemi-L_nmodes-500_nnulls-1000_nulls_resample-True.npy")
-medmask = nib.load(f"{PROJ_DIR}/data/empirical/human/space-fsLR_den-4k_hemi-L_desc-nomedialwall.func.gii").darrays[0].data.astype(bool)
+null_maps = np.load(f"{PROJ_DIR}/data/nulls/{species}/data-{hmap_labels[1]}_space-fsLR_den-4k_hemi-L_nmodes-500_nnulls-1000_nulls_resample-True.npy")
+medmask = nib.load(f"{PROJ_DIR}/data/empirical/{species}/space-fsLR_den-4k_hemi-L_desc-nomedialwall.func.gii").darrays[0].data.astype(bool)
 print(null_maps.shape)
 
 #%%
