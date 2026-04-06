@@ -18,10 +18,9 @@ data/cache/
 data/temp/
 data/test/
 # Keep specific parcellations
-data/parcellations/*
-!data/parcellations/
-!data/parcellations/*hcpmmp1*den-32k*
-!data/parcellations/*schaefer300*den-32k*
+data/parcellations/*.txt
+data/parcellations/*.nii
+data/parcellations/*4k*
 
 # Heteromaps
 data/heteromaps/human/archive/
