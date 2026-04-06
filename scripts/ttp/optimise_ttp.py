@@ -4,10 +4,11 @@ import argparse
 import hashlib
 import json
 import os
+import time
 from dataclasses import asdict, dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Tuple
+from pathlib import Path
 
 import nibabel as nib
 import numpy as np
@@ -24,7 +25,6 @@ PROJ_DIR = get_project_root()
 
 # Update this if the objective function changes in a non-backwards-compatible way
 OBJECTIVE_VERSION = "ttp_spearman_abs_v1"
-
 
 def _hash_key(d: Dict[str, Any]) -> str:
     payload = json.dumps(d, sort_keys=True, default=str).encode("utf-8")
@@ -69,6 +69,22 @@ def _parse_grid3(values: Tuple[float, float, float], name: str) -> GridSpec:
     if step <= 0:
         raise ValueError(f"{name} step must be > 0")
     return GridSpec(lo=lo, hi=hi, step=step)
+
+class TimingCallback:
+    def __init__(self, alpha_spec: GridSpec, beta_spec: GridSpec) -> None:
+        self.alpha_spec = alpha_spec
+        self.beta_spec = beta_spec
+        self.iteration_times: list[float] = []
+
+    def __call__(self, xk: np.ndarray, convergence: float) -> None:
+        self.iteration_times.append(time.time())
+        alpha_val = _snap_to_grid(float(xk[0]), self.alpha_spec.lo, self.alpha_spec.hi, self.alpha_spec.step)
+        beta_val = _snap_to_grid(float(xk[1]), self.beta_spec.lo, self.beta_spec.hi, self.beta_spec.step)
+        if len(self.iteration_times) > 1:
+            elapsed = self.iteration_times[-1] - self.iteration_times[-2]
+            print(f"  Iteration {len(self.iteration_times)}: {elapsed/60:.3f}min | alpha={alpha_val:.2f}, beta={beta_val:.2f}, convergence={convergence:.4f}")
+        else:
+            print(f"  Iteration 1 (initial): alpha={alpha_val:.2f}, beta={beta_val:.2f}, convergence={convergence:.4f}")
 
 
 class ObjectiveEvaluator:
@@ -137,10 +153,10 @@ class ObjectiveEvaluator:
             solver = EigenSolver(
                 surf=self.mesh,
                 mask=self.medmask,
-                hetero=self.hetero_map,
-                alpha=alpha,
-                aniso_map=self.aniso_map,
-                beta=beta,
+                hetero=self.hetero_map if alpha != 0 else None,
+                alpha=alpha if alpha != 0 else None,
+                aniso_map=self.aniso_map if beta != 0 else None,
+                beta=beta if beta != 0 else None,
             ).solve(n_modes=self.n_modes)
             neural = solver.simulate_waves(
                 ext_input=self.ext_input,
@@ -156,6 +172,7 @@ class ObjectiveEvaluator:
             rho = float(spearmanr(self.proxy_hierarchy, ttp_hierarchy).correlation)
 
             if not np.isfinite(rho):
+                print(f"  WARNING: Non-finite rho at alpha={alpha:.4f}, beta={beta:.4f}. Assigning large penalty.")
                 return 1e6
 
             abs_rho = float(abs(rho))
@@ -175,8 +192,71 @@ class ObjectiveEvaluator:
                 {"cache_key": cache_key, "alpha": alpha, "beta": beta, "abs_rho": abs_rho},
             )
             return -abs_rho
-        except Exception:
+        except Exception as e:
+            print(f"  ERROR at alpha={alpha:.4f}, beta={beta:.4f}: {type(e).__name__}: {e}")
             return 1e6
+
+
+def plot_optimization_landscape(run_dir: Path, save_path: Path | None = None) -> None:
+    """
+    Plot alpha vs beta colored by abs_rho from manifest.csv.
+    
+    Parameters
+    ----------
+    run_dir : Path
+        Path to the run directory containing manifest.csv
+    save_path : Path, optional
+        If provided, save the figure here instead of displaying
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import Normalize
+    import pandas as pd
+    
+    manifest_path = Path(run_dir) / "manifest.csv"
+    if not manifest_path.exists():
+        print(f"manifest.csv not found in {run_dir}")
+        return
+    
+    df = pd.read_csv(manifest_path)
+    
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    # Create scatter plot with alpha on x, beta on y, color = abs_rho
+    scatter = ax.scatter(
+        df["alpha"],
+        df["beta"],
+        c=df["abs_rho"],
+        cmap="turbo",
+        s=50,
+        alpha=0.7,
+        edgecolors="black",
+        linewidth=0.5
+    )
+    
+    ax.set_xlabel("Alpha", fontsize=12)
+    ax.set_ylabel("Beta", fontsize=12)
+    ax.set_title(f"Optimization Landscape (Run {Path(run_dir).name})", fontsize=14)
+    ax.grid(True, alpha=0.3)
+    
+    cbar = fig.colorbar(scatter, ax=ax)
+    cbar.set_label("|Spearman rho|", fontsize=12)
+    
+    # Mark the best point
+    best_idx = df["abs_rho"].idxmax()
+    best_alpha = df.loc[best_idx, "alpha"]
+    best_beta = df.loc[best_idx, "beta"]
+    best_rho = df.loc[best_idx, "abs_rho"]
+    
+    ax.plot(best_alpha, best_beta, "r*", markersize=20, label=f"Best: rho={best_rho:.4f}")
+    ax.legend(fontsize=11)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Saved plot to {save_path}")
+    else:
+        plt.show()
 
 
 def parse_args() -> argparse.Namespace:
@@ -190,13 +270,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--beta", type=float, nargs=3, required=True, metavar=("MIN", "MAX", "STEP"))
     p.add_argument("--n_jobs", type=int, default=-1, help="Parallel workers for DE (-1 = all).")
     p.add_argument("--maxiter", type=int, default=50, help="DE max iterations.")
-    p.add_argument("--popsize", type=int, default=15, help="DE population size multiplier.")
+    p.add_argument("--popsize", type=int, default=16, help="DE population size multiplier.")
     p.add_argument("--seed", type=int, default=0, help="Random seed.")
     p.add_argument("--polish", action="store_true", help="Enable DE polish step (usually off).")
     return p.parse_args()
 
 
 def main() -> None:
+    t1 = time.time()
     args = parse_args()
 
     run_id = str(args.id)
@@ -312,6 +393,10 @@ def main() -> None:
     )
 
     bounds = [(alpha_spec.lo, alpha_spec.hi), (beta_spec.lo, beta_spec.hi)]
+    
+    # Use a custom callback to track iteration times and print progress
+    timing_callback = TimingCallback(alpha_spec, beta_spec)
+    
     res = differential_evolution(
         evaluator,
         bounds=bounds,
@@ -321,6 +406,7 @@ def main() -> None:
         workers=int(args.n_jobs),
         updating="deferred",
         polish=bool(args.polish),
+        callback=timing_callback,
         disp=True,
     )
 
@@ -369,6 +455,10 @@ def main() -> None:
 
     print(f"\nBest |rho| = {best['abs_rho']:.4f} at alpha={best_alpha}, beta={best_beta}")
     print(f"Run folder: {run_dir}")
+    print(f"Total optimisation time: {(time.time() - t1)/60:.2f}min")
+    
+    # Generate landscape plot
+    plot_optimization_landscape(run_dir, save_path=run_dir / "landscape.png")
 
 
 if __name__ == "__main__":
