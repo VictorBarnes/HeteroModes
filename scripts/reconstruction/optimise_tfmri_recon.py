@@ -44,12 +44,12 @@ def _hash_key(payload: Dict[str, Any]) -> str:
     return hashlib.sha1(data).hexdigest()[:16]
 
 
-def _snap_to_grid(x: float, lo: float, hi: float, step: float) -> float:
+def _snap_to_grid(x: float, min: float, max: float, step: float) -> float:
     if step <= 0:
         raise ValueError("step must be > 0")
-    k = round((x - lo) / step)
-    snapped = lo + k * step
-    return float(np.clip(snapped, lo, hi))
+    k = round((x - min) / step)
+    snapped = min + k * step
+    return float(np.clip(snapped, min, max))
 
 
 def _atomic_savez(path: Path, **arrays: Any) -> None:
@@ -70,18 +70,18 @@ def _safe_write_json_once(path: Path, payload: Dict[str, Any]) -> None:
 
 @dataclass(frozen=True)
 class GridSpec:
-    lo: float
-    hi: float
+    min: float
+    max: float
     step: float
 
 
 def _parse_grid3(values: Tuple[float, float, float], name: str) -> GridSpec:
-    lo, hi, step = [float(v) for v in values]
-    if hi < lo:
-        lo, hi = hi, lo
+    min, max, step = [float(v) for v in values]
+    if max < min:
+        min, max = max, min
     if step <= 0:
         raise ValueError(f"{name} step must be > 0")
-    return GridSpec(lo=lo, hi=hi, step=step)
+    return GridSpec(min=min, max=max, step=step)
 
 
 def _next_run_id(results_dir: Path) -> int:
@@ -201,7 +201,7 @@ class TimingCallback:
         param_vals = {}
         for i, name in enumerate(self.param_names):
             spec = self.param_specs[name]
-            param_vals[name] = _snap_to_grid(float(xk[i]), spec.lo, spec.hi, spec.step)
+            param_vals[name] = _snap_to_grid(float(xk[i]), spec.min, spec.max, spec.step)
         param_str = ", ".join([f"{name}={val:.2f}" for name, val in param_vals.items()]) or "no free params"
         if len(self.iteration_times) > 1:
             elapsed = self.iteration_times[-1] - self.iteration_times[-2]
@@ -230,7 +230,7 @@ class ObjectiveEvaluator:
         param_values = dict(self.fixed_params)
         for i, name in enumerate(self.param_specs.keys()):
             spec = self.param_specs[name]
-            param_values[name] = _snap_to_grid(float(x[i]), spec.lo, spec.hi, spec.step)
+            param_values[name] = _snap_to_grid(float(x[i]), spec.min, spec.max, spec.step)
         return param_values
 
     def _cache_key_and_path(self, param_values: Dict[str, Any]) -> Tuple[str, Path]:
@@ -739,7 +739,7 @@ def main() -> None:
         error_target=float(args.error_target),
     )
 
-    free_bounds = [(spec.lo, spec.hi) for spec in param_specs.values()]
+    free_bounds = [(spec.min, spec.max) for spec in param_specs.values()]
     if free_bounds:
         timing_callback = TimingCallback(param_specs)
         result = differential_evolution(
@@ -757,7 +757,7 @@ def main() -> None:
         best_params = dict(fixed_params)
         for i, name in enumerate(param_specs.keys()):
             spec = param_specs[name]
-            best_params[name] = _snap_to_grid(float(result.x[i]), spec.lo, spec.hi, spec.step)
+            best_params[name] = _snap_to_grid(float(result.x[i]), spec.min, spec.max, spec.step)
     else:
         result = None
         best_params = dict(fixed_params)

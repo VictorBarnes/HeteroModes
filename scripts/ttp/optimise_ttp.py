@@ -32,12 +32,12 @@ def _hash_key(d: Dict[str, Any]) -> str:
     return hashlib.sha1(payload).hexdigest()[:16]
 
 
-def _snap_to_grid(x: float, lo: float, hi: float, step: float) -> float:
+def _snap_to_grid(x: float, min: float, max: float, step: float) -> float:
     if step <= 0:
         raise ValueError("step must be > 0")
-    k = round((x - lo) / step)
-    snapped = lo + k * step
-    return float(np.clip(snapped, lo, hi))
+    k = round((x - min) / step)
+    snapped = min + k * step
+    return float(np.clip(snapped, min, max))
 
 
 def _atomic_savez(path: Path, **arrays: Any) -> None:
@@ -58,18 +58,18 @@ def _safe_write_json_once(path: Path, payload: Dict[str, Any]) -> None:
 
 @dataclass(frozen=True)
 class GridSpec:
-    lo: float
-    hi: float
+    min: float
+    max: float
     step: float
 
 
 def _parse_grid3(values: Tuple[float, float, float], name: str) -> GridSpec:
-    lo, hi, step = [float(v) for v in values]
-    if hi < lo:
-        lo, hi = hi, lo
+    min, max, step = [float(v) for v in values]
+    if max < min:
+        min, max = max, min
     if step <= 0:
         raise ValueError(f"{name} step must be > 0")
-    return GridSpec(lo=lo, hi=hi, step=step)
+    return GridSpec(min=min, max=max, step=step)
 
 
 def _next_run_id(results_dir: Path) -> int:
@@ -98,7 +98,7 @@ class TimingCallback:
         param_vals = {}
         for i, name in enumerate(self.param_names):
             spec = self.param_specs[name]
-            param_vals[name] = _snap_to_grid(float(xk[i]), spec.lo, spec.hi, spec.step)
+            param_vals[name] = _snap_to_grid(float(xk[i]), spec.min, spec.max, spec.step)
         
         param_str = ", ".join([f"{name}={val:.2f}" for name, val in param_vals.items()])
         if len(self.iteration_times) > 1:
@@ -159,7 +159,7 @@ class ObjectiveEvaluator:
         param_values = {}
         for i, name in enumerate(self.param_names):
             spec = self.param_specs[name]
-            param_values[name] = _snap_to_grid(float(x[i]), spec.lo, spec.hi, spec.step)
+            param_values[name] = _snap_to_grid(float(x[i]), spec.min, spec.max, spec.step)
         
         cache_key, cache_path = self._cache_key_and_path(param_values)
 
@@ -380,33 +380,33 @@ def main() -> None:
     
     if args.alpha is not None:
         alpha_spec = _parse_grid3(tuple(args.alpha), "alpha")
-        print(f"Optimising with alpha in [{alpha_spec.lo}, {alpha_spec.hi}] step {alpha_spec.step}")
+        print(f"Optimising with alpha in [{alpha_spec.min}, {alpha_spec.max}] step {alpha_spec.step}")
         param_specs["alpha"] = alpha_spec
-        bounds.append((alpha_spec.lo, alpha_spec.hi))
+        bounds.append((alpha_spec.min, alpha_spec.max))
     else:
         print("Not optimising alpha (using default: 0)")
     
     if args.beta is not None:
         beta_spec = _parse_grid3(tuple(args.beta), "beta")
-        print(f"Optimising with beta in [{beta_spec.lo}, {beta_spec.hi}] step {beta_spec.step}")
+        print(f"Optimising with beta in [{beta_spec.min}, {beta_spec.max}] step {beta_spec.step}")
         param_specs["beta"] = beta_spec
-        bounds.append((beta_spec.lo, beta_spec.hi))
+        bounds.append((beta_spec.min, beta_spec.max))
     else:
         print("Not optimising beta (using default: 0)")
     
     if args.aniso_curv1 is not None:
         aniso_curv1_spec = _parse_grid3(tuple(args.aniso_curv1), "aniso_curv1")
-        print(f"Optimising with aniso_curv1 in [{aniso_curv1_spec.lo}, {aniso_curv1_spec.hi}] step {aniso_curv1_spec.step}")
+        print(f"Optimising with aniso_curv1 in [{aniso_curv1_spec.min}, {aniso_curv1_spec.max}] step {aniso_curv1_spec.step}")
         param_specs["aniso_curv1"] = aniso_curv1_spec
-        bounds.append((aniso_curv1_spec.lo, aniso_curv1_spec.hi))
+        bounds.append((aniso_curv1_spec.min, aniso_curv1_spec.max))
     else:
         print("Not optimising aniso_curv1 (using default: 0)")
     
     if args.aniso_curv2 is not None:
         aniso_curv2_spec = _parse_grid3(tuple(args.aniso_curv2), "aniso_curv2")
-        print(f"Optimising with aniso_curv2 in [{aniso_curv2_spec.lo}, {aniso_curv2_spec.hi}] step {aniso_curv2_spec.step}")
+        print(f"Optimising with aniso_curv2 in [{aniso_curv2_spec.min}, {aniso_curv2_spec.max}] step {aniso_curv2_spec.step}")
         param_specs["aniso_curv2"] = aniso_curv2_spec
-        bounds.append((aniso_curv2_spec.lo, aniso_curv2_spec.hi))
+        bounds.append((aniso_curv2_spec.min, aniso_curv2_spec.max))
     else:
         print("Not optimising aniso_curv2 (using default: 0)")
     
@@ -532,7 +532,7 @@ def main() -> None:
     best_params = {}
     for i, name in enumerate(param_specs.keys()):
         spec = param_specs[name]
-        best_params[name] = _snap_to_grid(float(res.x[i]), spec.lo, spec.hi, spec.step)
+        best_params[name] = _snap_to_grid(float(res.x[i]), spec.min, spec.max, spec.step)
     
     best_key, best_cache_path = evaluator._cache_key_and_path(best_params)
     cached = np.load(best_cache_path, allow_pickle=False)
