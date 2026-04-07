@@ -201,7 +201,7 @@ class ObjectiveEvaluator:
             )
 
             neural_parc = reduce_by_labels(neural, self.parc_labels_masked, axis=1)
-            neural_hierarchy = neural_parc[self.vis_hierarchy_roi_labels - 1, :]
+            neural_hierarchy = neural_parc[self.vis_hierarchy_roi_labels, :]
             ttp_hierarchy = np.argmax(neural_hierarchy, axis=1) * self.dt
             rho = float(spearmanr(self.proxy_hierarchy, ttp_hierarchy).correlation)
 
@@ -331,8 +331,8 @@ def plot_optimization_landscape(run_dir: Path, save_path: Path | None = None) ->
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Optimise TTP alpha/beta to maximise |Spearman rho|.")
     p.add_argument("--test", action="store_true", help="Run in test mode using folder 0 and _cache_test.")
-    p.add_argument("--hetero_label", type=str, default="SAaxis", help="Heterogeneity map label.")
-    p.add_argument("--aniso_label", type=str, default="SAaxis", help="Anisotropy map label")
+    p.add_argument("--hetero_label", type=str, default=None, help="Heterogeneity map label.")
+    p.add_argument("--aniso_label", type=str, default=None, help="Anisotropy map label")
     p.add_argument("--density", type=str, default="32k", help="Surface density for mesh and parcellation.")
     p.add_argument("--n_modes", type=int, default=1000, help="Number of eigenmodes.")
     p.add_argument("--alpha", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"), help="Alpha optimization range: MIN MAX STEP")
@@ -384,7 +384,7 @@ def main() -> None:
         param_specs["alpha"] = alpha_spec
         bounds.append((alpha_spec.min, alpha_spec.max))
     else:
-        print("Not optimising alpha (using default: 0)")
+        print("Not optimising alpha (using default: None)")
     
     if args.beta is not None:
         beta_spec = _parse_grid3(tuple(args.beta), "beta")
@@ -392,7 +392,7 @@ def main() -> None:
         param_specs["beta"] = beta_spec
         bounds.append((beta_spec.min, beta_spec.max))
     else:
-        print("Not optimising beta (using default: 0)")
+        print("Not optimising beta (using default: None)")
     
     if args.aniso_curv1 is not None:
         aniso_curv1_spec = _parse_grid3(tuple(args.aniso_curv1), "aniso_curv1")
@@ -400,7 +400,7 @@ def main() -> None:
         param_specs["aniso_curv1"] = aniso_curv1_spec
         bounds.append((aniso_curv1_spec.min, aniso_curv1_spec.max))
     else:
-        print("Not optimising aniso_curv1 (using default: 0)")
+        print("Not optimising aniso_curv1 (using default: None)")
     
     if args.aniso_curv2 is not None:
         aniso_curv2_spec = _parse_grid3(tuple(args.aniso_curv2), "aniso_curv2")
@@ -408,7 +408,7 @@ def main() -> None:
         param_specs["aniso_curv2"] = aniso_curv2_spec
         bounds.append((aniso_curv2_spec.min, aniso_curv2_spec.max))
     else:
-        print("Not optimising aniso_curv2 (using default: 0)")
+        print("Not optimising aniso_curv2 (using default: None)")
     
     if not param_specs:
         raise ValueError("At least one parameter must be provided for optimization (--alpha, --beta, --aniso_curv1, or --aniso_curv2)")
@@ -435,17 +435,22 @@ def main() -> None:
     v1_mask = parc_labels == label_to_key["L_V1_ROI"]
 
     vis_hierarchy_path = Path(PROJ_DIR) / "data" / "parcellations" / "17_visual_cortical_hierarchy_rois.npy"
-    vis_hierarchy_roi_labels = np.load(vis_hierarchy_path).astype(int)
+    # -1 because 0 label refers to medial wall which has been removed in our masked arrays
+    vis_hierarchy_roi_labels = np.load(vis_hierarchy_path).astype(int) - 1 
 
-    hetero_label = args.hetero_label
-    aniso_label = args.aniso_label if args.aniso_label is not None else hetero_label
-    hetero_map = load_hmap(hetero_label, density=args.density)
-    aniso_map = load_hmap(aniso_label, density=args.density)
+    if args.hetero_label is not None:
+        hetero_map = load_hmap(args.hetero_label, density=args.density)
+    else:
+        hetero_map = None
+    if args.aniso_label is not None:
+        aniso_map = load_hmap(args.aniso_label, density=args.density)
+    else:
+        aniso_map = None
 
     # Proxy hierarchy: myelinmap parcellated on the same masked labels (so indices are label_key-1)
     myelin = load_hmap("myelinmap", density=args.density)
     myelin_parc = reduce_by_labels(myelin[medmask], parc_labels_masked, axis=0)
-    proxy_hierarchy = myelin_parc[vis_hierarchy_roi_labels - 1]
+    proxy_hierarchy = myelin_parc[vis_hierarchy_roi_labels]
 
     # External input (vertex x time) in masked space
     ext_input = np.zeros((mesh.vertices.shape[0], nt), dtype=np.float32)
@@ -457,8 +462,8 @@ def main() -> None:
         "objective_version": OBJECTIVE_VERSION, # Increment if objective function changes in a non-backwards-compatible way
         "run_id": run_id,
         "test_mode": bool(args.test),
-        "hetero_label": hetero_label,
-        "aniso_label": aniso_label,
+        "hetero_label": args.hetero_label,
+        "aniso_label": args.aniso_label,
         "n_modes": int(args.n_modes),
         "n_jobs": int(args.n_jobs),
         "maxiter": int(args.maxiter),
@@ -480,8 +485,8 @@ def main() -> None:
 
     meta_base = {
         "objective_version": OBJECTIVE_VERSION,
-        "hetero_label": hetero_label,
-        "aniso_label": aniso_label,
+        "hetero_label": args.hetero_label,
+        "aniso_label": args.aniso_label,
         "n_modes": int(args.n_modes),
         "dt": float(dt),
         "nt": int(nt),
@@ -579,7 +584,7 @@ def main() -> None:
             w.writeheader()
             w.writerows(rows)
 
-    param_str = ", ".join([f"{name}={val:.4f}" for name, val in best_params.items()])
+    param_str = ", ".join([f"{name}={val:.2f}" for name, val in best_params.items()])
     print(f"\nBest |rho| = {best['abs_rho']:.4f} at {param_str}")
     print(f"Run folder: {run_dir}")
     print(f"Total optimisation time: {(time.time() - t1)/60:.2f}min")
