@@ -351,11 +351,11 @@ def main() -> None:
     t1 = time.time()
     args = parse_args()
 
-    results_dir = Path(PROJ_DIR) / "results" / "ttp"
+    results_dir = Path(PROJ_DIR) / "results" / "human" / "ttp"
     if args.test:
         run_id = 0
         run_dir = results_dir / "0"
-        cache_dir = results_dir / "_cache_test"
+        cache_dir = run_dir / "_cache_test"
         if run_dir.exists():
             shutil.rmtree(run_dir)
     else:

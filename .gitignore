@@ -48,7 +48,7 @@ results/
 
 # Scripts
 scripts/.ipynb_checkpoints/
-scripts/sandbox/
+scripts/_sandbox/
 scripts/_console.*
 scripts/preprocessing/
 scripts/data_generation/
