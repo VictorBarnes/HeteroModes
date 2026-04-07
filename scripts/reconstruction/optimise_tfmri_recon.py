@@ -93,9 +93,83 @@ def _next_run_id(results_dir: Path) -> int:
     return (max(run_ids) + 1) if run_ids else 0
 
 
+def _validate_contrast_name(contrast: str) -> None:
+    if not contrast:
+        raise ValueError("--contrast must be a non-empty string")
+    if contrast in {".", ".."}:
+        raise ValueError("--contrast cannot be '.' or '..'")
+    path_obj = Path(contrast)
+    if path_obj.is_absolute() or len(path_obj.parts) != 1:
+        raise ValueError("--contrast must be a single folder-safe name (no path separators)")
+
+
+def _build_id_signature(
+    *,
+    args: argparse.Namespace,
+    aniso_mode: str,
+    defaults: Dict[str, Any],
+    param_specs: Dict[str, GridSpec],
+) -> Dict[str, Any]:
+    return {
+        "id_schema_version": 1,
+        "objective_version": OBJECTIVE_VERSION,
+        "test_mode": bool(args.test),
+        "density": args.density,
+        "n_subj": int(args.n_subj),
+        "n_modes": int(args.n_modes),
+        "mode_step": int(args.mode_step),
+        "error_target": float(args.error_target),
+        "maxiter": int(args.maxiter),
+        "popsize": int(args.popsize),
+        "seed": int(args.seed),
+        "n_jobs": int(args.n_jobs),
+        "polish": bool(args.polish),
+        "tfmri_file": str(DEFAULT_TFMRI_FILE),
+        "hetero_label": args.hetero_label,
+        "aniso_label": args.aniso_label,
+        "anisotropy_mode": aniso_mode,
+        "defaults": defaults,
+        "optimization_parameters": {name: asdict(spec) for name, spec in param_specs.items()},
+    }
+
+
+def _collect_config_mismatches(expected: Any, actual: Any, prefix: str = "") -> List[str]:
+    mismatches: List[str] = []
+    if isinstance(expected, dict) and isinstance(actual, dict):
+        for key in sorted(set(expected) | set(actual)):
+            child_prefix = f"{prefix}.{key}" if prefix else str(key)
+            if key not in expected:
+                mismatches.append(f"{child_prefix}: unexpected key in current config")
+                continue
+            if key not in actual:
+                mismatches.append(f"{child_prefix}: missing from current config")
+                continue
+            mismatches.extend(_collect_config_mismatches(expected[key], actual[key], child_prefix))
+        return mismatches
+    if isinstance(expected, list) and isinstance(actual, list):
+        if len(expected) != len(actual):
+            mismatches.append(f"{prefix}: expected list length {len(expected)}, got {len(actual)}")
+            return mismatches
+        for i, (exp_item, act_item) in enumerate(zip(expected, actual)):
+            mismatches.extend(_collect_config_mismatches(exp_item, act_item, f"{prefix}[{i}]"))
+        return mismatches
+    if expected != actual:
+        mismatches.append(f"{prefix}: expected {expected!r}, got {actual!r}")
+    return mismatches
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Optimize tfMRI reconstruction AUC with optional anisotropic parameters.")
     parser.add_argument("--test", action="store_true", help="Run in test mode using folder 0 and test caches.")
+    parser.add_argument(
+        "--id",
+        type=int,
+        default=None,
+        help=(
+            "Optional numeric run ID for intentional continuation across contrasts with identical run parameters. "
+            "In most cases, leave unset to auto-create a new ID."
+        ),
+    )
     parser.add_argument("--density", default="32k", help="Surface density passed to neuromodes.io.fetch_surf.")
     parser.add_argument("--contrast", default="motor_cue_avg", help="Task contrast name inside the mat file.")
     parser.add_argument("--n_subj", type=int, default=255, help="Number of subjects to use.")
@@ -611,39 +685,78 @@ def main() -> None:
     args = parse_args()
     if float(args.error_target) < 0.0:
         raise ValueError("--error-target must satisfy target >= 0")
+    if args.id is not None and int(args.id) < 0:
+        raise ValueError("--id must be >= 0")
+    if args.test and args.id is not None:
+        raise ValueError("--id cannot be used with --test")
     args.aniso_label = _resolved_label(args.aniso_label, args.hetero_label)
+    _validate_contrast_name(args.contrast)
 
-    results_dir = Path(PROJ_DIR) / "results" / "human" / "reconstruction"
+    param_specs, fixed_params, defaults, aniso_mode = _build_param_specs(args)
+    free_param_names = list(param_specs.keys())
+    if not free_param_names:
+        print("No free optimization parameters provided; evaluating the fixed default model only.")
+
+    id_signature = _build_id_signature(
+        args=args,
+        aniso_mode=aniso_mode,
+        defaults=defaults,
+        param_specs=param_specs,
+    )
+
+    results_dir = Path(PROJ_DIR) / "results" / "human" / "reconstruction" / "tfmri"
     results_dir.mkdir(parents=True, exist_ok=True)
     if args.test:
         run_id = 0
-        run_dir = results_dir / "0"
-        cache_dir = run_dir / "_cache_test"
-        iso_cache_subdir = "_iso_cache_test"
+        run_parent_dir = results_dir / "0"
+        run_dir = run_parent_dir / args.contrast
         if run_dir.exists():
             shutil.rmtree(run_dir)
+        run_dir.mkdir(parents=True, exist_ok=False)
+        cache_dir = run_dir / "_cache_test"
+        iso_cache_subdir = "_iso_cache_test"
     else:
-        run_id = _next_run_id(results_dir)
-        run_dir = results_dir / str(run_id)
-        cache_dir = results_dir / "_cache"
+        if args.id is None:
+            run_id = _next_run_id(results_dir)
+            run_parent_dir = results_dir / str(run_id)
+            while True:
+                try:
+                    run_parent_dir.mkdir(parents=True, exist_ok=False)
+                    break
+                except FileExistsError:
+                    run_id = _next_run_id(results_dir)
+                    run_parent_dir = results_dir / str(run_id)
+        else:
+            run_id = int(args.id)
+            run_parent_dir = results_dir / str(run_id)
+            run_parent_dir.mkdir(parents=True, exist_ok=True)
+
+        id_config_path = run_parent_dir / "id_config.json"
+        if id_config_path.exists():
+            saved_signature = json.loads(id_config_path.read_text(encoding="utf-8"))
+            mismatches = _collect_config_mismatches(saved_signature, id_signature)
+            if mismatches:
+                mismatch_msg = "\n  - " + "\n  - ".join(mismatches[:12])
+                raise ValueError(
+                    f"Provided --id {run_id} has parameter mismatches against {id_config_path}:"
+                    f"{mismatch_msg}"
+                )
+        else:
+            id_config_path.write_text(json.dumps(id_signature, indent=2, sort_keys=True), encoding="utf-8")
+
+        run_dir = run_parent_dir / args.contrast
+        if run_dir.exists():
+            raise ValueError(
+                f"Contrast folder already exists for --id {run_id}: {run_dir}. "
+                "Use a different contrast or choose a new run ID."
+            )
+        run_dir.mkdir(parents=True, exist_ok=False)
+        cache_dir = run_dir / "_cache"
         iso_cache_subdir = "_iso_cache"
-        while True:
-            try:
-                run_dir.mkdir(parents=True, exist_ok=False)
-                break
-            except FileExistsError:
-                run_id = _next_run_id(results_dir)
-                run_dir = results_dir / str(run_id)
 
     eval_dir = run_dir / "evals"
     cache_dir.mkdir(parents=True, exist_ok=True)
     eval_dir.mkdir(parents=True, exist_ok=True)
-
-    param_specs, fixed_params, defaults, aniso_mode = _build_param_specs(args)
-    free_param_names = list(param_specs.keys())
-
-    if not free_param_names:
-        print("No free optimization parameters provided; evaluating the fixed default model only.")
 
     # Must start at 2 modes since the first mode is constant
     mode_counts = np.arange(2, args.n_modes + 1, args.mode_step, dtype=int)
@@ -663,6 +776,8 @@ def main() -> None:
         "schema_version": 1,
         "objective_version": OBJECTIVE_VERSION,
         "run_id": int(run_id),
+        "run_parent": str(run_parent_dir),
+        "id_config_file": str(run_parent_dir / "id_config.json"),
         "test_mode": bool(args.test),
         "density": args.density,
         "contrast": args.contrast,
@@ -694,7 +809,7 @@ def main() -> None:
         "tfmri_file": str(DEFAULT_TFMRI_FILE),
     }
     isotropic = _compute_isotropic_reconstruction(
-        results_dir=run_dir if args.test else results_dir,
+        results_dir=run_dir,
         mesh=mesh,
         medmask=medmask,
         task_maps=task_maps,
@@ -834,6 +949,7 @@ def main() -> None:
         "mode_step": int(args.mode_step),
         "error_target": float(args.error_target),
         "run_id": int(run_id),
+        "run_parent": str(run_parent_dir),
         "run_hash": run_config["run_hash"],
         "anisotropy_mode": aniso_mode,
         "hetero_label": args.hetero_label,
@@ -909,7 +1025,8 @@ def main() -> None:
             writer.writeheader()
             writer.writerows(rows)
 
-    print(f"Run folder: {run_dir}")
+    print(f"Run parent folder (ID={run_id}): {run_parent_dir}")
+    print(f"Contrast folder: {run_dir}")
 
     landscape_path = plot_auc_landscape(
         run_dir=run_dir,
