@@ -113,8 +113,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=365, help="Random seed for differential evolution.")
     parser.add_argument("--n_jobs", type=int, default=1, help="Parallel workers for differential evolution.")
     parser.add_argument("--polish", action="store_true", help="Enable differential evolution polish step.")
-    parser.add_argument("--plot", action="store_true", help="Plot the isotropic and optimized anisotropic curves.")
-    # parser.add_argument("--output_json", default=None, help="Optional path to save optimization results as JSON.")
     return parser.parse_args()
 
 
@@ -911,14 +909,7 @@ def main() -> None:
             writer.writeheader()
             writer.writerows(rows)
 
-    # print(json.dumps(summary, indent=2))
     print(f"Run folder: {run_dir}")
-
-    # if args.output_json:
-    #     output_path = Path(args.output_json)
-    #     output_path.parent.mkdir(parents=True, exist_ok=True)
-    #     with output_path.open("w", encoding="utf-8") as f:
-    #         json.dump(summary, f, indent=2)
 
     landscape_path = plot_auc_landscape(
         run_dir=run_dir,
@@ -941,19 +932,18 @@ def main() -> None:
         error_target=float(args.error_target),
     )
 
-    if args.plot:
-        if landscape_path is not None:
-            landscape_img = plt.imread(str(landscape_path))
-            fig_land, ax_land = plt.subplots(figsize=(8, 6))
-            ax_land.imshow(landscape_img)
-            ax_land.axis("off")
-            fig_land.tight_layout()
+    if landscape_path is not None:
+        landscape_img = plt.imread(str(landscape_path))
+        fig_land, ax_land = plt.subplots(figsize=(8, 6))
+        ax_land.imshow(landscape_img)
+        ax_land.axis("off")
+        fig_land.tight_layout()
 
-        curves_img = plt.imread(str(curves_path))
-        fig_curv, ax_curv = plt.subplots(figsize=(8, 6))
-        ax_curv.imshow(curves_img)
-        ax_curv.axis("off")
-        fig_curv.tight_layout()
+    curves_img = plt.imread(str(curves_path))
+    fig_curv, ax_curv = plt.subplots(figsize=(8, 6))
+    ax_curv.imshow(curves_img)
+    ax_curv.axis("off")
+    fig_curv.tight_layout()
 
     if landscape_path is not None:
         print(f"Saved landscape figure: {landscape_path}")
