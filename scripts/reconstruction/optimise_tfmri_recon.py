@@ -68,6 +68,13 @@ def _safe_write_json_once(path: Path, payload: Dict[str, Any]) -> None:
         return
 
 
+def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.stem}.{os.getpid()}.tmp{path.suffix}")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, path)
+
+
 @dataclass(frozen=True)
 class GridSpec:
     min: float
@@ -103,34 +110,17 @@ def _validate_contrast_name(contrast: str) -> None:
         raise ValueError("--contrast must be a single folder-safe name (no path separators)")
 
 
-def _build_id_signature(
-    *,
-    args: argparse.Namespace,
-    aniso_mode: str,
-    defaults: Dict[str, Any],
-    param_specs: Dict[str, GridSpec],
-) -> Dict[str, Any]:
-    return {
-        "id_schema_version": 1,
-        "objective_version": OBJECTIVE_VERSION,
-        "test_mode": bool(args.test),
-        "density": args.density,
-        "n_subj": int(args.n_subj),
-        "n_modes": int(args.n_modes),
-        "mode_step": int(args.mode_step),
-        "error_target": float(args.error_target),
-        "maxiter": int(args.maxiter),
-        "popsize": int(args.popsize),
-        "seed": int(args.seed),
-        "n_jobs": int(args.n_jobs),
-        "polish": bool(args.polish),
-        "tfmri_file": str(DEFAULT_TFMRI_FILE),
-        "hetero_label": args.hetero_label,
-        "aniso_label": args.aniso_label,
-        "anisotropy_mode": aniso_mode,
-        "defaults": defaults,
-        "optimization_parameters": {name: asdict(spec) for name, spec in param_specs.items()},
-    }
+def _normalize_config_for_id_check(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove fields that are irrelevant for run identity to allow flexible continuation across runs."""
+    normalized = dict(config)
+    normalized.pop("contrast", None)
+    normalized.pop("optimization_parameters", None)
+    normalized.pop("run_hash", None)
+    normalized.pop("run_parent", None)
+    normalized.pop("id_config_file", None)
+    normalized.pop("id_signature_file", None)
+    normalized.pop("isotropic_cache_key", None)
+    return normalized
 
 
 def _collect_config_mismatches(expected: Any, actual: Any, prefix: str = "") -> List[str]:
@@ -697,13 +687,6 @@ def main() -> None:
     if not free_param_names:
         print("No free optimization parameters provided; evaluating the fixed default model only.")
 
-    id_signature = _build_id_signature(
-        args=args,
-        aniso_mode=aniso_mode,
-        defaults=defaults,
-        param_specs=param_specs,
-    )
-
     results_dir = Path(PROJ_DIR) / "results" / "human" / "reconstruction" / "tfmri"
     results_dir.mkdir(parents=True, exist_ok=True)
     if args.test:
@@ -732,17 +715,39 @@ def main() -> None:
             run_parent_dir.mkdir(parents=True, exist_ok=True)
 
         id_config_path = run_parent_dir / "id_config.json"
+        current_id_config = _normalize_config_for_id_check({
+            "schema_version": 1,
+            "objective_version": OBJECTIVE_VERSION,
+            "run_id": int(run_id),
+            "test_mode": bool(args.test),
+            "density": args.density,
+            "n_subj": int(args.n_subj),
+            "n_modes": int(args.n_modes),
+            "mode_step": int(args.mode_step),
+            "error_target": float(args.error_target),
+            "maxiter": int(args.maxiter),
+            "popsize": int(args.popsize),
+            "seed": int(args.seed),
+            "n_jobs": int(args.n_jobs),
+            "polish": bool(args.polish),
+            "tfmri_file": str(DEFAULT_TFMRI_FILE),
+            "hetero_label": args.hetero_label,
+            "aniso_label": args.aniso_label,
+            "anisotropy_mode": aniso_mode,
+            "defaults": defaults,
+            "active_parameter_names": list(param_specs.keys()),
+            "fixed_params": fixed_params,
+        })
+
         if id_config_path.exists():
-            saved_signature = json.loads(id_config_path.read_text(encoding="utf-8"))
-            mismatches = _collect_config_mismatches(saved_signature, id_signature)
+            saved_config = _normalize_config_for_id_check(json.loads(id_config_path.read_text(encoding="utf-8")))
+            mismatches = _collect_config_mismatches(saved_config, current_id_config)
             if mismatches:
                 mismatch_msg = "\n  - " + "\n  - ".join(mismatches[:12])
                 raise ValueError(
                     f"Provided --id {run_id} has parameter mismatches against {id_config_path}:"
                     f"{mismatch_msg}"
                 )
-        else:
-            id_config_path.write_text(json.dumps(id_signature, indent=2, sort_keys=True), encoding="utf-8")
 
         run_dir = run_parent_dir / args.contrast
         if run_dir.exists():
@@ -821,7 +826,8 @@ def main() -> None:
     run_config["isotropic_cache_key"] = isotropic["cache_key"]
     run_config["run_hash"] = _hash_key(run_config)
 
-    (run_dir / "config.json").write_text(json.dumps(run_config, indent=2, sort_keys=True), encoding="utf-8")
+    _atomic_write_json(run_parent_dir / "id_config.json", run_config)
+    _atomic_write_json(run_dir / "config.json", run_config)
     (run_dir / "run_hash.txt").write_text(f"{run_config['run_hash']}\n", encoding="utf-8")
 
     objective = ObjectiveEvaluator(
