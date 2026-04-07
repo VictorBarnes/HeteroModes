@@ -351,7 +351,7 @@ def main() -> None:
     t1 = time.time()
     args = parse_args()
 
-    results_dir = Path(PROJ_DIR) / "results" / "human" / "ttp"
+    results_dir = Path(PROJ_DIR) / "results" / "human" / "ttp" / "tfmri"
     if args.test:
         run_id = 0
         run_dir = results_dir / "0"
