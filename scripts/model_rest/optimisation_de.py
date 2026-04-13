@@ -299,6 +299,9 @@ def _validate_pair_component(label: Optional[str], arg_name: str) -> str:
 def _normalize_config_for_id_check(config: Dict[str, Any]) -> Dict[str, Any]:
     normalized = dict(config)
     normalized.pop("run_hash", None)
+    normalized.pop("maxiter", None)
+    normalized.pop("popsize", None)
+    normalized.pop("n_jobs", None)
     normalized.pop("pair_name", None)
     normalized.pop("pair_dir", None)
     normalized.pop("hetero_label", None)
