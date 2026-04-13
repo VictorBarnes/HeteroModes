@@ -905,9 +905,8 @@ def main() -> None:
         print(f"Using run ID {run_id} with parent folder {run_parent}")
 
     pair_dir = run_parent / pair_name
-    if pair_dir.exists():
-        raise ValueError(f"Pair folder already exists: {pair_dir}")
-    pair_dir.mkdir(parents=True, exist_ok=False)
+    if not pair_dir.exists():
+        pair_dir.mkdir(parents=True, exist_ok=False)
 
     cache_dir = pair_dir / "_cache"
     eval_dir = pair_dir / "evals"
