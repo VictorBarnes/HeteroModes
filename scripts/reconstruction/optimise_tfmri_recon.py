@@ -162,7 +162,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--density", default="32k", help="Surface density passed to neuromodes.io.fetch_surf.")
     parser.add_argument("--contrast", default="motor_cue_avg", help="Task contrast name inside the mat file.")
-    parser.add_argument("--n_subj", type=int, default=255, help="Number of subjects to use.")
+    parser.add_argument("--n_subjs", type=int, default=255, help="Number of subjects to use.")
     parser.add_argument("--n_modes", type=int, default=100, help="Maximum number of modes to compute.")
     parser.add_argument("--mode_step", type=int, default=1, help="Spacing between mode counts in the AUC curve.")
     parser.add_argument("--error_target", type=float, default=0.5, help="Absolute reconstruction-error target for parsimony mode count K@target (target >= 0).")
@@ -174,18 +174,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--aniso_curv2", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"), help="Aniso_curv2 optimization range: MIN MAX STEP")
     parser.add_argument("--maxiter", type=int, default=50, help="Maximum differential-evolution iterations.")
     parser.add_argument("--popsize", type=int, default=16, help="Population size multiplier for differential evolution.")
-    parser.add_argument("--seed", type=int, default=365, help="Random seed for differential evolution.")
+    parser.add_argument("--seed", type=int, default=365, help="Random seed for differential evolution initialization.")
     parser.add_argument("--n_jobs", type=int, default=1, help="Parallel workers for differential evolution.")
     parser.add_argument("--polish", action="store_true", help="Enable differential evolution polish step.")
     return parser.parse_args()
 
 
-def load_task_maps(contrast: str, medmask: np.ndarray, n_subj: int) -> np.ndarray:
+def load_task_maps(contrast: str, medmask: np.ndarray, n_subjs: int) -> np.ndarray:
     with h5py.File(DEFAULT_TFMRI_FILE, "r") as f:
         data = f["zstat"][contrast][:, medmask].T
-        if data.shape[1] < n_subj:
-            raise ValueError(f"Requested task maps from {n_subj} but only {data.shape[1]} are available")
-        task_maps = np.asarray(data[:, :n_subj], dtype=float)
+        if data.shape[1] < n_subjs:
+            raise ValueError(f"Requested task maps from {n_subjs} but only {data.shape[1]} are available")
+        task_maps = np.asarray(data[:, :n_subjs], dtype=float)
     if task_maps.ndim == 1:
         task_maps = task_maps[:, np.newaxis]
     return task_maps
@@ -721,7 +721,7 @@ def main() -> None:
             "run_id": int(run_id),
             "test_mode": bool(args.test),
             "density": args.density,
-            "n_subj": int(args.n_subj),
+            "n_subjs": int(args.n_subjs),
             "n_modes": int(args.n_modes),
             "mode_step": int(args.mode_step),
             "error_target": float(args.error_target),
@@ -766,7 +766,7 @@ def main() -> None:
     # Must start at 2 modes since the first mode is constant
     mode_counts = np.arange(2, args.n_modes + 1, args.mode_step, dtype=int)
     mesh, medmask = fetch_surf(density=args.density)
-    task_maps = load_task_maps(args.contrast, medmask, args.n_subj)
+    task_maps = load_task_maps(args.contrast, medmask, args.n_subjs)
 
     if args.hetero_label is not None:
         hetero_map = load_hmap(args.hetero_label, density=args.density)
@@ -786,7 +786,7 @@ def main() -> None:
         "test_mode": bool(args.test),
         "density": args.density,
         "contrast": args.contrast,
-        "n_subj": int(args.n_subj),
+        "n_subjs": int(args.n_subjs),
         "n_modes": int(args.n_modes),
         "mode_step": int(args.mode_step),
         "error_target": float(args.error_target),
@@ -807,14 +807,14 @@ def main() -> None:
         "objective_version": OBJECTIVE_VERSION,
         "density": args.density,
         "contrast": args.contrast,
-        "n_subj": int(args.n_subj),
+        "n_subjs": int(args.n_subjs),
         "n_modes": int(args.n_modes),
         "mode_step": int(args.mode_step),
         "error_target": float(args.error_target),
         "tfmri_file": str(DEFAULT_TFMRI_FILE),
     }
     isotropic = _compute_isotropic_reconstruction(
-        results_dir=run_dir,
+        results_dir=run_parent_dir if args.test else results_dir,
         mesh=mesh,
         medmask=medmask,
         task_maps=task_maps,
@@ -846,7 +846,7 @@ def main() -> None:
             "run_hash": run_config["run_hash"],
             "density": args.density,
             "contrast": args.contrast,
-            "n_subj": int(args.n_subj),
+            "n_subjs": int(args.n_subjs),
             "n_modes": int(args.n_modes),
             "mode_step": int(args.mode_step),
             "error_target": float(args.error_target),
@@ -950,7 +950,7 @@ def main() -> None:
     summary = {
         "density": args.density,
         "contrast": args.contrast,
-        "n_subj": int(args.n_subj),
+        "n_subjs": int(args.n_subjs),
         "n_modes": int(args.n_modes),
         "mode_step": int(args.mode_step),
         "error_target": float(args.error_target),

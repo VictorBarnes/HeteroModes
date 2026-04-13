@@ -98,7 +98,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Optimize rsfMRI fc_recon_error AUC with optional anisotropic parameters.")
     parser.add_argument("--test", action="store_true", help="Run in test mode using folder 0 and test caches.")
     parser.add_argument("--density", default="4k", help="Surface density passed to neuromodes.io.fetch_surf.")
-    parser.add_argument("--n_subj", type=int, default=255, help="Optional number of subjects to use (from the first subjects).")
+    parser.add_argument("--n_subjs", type=int, default=255, help="Optional number of subjects to use (from the first subjects).")
     parser.add_argument("--n_timepoints", type=int, default=None, help="Optional number of timepoints to use (from the start).")
     parser.add_argument("--n_modes", type=int, default=100, help="Maximum number of modes to compute.")
     parser.add_argument("--mode_step", type=int, default=1, help="Spacing between mode counts in the AUC curve.")
@@ -111,12 +111,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--aniso_curv2", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"), help="Aniso_curv2 optimization range: MIN MAX STEP")
     parser.add_argument("--maxiter", type=int, default=50, help="Maximum differential-evolution iterations.")
     parser.add_argument("--popsize", type=int, default=16, help="Population size multiplier for differential evolution.")
-    parser.add_argument("--seed", type=int, default=365, help="Random seed for differential evolution.")
+    parser.add_argument("--seed", type=int, default=365, help="Random seed for differential evolution initialization.")
     parser.add_argument("--n_jobs", type=int, default=1, help="Parallel workers for differential evolution.")
     parser.add_argument("--polish", action="store_true", help="Enable differential evolution polish step.")
     return parser.parse_args()
 
-def load_bold_timeseries(n_subj: int | None, n_timepoints: int | None) -> np.ndarray:
+def load_bold_timeseries(n_subjs: int | None, n_timepoints: int | None) -> np.ndarray:
     if not DEFAULT_BOLD_FILE.exists():
         raise FileNotFoundError(f"BOLD file not found: {DEFAULT_BOLD_FILE}")
 
@@ -126,7 +126,7 @@ def load_bold_timeseries(n_subj: int | None, n_timepoints: int | None) -> np.nda
         bold = np.asarray(f["bold"], dtype=float)
 
     bold_vts = bold
-    # bold_vts = _canonicalize_bold_axes(bold, n_subj_req=n_subj)
+    # bold_vts = _canonicalize_bold_axes(bold, n_subjs_req=n_subjs)
     # bold_vts = _align_bold_vertices_to_mask(bold_vts, medmask)
 
     if n_timepoints is not None:
@@ -136,12 +136,12 @@ def load_bold_timeseries(n_subj: int | None, n_timepoints: int | None) -> np.nda
             raise ValueError(f"Requested n_timepoints={n_timepoints} but only {bold_vts.shape[1]} available")
         bold_vts = bold_vts[:, :n_timepoints, :]
 
-    if n_subj is not None:
-        if n_subj <= 0:
-            raise ValueError("--n_subj must be > 0")
-        if n_subj > bold_vts.shape[2]:
-            raise ValueError(f"Requested n_subj={n_subj} but only {bold_vts.shape[2]} available")
-        bold_vts = bold_vts[:, :, :n_subj]
+    if n_subjs is not None:
+        if n_subjs <= 0:
+            raise ValueError("--n_subjs must be > 0")
+        if n_subjs > bold_vts.shape[2]:
+            raise ValueError(f"Requested n_subjs={n_subjs} but only {bold_vts.shape[2]} available")
+        bold_vts = bold_vts[:, :, :n_subjs]
 
     return bold_vts
 
@@ -232,9 +232,9 @@ def _subject_fc_recon_errors(
     bold_data: np.ndarray,
     mode_counts: np.ndarray,
 ) -> np.ndarray:
-    n_subj = int(bold_data.shape[2])
+    n_subjs = int(bold_data.shape[2])
     subj_curves: List[np.ndarray] = []
-    for i in range(n_subj):
+    for i in range(n_subjs):
         subj_ts = np.asarray(bold_data[:, :, i], dtype=float)
         _, fc_recon_error, _, _, _ = solver.reconstruct_timeseries(data=subj_ts, mode_counts=mode_counts)
         subj_curves.append(np.asarray(fc_recon_error, dtype=float))
@@ -667,14 +667,12 @@ def main() -> None:
     if args.test:
         run_id = 0
         run_dir = results_dir / "0"
-        cache_dir = run_dir / "_cache_test"
         iso_cache_subdir = "_iso_cache_test"
         if run_dir.exists():
             shutil.rmtree(run_dir)
     else:
         run_id = _next_run_id(results_dir)
         run_dir = results_dir / str(run_id)
-        cache_dir = results_dir / "_cache"
         iso_cache_subdir = "_iso_cache"
         while True:
             try:
@@ -685,6 +683,7 @@ def main() -> None:
                 run_dir = results_dir / str(run_id)
 
     eval_dir = run_dir / "evals"
+    cache_dir = run_dir / "_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
     eval_dir.mkdir(parents=True, exist_ok=True)
 
@@ -703,10 +702,10 @@ def main() -> None:
     ).darrays[0].data.astype(bool)
 
     bold_data = load_bold_timeseries(
-        n_subj=args.n_subj,
+        n_subjs=args.n_subjs,
         n_timepoints=args.n_timepoints,
     )
-    print(f"Loaded BOLD with canonical shape (n_verts, n_timepoints, n_subj) = {bold_data.shape}")
+    print(f"Loaded BOLD with canonical shape (n_verts, n_timepoints, n_subjs) = {bold_data.shape}")
 
     if args.hetero_label is not None:
         hetero_map = load_hmap(args.hetero_label, density=args.density)
@@ -724,7 +723,7 @@ def main() -> None:
         "test_mode": bool(args.test),
         "density": args.density,
         "bold_file": str(DEFAULT_BOLD_FILE),
-        "n_subj": int(bold_data.shape[2]),
+        "n_subjs": int(bold_data.shape[2]),
         "n_timepoints": int(bold_data.shape[1]),
         "n_modes": int(args.n_modes),
         "mode_step": int(args.mode_step),
@@ -745,7 +744,7 @@ def main() -> None:
         "objective_version": OBJECTIVE_VERSION,
         "density": args.density,
         "bold_file": str(DEFAULT_BOLD_FILE),
-        "n_subj": int(bold_data.shape[2]),
+        "n_subjs": int(bold_data.shape[2]),
         "n_timepoints": int(bold_data.shape[1]),
         "n_modes": int(args.n_modes),
         "mode_step": int(args.mode_step),
@@ -785,7 +784,7 @@ def main() -> None:
             "run_hash": run_config["run_hash"],
             "density": args.density,
             "bold_file": str(DEFAULT_BOLD_FILE),
-            "n_subj": int(bold_data.shape[2]),
+            "n_subjs": int(bold_data.shape[2]),
             "n_timepoints": int(bold_data.shape[1]),
             "n_modes": int(args.n_modes),
             "mode_step": int(args.mode_step),
@@ -889,7 +888,7 @@ def main() -> None:
     summary = {
         "density": args.density,
         "bold_file": str(DEFAULT_BOLD_FILE),
-        "n_subj": int(bold_data.shape[2]),
+        "n_subjs": int(bold_data.shape[2]),
         "n_timepoints": int(bold_data.shape[1]),
         "n_modes": int(args.n_modes),
         "mode_step": int(args.mode_step),

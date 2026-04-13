@@ -91,8 +91,8 @@ def run_model(
         hetero=hetero,
         alpha=alpha,
         scaling=scaling, 
-        # aniso=aniso, 
-        # beta=beta, 
+        aniso_map=aniso, 
+        beta=beta, 
     )
     solver = solver.solve(
         n_modes=n_modes, 
