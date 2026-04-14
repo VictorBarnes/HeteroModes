@@ -182,7 +182,7 @@ def analyze_bold(bold, dt_emp=0.72, band_freq=(0.01, 0.1),
             analytic = calc_hilbert(
                 bold_concat, fnq=fnq, band_freq=band_freq, k=2
             ).astype(np.complex64)
-            ncpcs = 10
+            ncpcs = 3
             l = 10 + ncpcs
             _, _, V = fbpca.pca(analytic.T, k=ncpcs, n_iter=20, l=l)
             outputs['cpcs'] = V.T.astype(np.complex64)
@@ -238,7 +238,7 @@ def evaluate_model(model_outputs, emp_outputs,
     if "cpc1_corr" in metrics:
         model_cpc1 = np.imag(model_outputs['cpcs'][:, 0])
         emp_cpc1 = np.imag(emp_outputs['cpcs'][:, 0])
-        results['cpc1_corr'] = np.corrcoef(model_cpc1, emp_cpc1)[0, 1]
+        results['cpc1_corr'] = np.abs(np.corrcoef(model_cpc1, emp_cpc1)[0, 1])
     
     return results
 
