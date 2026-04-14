@@ -9,17 +9,20 @@ import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, Tuple
-from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import matplotlib as mpl
+import matplotlib.pyplot as plt
 from brainspace.utils.parcellation import reduce_by_labels
 from scipy.optimize import differential_evolution
-from scipy.stats import spearmanr
+from scipy.stats import spearmanr, rankdata
 
 from heteromodes.utils import get_project_root, load_hmap
 from neuromodes.eigen import EigenSolver
 from neuromodes.io import fetch_surf
+from nsbutils.utils import unmask
+from nsbutils.plotting_pyvista import plot_surf, plot_surf_video
 
 
 PROJ_DIR = get_project_root()
@@ -164,13 +167,41 @@ class ObjectiveEvaluator:
         cache_key, cache_path = self._cache_key_and_path(param_values)
 
         if cache_path.exists():
-            cached = np.load(cache_path, allow_pickle=False)
-            abs_rho = float(cached["abs_rho"])
-            json_data = dict(param_values)
-            json_data["cache_key"] = cache_key
-            json_data["abs_rho"] = abs_rho
-            _safe_write_json_once(self.eval_dir / f"{cache_key}.json", json_data)
-            return -abs_rho
+            try:
+                cached = np.load(cache_path, allow_pickle=False)
+                if "meta_json" not in cached.files:
+                    raise ValueError("Missing meta_json in cache")
+
+                cached_meta = json.loads(str(cached["meta_json"]))
+                expected_meta = dict(self.meta_base)
+                expected_meta.update(param_values)
+                expected_meta.update({"cache_key": cache_key})
+
+                # Validate cache metadata before reuse; mismatch means stale cache.
+                for key, expected in expected_meta.items():
+                    if key not in cached_meta:
+                        raise ValueError(f"Missing '{key}' in cached metadata")
+
+                    got = cached_meta[key]
+                    if isinstance(expected, float):
+                        if abs(float(got) - expected) > 1e-6:
+                            raise ValueError(
+                                f"Metadata mismatch for '{key}': got {got}, expected {expected}"
+                            )
+                    else:
+                        if got != expected:
+                            raise ValueError(
+                                f"Metadata mismatch for '{key}': got {got}, expected {expected}"
+                            )
+
+                abs_rho = float(cached["abs_rho"])
+                json_data = dict(param_values)
+                json_data["cache_key"] = cache_key
+                json_data["abs_rho"] = abs_rho
+                _safe_write_json_once(self.eval_dir / f"{cache_key}.json", json_data)
+                return -abs_rho
+            except Exception as e:
+                print(f"  WARNING: Ignoring stale/invalid cache {cache_path.name}: {e}")
 
         try:
             solver_kwargs = {"surf": self.mesh, "mask": self.medmask}
@@ -217,6 +248,7 @@ class ObjectiveEvaluator:
             save_arrays = {
                 "rho": rho,
                 "abs_rho": abs_rho,
+                "neural_hierarchy": np.asarray(neural_hierarchy, dtype=np.float32),
                 "ttp_hierarchy": np.asarray(ttp_hierarchy, dtype=np.float32),
                 "meta_json": json.dumps(meta, sort_keys=True),
             }
@@ -320,12 +352,212 @@ def plot_optimization_landscape(run_dir: Path, save_path: Path | None = None) ->
     ax.legend(fontsize=11)
     
     plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+
+
+def plot_best_summary(
+    cache_path: Path,
+    run_dir: Path,
+    proxy_hierarchy: np.ndarray,
+    vis_hierarchy_roi_labels: np.ndarray,
+    parc_labels: np.ndarray,
+    parc_labels_masked: np.ndarray,
+    mesh: Any,
+    medmask: np.ndarray,
+    dt: float
+) -> None:
+    """
+    Load the best cached result and create a summary plot.
     
-    if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches="tight")
-        print(f"Saved plot to {save_path}")
-    else:
-        plt.show()
+    Parameters
+    ----------
+    cache_path : Path
+        Path to the best model's .npz cache file
+    run_dir : Path
+        Output directory for the saved plot
+    proxy_hierarchy : np.ndarray
+        T1w/T2w values for the 17 visual hierarchy ROIs (from myelin_parc)
+    vis_hierarchy_roi_labels : np.ndarray
+        Parcel indices for the 17 visual hierarchy ROIs in parcel-space (label_key-1)
+    parc_labels : np.ndarray
+        Full-space parcel labels from the cortical parcellation
+    parc_labels_masked : np.ndarray
+        Masked-space parcel labels (medial wall removed)
+    mesh : Any
+        Cortical surface mesh object with vertices and faces
+    medmask : np.ndarray
+        Binary mask for medial wall exclusion
+    dt : float
+        Simulation timestep in seconds
+    """
+    
+    # Load cached data
+    cached = np.load(cache_path, allow_pickle=False)
+    neural_hierarchy = cached["neural_hierarchy"]
+    ttp_hierarchy = cached["ttp_hierarchy"]
+    rho = float(cached["rho"])
+    
+    # Create figure
+    fig, axs = plt.subplots(1, 2, figsize=(10, 4))
+    
+    # Left panel: activity over time
+    ttp_ms = np.asarray(ttp_hierarchy) * 1000.0
+    norm = mpl.colors.Normalize(vmin=float(np.nanmin(ttp_ms)), vmax=float(np.nanmax(ttp_ms)))
+    cmap = plt.get_cmap("turbo")
+    
+    time_ms = np.arange(neural_hierarchy.shape[1]) * dt * 1000
+    
+    for k in range(neural_hierarchy.shape[0]):
+        axs[0].plot(time_ms, neural_hierarchy[k, :], color=cmap(norm(ttp_ms[k])), linewidth=1.5, alpha=0.8)
+    
+    sm = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
+    _ = fig.colorbar(sm, ax=axs[0], label="Time to peak (ms)")
+    
+    axs[0].set_xlabel("Time (ms)")
+    axs[0].set_ylabel("Neural activity")
+    axs[0].set_title("Activity over time for 17 visual hierarchy ROIs")
+    
+    # Right panel: rank-rank scatter
+    x = np.asarray(proxy_hierarchy)
+    y = np.asarray(ttp_hierarchy)
+    
+    x_rank = rankdata(x)
+    y_rank = rankdata(y)
+    
+    point_colors = cmap(norm(ttp_ms))
+    axs[1].scatter(x_rank, y_rank, s=45, c=point_colors, edgecolors="black", linewidth=0.3)
+    axs[1].set_xlabel("T1w/T2w (rank)")
+    axs[1].set_ylabel("Time to peak (rank)")
+    axs[1].set_title(f"Spearman rho = {rho:.4f}")
+    
+    plt.tight_layout()
+    save_path = run_dir / "best_summary.png"
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close()
+
+    # Separate parcel-wise brain figure colored by parcel TTP values.
+    n_parcels = int(np.max(parc_labels_masked))
+    ttp_parcel_values = np.full(n_parcels, np.nan, dtype=np.float32)
+    ttp_parcel_values[np.asarray(vis_hierarchy_roi_labels, dtype=int)] = np.asarray(ttp_hierarchy, dtype=np.float32)
+
+    valid = (parc_labels_masked > 0) & (parc_labels_masked <= n_parcels)
+    ttp_vertex_masked = np.full(parc_labels_masked.shape, np.nan, dtype=np.float32)
+    ttp_vertex_masked[valid] = ttp_parcel_values[parc_labels_masked[valid] - 1]
+    ttp_vertex_full = unmask(ttp_vertex_masked, medmask)
+
+    fig_brain, ax_brain = plt.subplots(figsize=(7, 4.5))
+    mesh_plot = {"lh": {"v": mesh.vertices, "t": mesh.faces}}
+    plot_surf(
+        surf=mesh_plot,
+        data={"lh": ttp_vertex_full},
+        rois={"lh": parc_labels},
+        views=["lateral", "medial"],
+        cmap="turbo",
+        cbar=True,
+        roi_outlines=True,
+        ax=ax_brain,
+    )
+    ax_brain.set_title("Parcel time-to-peak (s)")
+    fig_brain.tight_layout()
+    fig_brain.savefig(run_dir / "ttp_parcel_brain.png", dpi=150, bbox_inches="tight")
+    plt.close(fig_brain)
+
+
+def create_best_video(
+    mesh: Any,
+    medmask: np.ndarray,
+    hetero_map: np.ndarray | None,
+    aniso_map: np.ndarray | None,
+    best_params: Dict[str, float],
+    n_modes: int,
+    dt: float,
+    nt: int,
+    r: float,
+    gamma: float,
+    ext_input: np.ndarray,
+    run_dir: Path
+) -> None:
+    """
+    Reconstruct the best model and generate a wave propagation video.
+    
+    Parameters
+    ----------
+    mesh : Surface object
+        Cortical surface mesh
+    medmask : np.ndarray
+        Binary mask for medial wall exclusion
+    hetero_map : np.ndarray | None
+        Heterogeneity map (or None if not used)
+    aniso_map : np.ndarray | None
+        Anisotropy map (or None if not used)
+    best_params : Dict[str, float]
+        Best parameter set from optimization
+    n_modes : int
+        Number of eigenmodes to solve for
+    dt : float
+        Simulation timestep in seconds
+    nt : int
+        Number of timesteps
+    r : float
+        Coupling strength (mm)
+    gamma : float
+        Damping rate (s^-1)
+    ext_input : np.ndarray
+        External input time series (vertices x time)
+    run_dir : Path
+        Output directory for the saved video
+    """
+    print("Generating best model video...")
+    
+    # Reconstruct solver with best parameters
+    solver_kwargs = {"surf": mesh, "mask": medmask}
+    
+    if "alpha" in best_params:
+        alpha = best_params.get("alpha", 0)
+        solver_kwargs["hetero"] = hetero_map if alpha != 0 else None
+        solver_kwargs["alpha"] = alpha if alpha != 0 else None
+    
+    if "beta" in best_params:
+        beta = best_params.get("beta", 0)
+        solver_kwargs["aniso_map"] = aniso_map if beta != 0 else None
+        solver_kwargs["beta"] = beta if beta != 0 else None
+    
+    if "aniso_curv1" in best_params or "aniso_curv2" in best_params:
+        aniso_curv1 = best_params.get("aniso_curv1", 0)
+        aniso_curv2 = best_params.get("aniso_curv2", 0)
+        if aniso_curv1 != 0 or aniso_curv2 != 0:
+            solver_kwargs["aniso_curv"] = (aniso_curv1, aniso_curv2)
+    
+    solver = EigenSolver(**solver_kwargs).solve(n_modes=n_modes)
+    
+    # Run simulation
+    neural = solver.simulate_waves(
+        ext_input=ext_input,
+        nt=nt,
+        dt=dt,
+        r=r,
+        gamma=gamma,
+    )
+    
+    # Prepare video data (skip first 10 timesteps)
+    neural_ss = neural[:, 10:]
+    clim = np.vstack([np.nanpercentile(neural_ss, 2, axis=0), np.nanpercentile(neural_ss, 98, axis=0)]).T
+    
+    # Build mesh dict for plotting
+    mesh_plot = {"v": mesh.vertices, "t": mesh.faces}
+    
+    # Create video with improved rendering
+    video_file = plot_surf_video(
+        surf=mesh_plot,
+        data_timeseries=unmask(neural_ss, medmask),
+        filename=str(run_dir / "best_model.mp4"),
+        framerate=100,
+        cmap="viridis",
+        clim=clim,
+        views=["lateral", "medial"]
+    )
+    
+    print(f"Video saved: {video_file}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -342,7 +574,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--n_jobs", type=int, default=-1, help="Parallel workers for DE (-1 = all).")
     p.add_argument("--maxiter", type=int, default=50, help="DE max iterations.")
     p.add_argument("--popsize", type=int, default=16, help="DE population size multiplier.")
-    p.add_argument("--seed", type=int, default=0, help="Random seed.")
+    p.add_argument("--seed", type=int, default=365, help="Random seed for differential evolution initialization.")
     p.add_argument("--polish", action="store_true", help="Enable DE polish step (usually off).")
     return p.parse_args()
 
@@ -355,13 +587,11 @@ def main() -> None:
     if args.test:
         run_id = 0
         run_dir = results_dir / "0"
-        cache_dir = run_dir / "_cache_test"
         if run_dir.exists():
             shutil.rmtree(run_dir)
     else:
         run_id = _next_run_id(results_dir)
         run_dir = results_dir / str(run_id)
-        cache_dir = results_dir / "_cache"
         while True:
             try:
                 run_dir.mkdir(parents=True, exist_ok=False)
@@ -372,6 +602,7 @@ def main() -> None:
 
     eval_dir = run_dir / "evals"
     eval_dir.mkdir(parents=True, exist_ok=True)
+    cache_dir = run_dir / "_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     # Build parameter specs dict with only the parameters provided
@@ -518,44 +749,73 @@ def main() -> None:
         meta_base=meta_base,
     )
 
-    # Use a custom callback to track iteration times and print progress
-    timing_callback = TimingCallback(param_specs)
-    
-    res = differential_evolution(
-        evaluator,
-        bounds=bounds,
-        maxiter=int(args.maxiter),
-        popsize=int(args.popsize),
-        seed=int(args.seed),
-        workers=int(args.n_jobs),
-        updating="deferred",
-        polish=bool(args.polish),
-        callback=timing_callback,
-        disp=True,
-    )
+    is_single_point = all(spec.min == spec.max for spec in param_specs.values())
 
-    best_params = {}
-    for i, name in enumerate(param_specs.keys()):
-        spec = param_specs[name]
-        best_params[name] = _snap_to_grid(float(res.x[i]), spec.min, spec.max, spec.step)
+    if is_single_point:
+        print("Single-point mode: skipping differential_evolution and evaluating once.")
+        best_params = {name: spec.min for name, spec in param_specs.items()}
+        x_fixed = np.array([best_params[name] for name in param_specs.keys()], dtype=float)
+        fun = float(evaluator(x_fixed))
+        de_result = {
+            "x": [float(v) for v in x_fixed],
+            "fun": fun,
+            "nfev": 1,
+            "nit": 0,
+            "success": True,
+            "message": "Single-point evaluation (all bounds fixed).",
+        }
+    else:
+        # Use a custom callback to track iteration times and print progress
+        timing_callback = TimingCallback(param_specs)
+        
+        res = differential_evolution(
+            evaluator,
+            bounds=bounds,
+            maxiter=int(args.maxiter),
+            popsize=int(args.popsize),
+            seed=int(args.seed),
+            workers=int(args.n_jobs),
+            updating="deferred",
+            polish=bool(args.polish),
+            callback=timing_callback,
+            disp=True,
+        )
+
+        best_params = {}
+        for i, name in enumerate(param_specs.keys()):
+            spec = param_specs[name]
+            best_params[name] = _snap_to_grid(float(res.x[i]), spec.min, spec.max, spec.step)
+
+        de_result = {
+            "x": [float(v) for v in res.x],
+            "fun": float(res.fun),
+            "nfev": int(res.nfev),
+            "nit": int(res.nit),
+            "success": bool(res.success),
+            "message": str(res.message),
+        }
     
     best_key, best_cache_path = evaluator._cache_key_and_path(best_params)
     cached = np.load(best_cache_path, allow_pickle=False)
-
+    
+    # Validate that the cached result matches the expected parameters
+    # (guards against hash collisions or stale cache reuse)
+    cached_meta = json.loads(str(cached["meta_json"]))
+    for param_name, param_value in best_params.items():
+        if param_name not in cached_meta:
+            print(f"WARNING: Parameter '{param_name}' not found in cached metadata")
+        elif abs(float(cached_meta[param_name]) - param_value) > 1e-6:
+            print(f"ERROR: Parameter mismatch for '{param_name}'")
+            print(f"  Expected: {param_value}")
+            print(f"  Got from cache: {cached_meta[param_name]}")
+            raise ValueError(f"Cached result does not match expected parameters")
+    
     best = dict(best_params)
     best["rho"] = float(cached["rho"])
     best["abs_rho"] = float(cached["abs_rho"])
     best["cache_key"] = best_key
     (run_dir / "best.json").write_text(json.dumps(best, indent=2, sort_keys=True), encoding="utf-8")
 
-    de_result = {
-        "x": [float(v) for v in res.x],
-        "fun": float(res.fun),
-        "nfev": int(res.nfev),
-        "nit": int(res.nit),
-        "success": bool(res.success),
-        "message": str(res.message),
-    }
     (run_dir / "de_result.json").write_text(
         json.dumps(de_result, indent=2, sort_keys=True),
         encoding="utf-8",
@@ -591,6 +851,35 @@ def main() -> None:
     
     # Generate landscape plot
     plot_optimization_landscape(run_dir, save_path=run_dir / "landscape.png")
+    
+    # Generate best model summary plot
+    plot_best_summary(
+        cache_path=best_cache_path,
+        run_dir=run_dir,
+        proxy_hierarchy=proxy_hierarchy,
+        vis_hierarchy_roi_labels=vis_hierarchy_roi_labels,
+        parc_labels=parc_labels,
+        parc_labels_masked=parc_labels_masked,
+        mesh=mesh,
+        medmask=medmask,
+        dt=dt,
+    )
+    
+    # Generate best model video
+    create_best_video(
+        mesh=mesh,
+        medmask=medmask,
+        hetero_map=hetero_map,
+        aniso_map=aniso_map,
+        best_params=best_params,
+        n_modes=int(args.n_modes),
+        dt=dt,
+        nt=nt,
+        r=r,
+        gamma=gamma,
+        ext_input=ext_input,
+        run_dir=run_dir
+    )
 
 
 if __name__ == "__main__":
