@@ -93,6 +93,7 @@ def run_model(
         scaling=scaling, 
         aniso_map=aniso, 
         beta=beta, 
+        #TODO: add support for aniso_curv
     )
     solver = solver.solve(
         n_modes=n_modes, 
