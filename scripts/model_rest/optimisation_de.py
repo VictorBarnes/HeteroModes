@@ -106,12 +106,14 @@ class ObjectiveEvaluator:
         return_model_outputs: bool = False,
     ) -> Dict[str, Any]:
         cache_key, cache_path = self._cache_key_and_path(params)
+        model_cache_path = self.cache_dir / f"eval_{cache_key}_model_outputs.npz"
 
-        if cache_path.exists() and not return_model_outputs:
-            cached = np.load(cache_path, allow_pickle=False)
-            metric_vals = {m: float(cached[m]) for m in self.metrics if m in cached.files}
-            score = float(cached["score"])
-            objective = float(cached["objective"])
+        has_model_cache = model_cache_path.exists()
+        if cache_path.exists() and (not return_model_outputs or has_model_cache):
+            with np.load(cache_path, allow_pickle=False) as cached:
+                metric_vals = {m: float(cached[m]) for m in self.metrics if m in cached.files}
+                score = float(cached["score"])
+                objective = float(cached["objective"])
             breadcrumb = {
                 "cache_key": cache_key,
                 "objective": objective,
@@ -120,12 +122,16 @@ class ObjectiveEvaluator:
                 **metric_vals,
             }
             _safe_write_json_once(self.eval_dir / f"{cache_key}.json", breadcrumb)
-            return {
+            out = {
                 "cache_key": cache_key,
                 "objective": objective,
                 "score": score,
                 "metrics": metric_vals,
             }
+            if return_model_outputs:
+                with np.load(model_cache_path, allow_pickle=False) as model_cached:
+                    out["model_outputs"] = {k: model_cached[k] for k in model_cached.files}
+            return out
 
         bold_data = _simulate_bold(
             surf=self.surf,
@@ -171,6 +177,14 @@ class ObjectiveEvaluator:
             "score": score,
         }
         _atomic_savez(cache_path, **payload)
+        if return_model_outputs:
+            model_payload = {
+                k: np.asarray(v)
+                for k, v in model_outputs.items()
+                if isinstance(v, np.ndarray)
+            }
+            if model_payload:
+                _atomic_savez(model_cache_path, **model_payload)
 
         breadcrumb = {
             "cache_key": cache_key,
@@ -528,6 +542,11 @@ def _simulate_bold(
     solver = EigenSolver(**solver_kwargs)
     solver.solve(n_modes=int(n_modes), fix_mode1=True, standardize=False, seed=365)
 
+    # Reuse deterministic external inputs across evaluations via neuromodes cache.
+    ext_input_cache_dir = Path(PROJ_DIR) / "results" / "human" / "model_rest" / "_cache_ext_input"
+    ext_input_cache_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["CACHE_DIR"] = str(ext_input_cache_dir)
+
     downsample_factor = int(dt_emp / dt_model)
     nt_model = int(nt_emp * downsample_factor) + int(tsteady)
 
@@ -542,6 +561,7 @@ def _simulate_bold(
             "dt": dt_model,
             "nt": nt_model,
             "seed": i,
+            "cache_input": True,
             "bold_out": True,
             "decomp_method": "project",
             "pde_method": "fourier",
@@ -643,7 +663,7 @@ def _load_plot_surf_dict(surf_path: str) -> Dict[str, Dict[str, np.ndarray]]:
     return {"lh": {"v": vertices, "t": faces}}
 
 
-def _plot_brain_pair(
+def _plot_brain_model_emp(
     *,
     save_path: Path,
     surf_dict: Dict[str, Dict[str, np.ndarray]],
@@ -1026,31 +1046,58 @@ def main() -> None:
     )
 
     free_bounds = [(spec.min, spec.max) for spec in param_specs.values()]
+    single_point_de_result: Optional[Dict[str, Any]] = None
+    single_point_best_eval: Optional[Dict[str, Any]] = None
     if free_bounds:
-        timing_callback = TimingCallback(param_specs)
-        result = differential_evolution(
-            evaluator,
-            bounds=free_bounds,
-            seed=int(args.seed),
-            maxiter=int(args.maxiter),
-            popsize=int(args.popsize),
-            polish=bool(args.polish),
-            workers=int(args.n_jobs),
-            updating="deferred" if int(args.n_jobs) != 1 else "immediate",
-            callback=timing_callback,
-            disp=True,
-        )
-        best_params = {name: None for name in PARAM_ORDER}
-        best_params.update(fixed_params)
-        for i, name in enumerate(param_specs.keys()):
-            spec = param_specs[name]
-            best_params[name] = _snap_to_grid(float(result.x[i]), spec.min, spec.max, spec.step)
+        is_single_point = all(spec.min == spec.max for spec in param_specs.values())
+        if is_single_point:
+            print("Single-point mode: skipping differential_evolution and evaluating once.")
+            best_params = {name: None for name in PARAM_ORDER}
+            best_params.update(fixed_params)
+            for name, spec in param_specs.items():
+                best_params[name] = spec.min
+
+            x_fixed = np.array([best_params[name] for name in param_specs.keys()], dtype=float)
+            single_point_best_eval = evaluator.evaluate_params(best_params, return_model_outputs=True)
+            fun = float(single_point_best_eval["objective"])
+            evaluator.cache[single_point_best_eval["cache_key"]] = fun
+            single_point_de_result = {
+                "x": [float(v) for v in x_fixed],
+                "fun": fun,
+                "nfev": 1,
+                "nit": 0,
+                "success": True,
+                "message": "Single-point evaluation (all bounds fixed).",
+            }
+            result = None
+        else:
+            timing_callback = TimingCallback(param_specs)
+            result = differential_evolution(
+                evaluator,
+                bounds=free_bounds,
+                seed=int(args.seed),
+                maxiter=int(args.maxiter),
+                popsize=int(args.popsize),
+                polish=bool(args.polish),
+                workers=int(args.n_jobs),
+                updating="deferred" if int(args.n_jobs) != 1 else "immediate",
+                callback=timing_callback,
+                disp=True,
+            )
+            best_params = {name: None for name in PARAM_ORDER}
+            best_params.update(fixed_params)
+            for i, name in enumerate(param_specs.keys()):
+                spec = param_specs[name]
+                best_params[name] = _snap_to_grid(float(result.x[i]), spec.min, spec.max, spec.step)
     else:
         result = None
         best_params = {name: None for name in PARAM_ORDER}
         best_params.update(fixed_params)
 
-    best_eval = evaluator.evaluate_params(best_params, return_model_outputs=True)
+    if single_point_best_eval is not None:
+        best_eval = single_point_best_eval
+    else:
+        best_eval = evaluator.evaluate_params(best_params, return_model_outputs=True)
     best_metrics = dict(best_eval["metrics"])
     best_objective = float(best_eval["objective"])
     best_score = float(best_eval["score"])
@@ -1065,14 +1112,17 @@ def main() -> None:
     }
     (pair_dir / "best.json").write_text(json.dumps(best_json, indent=2, sort_keys=True), encoding="utf-8")
 
-    de_result = {
-        "x": [float(v) for v in result.x] if result is not None else [],
-        "fun": float(result.fun) if result is not None else best_objective,
-        "nfev": int(result.nfev) if result is not None else 1,
-        "nit": int(result.nit) if result is not None else 0,
-        "success": bool(result.success) if result is not None else True,
-        "message": str(result.message) if result is not None else "evaluated fixed default parameters",
-    }
+    if single_point_de_result is not None:
+        de_result = single_point_de_result
+    else:
+        de_result = {
+            "x": [float(v) for v in result.x] if result is not None else [],
+            "fun": float(result.fun) if result is not None else best_objective,
+            "nfev": int(result.nfev) if result is not None else 1,
+            "nit": int(result.nit) if result is not None else 0,
+            "success": bool(result.success) if result is not None else True,
+            "message": str(result.message) if result is not None else "evaluated fixed default parameters",
+        }
     (pair_dir / "de_result.json").write_text(json.dumps(de_result, indent=2, sort_keys=True), encoding="utf-8")
 
     rows = _build_manifest(eval_dir, pair_dir / "manifest.csv")
@@ -1094,7 +1144,7 @@ def main() -> None:
         if "node_fc_corr" in args.metrics and "fc" in model_outputs and "fc" in emp_outputs:
             model_node = calc_node_fc(np.asarray(model_outputs["fc"], dtype=float))
             emp_node = calc_node_fc(np.asarray(emp_outputs["fc"], dtype=float))
-            _plot_brain_pair(
+            _plot_brain_model_emp(
                 save_path=pair_dir / "node_fc_corr_brain_map.png",
                 surf_dict=surf_dict,
                 medmask=medmask,
@@ -1107,7 +1157,7 @@ def main() -> None:
         if "cpc1_corr" in args.metrics and "cpcs" in model_outputs and "cpcs" in emp_outputs:
             model_cpc1 = np.imag(np.asarray(model_outputs["cpcs"])[:, 0])
             emp_cpc1 = np.imag(np.asarray(emp_outputs["cpcs"])[:, 0])
-            _plot_brain_pair(
+            _plot_brain_model_emp(
                 save_path=pair_dir / "cpc1_corr_brain_map.png",
                 surf_dict=surf_dict,
                 medmask=medmask,
@@ -1124,7 +1174,7 @@ def main() -> None:
 
     print(f"Run parent folder (ID={run_id}): {run_parent}")
     print(f"Pair folder: {pair_dir}")
-    print(f"Total optimisation time: {(time.time() - t0)/60:.2f}min")
+    print(f"Total optimisation time: {(time.time() - t0)/3600:.3f} hrs")
 
 
 if __name__ == "__main__":
