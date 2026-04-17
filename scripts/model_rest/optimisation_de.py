@@ -84,6 +84,174 @@ class ObjectiveEvaluator:
     eval_dir: Path
     meta_base: Dict[str, Any]
     cache: Dict[str, float]
+    cpc_seed: Optional[int]
+
+    def _expected_objective_identity(self, params: Dict[str, Optional[float]], cache_key: str) -> Dict[str, Any]:
+        return {
+            "cache_key": cache_key,
+            "params_hash": _hash_key(params),
+            "run_hash": self.meta_base.get("run_hash"),
+            "objective_version": self.meta_base.get("objective_version"),
+        }
+
+    def _validate_objective_identity(
+        self,
+        record: Dict[str, Any],
+        expected: Dict[str, Any],
+        source_name: str,
+    ) -> None:
+        missing = [k for k in expected.keys() if k not in record]
+        if missing:
+            raise ValueError(f"{source_name} missing required objective identity keys: {missing}")
+
+        mismatches: List[str] = []
+        for k, v_expected in expected.items():
+            v_actual = record.get(k)
+            if v_actual != v_expected:
+                mismatches.append(f"{k}: expected {v_expected!r}, got {v_actual!r}")
+
+        if mismatches:
+            mismatch_msg = "\n  - " + "\n  - ".join(mismatches)
+            raise ValueError(f"{source_name} objective identity mismatch:{mismatch_msg}")
+
+    def _load_objective_from_json(self, path: Path) -> Dict[str, Any]:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        out = dict(payload)
+        out["score"] = float(payload["score"])
+        out["objective"] = float(payload["objective"])
+        for m in self.metrics:
+            if m in out:
+                out[m] = float(out[m])
+        return out
+
+    def _load_objective_from_npz(self, path: Path) -> Dict[str, Any]:
+        with np.load(path, allow_pickle=False) as cached:
+            out: Dict[str, Any] = {}
+            required_keys = {
+                "cache_key",
+                "params_hash",
+                "run_hash",
+                "objective_version",
+                "score",
+                "objective",
+                *self.metrics,
+            }
+            for key in sorted(required_keys):
+                if key not in cached.files:
+                    continue
+                val = cached[key]
+                if np.isscalar(val):
+                    out[key] = val.item()
+                elif isinstance(val, np.ndarray) and val.ndim == 0:
+                    out[key] = val.item()
+                else:
+                    out[key] = val
+
+        out["score"] = float(out["score"])
+        out["objective"] = float(out["objective"])
+        for m in self.metrics:
+            if m in out:
+                out[m] = float(out[m])
+        return out
+
+    def _assert_objective_records_agree(
+        self,
+        json_record: Dict[str, Any],
+        npz_record: Dict[str, Any],
+    ) -> None:
+        keys_to_match = [
+            "cache_key",
+            "params_hash",
+            "run_hash",
+            "objective_version",
+            "score",
+            "objective",
+        ] + list(self.metrics)
+
+        mismatches: List[str] = []
+        for k in keys_to_match:
+            if k not in json_record or k not in npz_record:
+                mismatches.append(f"{k}: missing in one of json/npz records")
+                continue
+
+            jv = json_record[k]
+            nv = npz_record[k]
+            if isinstance(jv, (float, int)) and isinstance(nv, (float, int)):
+                if not np.isclose(float(jv), float(nv), rtol=0.0, atol=1e-12):
+                    mismatches.append(f"{k}: json={float(jv)!r}, npz={float(nv)!r}")
+            else:
+                if jv != nv:
+                    mismatches.append(f"{k}: json={jv!r}, npz={nv!r}")
+
+        if mismatches:
+            mismatch_msg = "\n  - " + "\n  - ".join(mismatches)
+            raise ValueError(f"Objective cache disagreement between JSON and NPZ:{mismatch_msg}")
+
+    def _load_cached_objective_strict(
+        self,
+        *,
+        params: Dict[str, Optional[float]],
+        cache_key: str,
+        cache_path: Path,
+        eval_json_path: Path,
+    ) -> Dict[str, Any]:
+        has_npz = cache_path.exists()
+        has_json = eval_json_path.exists()
+
+        if has_npz != has_json:
+            raise ValueError(
+                "Objective cache is incomplete for "
+                f"{cache_key}: npz_exists={has_npz}, json_exists={has_json}. "
+                "Both objective artifacts are required."
+            )
+        if not has_npz:
+            raise FileNotFoundError(f"Objective cache artifacts not found for {cache_key}")
+
+        expected = self._expected_objective_identity(params, cache_key)
+        json_record = self._load_objective_from_json(eval_json_path)
+        npz_record = self._load_objective_from_npz(cache_path)
+
+        self._validate_objective_identity(json_record, expected, f"{eval_json_path}")
+        self._validate_objective_identity(npz_record, expected, f"{cache_path}")
+        self._assert_objective_records_agree(json_record, npz_record)
+
+        metric_vals = {m: float(json_record[m]) for m in self.metrics if m in json_record}
+        return {
+            "cache_key": cache_key,
+            "objective": float(json_record["objective"]),
+            "score": float(json_record["score"]),
+            "metrics": metric_vals,
+        }
+
+    def _compute_model_outputs(self, params: Dict[str, Optional[float]]) -> Dict[str, np.ndarray]:
+        bold_data = _simulate_bold(
+            surf=self.surf,
+            medmask=self.medmask,
+            parc=self.parc,
+            hetero_map=self.hetero_map,
+            aniso_map=self.aniso_map,
+            alpha=params.get("alpha"),
+            beta=params.get("beta"),
+            aniso_curv1=params.get("aniso_curv1"),
+            aniso_curv2=params.get("aniso_curv2"),
+            r=params.get("r"),
+            gamma=params.get("gamma"),
+            scaling=self.scaling,
+            n_modes=self.n_modes,
+            n_runs=self.n_runs,
+            nt_emp=self.nt_emp,
+            dt_emp=self.dt_emp,
+            dt_model=self.dt_model,
+            tsteady=self.tsteady,
+        )
+
+        return analyze_bold(
+            bold_data,
+            dt_emp=self.dt_emp,
+            band_freq=self.band_freq,
+            metrics=list(self.metrics),
+            cpc_seed=self.cpc_seed,
+        )
 
     def _resolve_params(self, x: Sequence[float]) -> Dict[str, Optional[float]]:
         params: Dict[str, Optional[float]] = {name: None for name in PARAM_ORDER}
@@ -107,59 +275,32 @@ class ObjectiveEvaluator:
     ) -> Dict[str, Any]:
         cache_key, cache_path = self._cache_key_and_path(params)
         model_cache_path = self.cache_dir / f"eval_{cache_key}_model_outputs.npz"
+        eval_json_path = self.eval_dir / f"{cache_key}.json"
 
-        has_model_cache = model_cache_path.exists()
-        if cache_path.exists() and (not return_model_outputs or has_model_cache):
-            with np.load(cache_path, allow_pickle=False) as cached:
-                metric_vals = {m: float(cached[m]) for m in self.metrics if m in cached.files}
-                score = float(cached["score"])
-                objective = float(cached["objective"])
-            breadcrumb = {
-                "cache_key": cache_key,
-                "objective": objective,
-                "score": score,
-                **params,
-                **metric_vals,
-            }
-            _safe_write_json_once(self.eval_dir / f"{cache_key}.json", breadcrumb)
-            out = {
-                "cache_key": cache_key,
-                "objective": objective,
-                "score": score,
-                "metrics": metric_vals,
-            }
+        if cache_path.exists() or eval_json_path.exists():
+            out = self._load_cached_objective_strict(
+                params=params,
+                cache_key=cache_key,
+                cache_path=cache_path,
+                eval_json_path=eval_json_path,
+            )
             if return_model_outputs:
-                with np.load(model_cache_path, allow_pickle=False) as model_cached:
-                    out["model_outputs"] = {k: model_cached[k] for k in model_cached.files}
+                if model_cache_path.exists():
+                    with np.load(model_cache_path, allow_pickle=False) as model_cached:
+                        out["model_outputs"] = {k: model_cached[k] for k in model_cached.files}
+                else:
+                    model_outputs = self._compute_model_outputs(params)
+                    model_payload = {
+                        k: np.asarray(v)
+                        for k, v in model_outputs.items()
+                        if isinstance(v, np.ndarray)
+                    }
+                    if model_payload:
+                        _atomic_savez(model_cache_path, **model_payload)
+                    out["model_outputs"] = model_outputs
             return out
 
-        bold_data = _simulate_bold(
-            surf=self.surf,
-            medmask=self.medmask,
-            parc=self.parc,
-            hetero_map=self.hetero_map,
-            aniso_map=self.aniso_map,
-            alpha=params.get("alpha"),
-            beta=params.get("beta"),
-            aniso_curv1=params.get("aniso_curv1"),
-            aniso_curv2=params.get("aniso_curv2"),
-            r=params.get("r"),
-            gamma=params.get("gamma"),
-            scaling=self.scaling,
-            n_modes=self.n_modes,
-            n_runs=self.n_runs,
-            nt_emp=self.nt_emp,
-            dt_emp=self.dt_emp,
-            dt_model=self.dt_model,
-            tsteady=self.tsteady,
-        )
-
-        model_outputs = analyze_bold(
-            bold_data,
-            dt_emp=self.dt_emp,
-            band_freq=self.band_freq,
-            metrics=list(self.metrics),
-        )
+        model_outputs = self._compute_model_outputs(params)
         metric_vals = evaluate_model(model_outputs, self.emp_outputs, metrics=list(self.metrics))
         metric_vals = {k: float(v) for k, v in metric_vals.items()}
 
@@ -170,13 +311,18 @@ class ObjectiveEvaluator:
 
         payload: Dict[str, Any] = {
             **self.meta_base,
-            **params,
+            **{k: v for k, v in params.items() if v is not None},
             **metric_vals,
             "cache_key": cache_key,
+            "params_hash": _hash_key(params),
             "objective": objective,
             "score": score,
         }
-        _atomic_savez(cache_path, **payload)
+        npz_created = _safe_write_npz_once(cache_path, **payload)
+        if not npz_created:
+            raise ValueError(
+                f"Objective cache NPZ already exists for {cache_key}; objective caches are immutable and cannot be overwritten."
+            )
         if return_model_outputs:
             model_payload = {
                 k: np.asarray(v)
@@ -187,13 +333,27 @@ class ObjectiveEvaluator:
                 _atomic_savez(model_cache_path, **model_payload)
 
         breadcrumb = {
+            **self.meta_base,
+            **params,
             "cache_key": cache_key,
+            "params_hash": _hash_key(params),
             "objective": objective,
             "score": score,
-            **params,
             **metric_vals,
         }
-        _safe_write_json_once(self.eval_dir / f"{cache_key}.json", breadcrumb)
+        json_created = _safe_write_json_once(eval_json_path, breadcrumb)
+        if not json_created:
+            raise ValueError(
+                f"Objective cache JSON already exists for {cache_key}; objective caches are immutable and cannot be overwritten."
+            )
+
+        # Strictly re-load objective artifacts to verify consistency before returning.
+        _ = self._load_cached_objective_strict(
+            params=params,
+            cache_key=cache_key,
+            cache_path=cache_path,
+            eval_json_path=eval_json_path,
+        )
 
         out = {
             "cache_key": cache_key,
@@ -264,13 +424,28 @@ def _atomic_savez(path: Path, **arrays: Any) -> None:
     os.replace(tmp, path)
 
 
-def _safe_write_json_once(path: Path, payload: Dict[str, Any]) -> None:
+def _safe_write_json_once(path: Path, payload: Dict[str, Any]) -> bool:
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with path.open("x", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, sort_keys=True)
+        return True
     except FileExistsError:
-        return
+        return False
+
+
+def _safe_write_npz_once(path: Path, **arrays: Any) -> bool:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.stem}.{os.getpid()}.tmp{path.suffix}")
+    np.savez_compressed(tmp, **arrays)
+    try:
+        os.link(tmp, path)
+        return True
+    except FileExistsError:
+        return False
+    finally:
+        if tmp.exists():
+            tmp.unlink()
 
 
 def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
@@ -853,6 +1028,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--maxiter", type=int, default=50, help="Maximum differential-evolution iterations.")
     parser.add_argument("--popsize", type=int, default=16, help="Population size multiplier for differential evolution.")
     parser.add_argument("--seed", type=int, default=365, help="Seed for differential evolution initialization.")
+    parser.add_argument(
+        "--cpc_seed",
+        type=int,
+        default=365,
+        help="Seed for CPC extraction randomness (fbpca) when using cpc1_corr.",
+    )
     parser.add_argument("--n_jobs", type=int, default=1, help="Parallel workers for differential evolution.")
     parser.add_argument("--polish", action="store_true")
 
@@ -966,6 +1147,7 @@ def main() -> None:
         "maxiter": int(args.maxiter),
         "popsize": int(args.popsize),
         "seed": int(args.seed),
+        "cpc_seed": int(args.cpc_seed),
         "n_jobs": int(args.n_jobs),
         "polish": bool(args.polish),
         "anisotropy_mode": aniso_mode,
@@ -1028,6 +1210,7 @@ def main() -> None:
         meta_base={
             "objective_version": OBJECTIVE_VERSION,
             "run_hash": run_config["run_hash"],
+            "cpc_seed": int(args.cpc_seed),
             "species": args.species,
             "density": args.density,
             "evaluation": args.evaluation,
@@ -1043,6 +1226,7 @@ def main() -> None:
             "anisotropy_mode": aniso_mode,
         },
         cache={},
+        cpc_seed=int(args.cpc_seed),
     )
 
     free_bounds = [(spec.min, spec.max) for spec in param_specs.values()]

@@ -143,7 +143,8 @@ def run_model(
 
 
 def analyze_bold(bold, dt_emp=0.72, band_freq=(0.01, 0.1), 
-                 metrics=["edge_fc_corr", "node_fc_corr", "fcd_ks"]):
+                 metrics=["edge_fc_corr", "node_fc_corr", "fcd_ks"],
+                 cpc_seed=None):
     """
     Compute functional connectivity metrics from BOLD time series.
 
@@ -157,6 +158,9 @@ def analyze_bold(bold, dt_emp=0.72, band_freq=(0.01, 0.1),
         Frequency band (low, high) in Hz for bandpass filtering.
     metrics : list, default=["edge_fc_corr", "node_fc_corr", "fcd_ks"]
         Metrics to compute: "edge_fc_corr", "node_fc_corr", "cpc1", "fcd_ks".
+    cpc_seed : int or None, default=None
+        Optional NumPy seed used only for CPC extraction (fbpca). Set this to
+        a fixed value to make cpc1_corr deterministic across repeated runs.
 
     Returns
     -------
@@ -184,7 +188,16 @@ def analyze_bold(bold, dt_emp=0.72, band_freq=(0.01, 0.1),
             ).astype(np.complex64)
             ncpcs = 3
             l = 10 + ncpcs
-            _, _, V = fbpca.pca(analytic.T, k=ncpcs, n_iter=20, l=l)
+            if cpc_seed is None:
+                _, _, V = fbpca.pca(analytic.T, k=ncpcs, n_iter=20, l=l)
+            else:
+                # Keep this stochastic step reproducible without disturbing global RNG state.
+                rng_state = np.random.get_state()
+                np.random.seed(int(cpc_seed))
+                try:
+                    _, _, V = fbpca.pca(analytic.T, k=ncpcs, n_iter=20, l=l)
+                finally:
+                    np.random.set_state(rng_state)
             outputs['cpcs'] = V.T.astype(np.complex64)
             
         if "fcd_ks" in metrics:
