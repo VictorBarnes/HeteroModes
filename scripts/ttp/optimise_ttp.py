@@ -29,6 +29,8 @@ PROJ_DIR = get_project_root()
 
 # Update this if the objective function changes in a non-backwards-compatible way
 OBJECTIVE_VERSION = "ttp_spearman_abs_v1"
+DEFAULT_R = 28.9
+DEFAULT_GAMMA = 116.0
 
 def _hash_key(d: Dict[str, Any]) -> str:
     payload = json.dumps(d, sort_keys=True, default=str).encode("utf-8")
@@ -75,13 +77,53 @@ def _parse_grid3(values: Tuple[float, float, float], name: str) -> GridSpec:
     return GridSpec(min=min, max=max, step=step)
 
 
-def _next_run_id(results_dir: Path) -> int:
+def _next_non_test_run_id(results_dir: Path) -> int:
     run_ids = []
     if results_dir.exists():
         for child in results_dir.iterdir():
             if child.is_dir() and child.name.isdigit():
-                run_ids.append(int(child.name))
-    return (max(run_ids) + 1) if run_ids else 0
+                run_id = int(child.name)
+                if run_id > 0:
+                    run_ids.append(run_id)
+    return (max(run_ids) + 1) if run_ids else 1
+
+
+def _normalize_config_for_id_check(config: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(config)
+    normalized.pop("maxiter", None)
+    normalized.pop("popsize", None)
+    normalized.pop("n_jobs", None)
+    normalized.pop("hetero_label", None)
+    normalized.pop("aniso_label", None)
+    normalized.pop("optimization_parameters", None)
+    normalized.pop("id_config_file", None)
+    normalized.pop("config_file", None)
+    return normalized
+
+
+def _collect_config_mismatches(expected: Any, actual: Any, prefix: str = "") -> list[str]:
+    mismatches: list[str] = []
+    if isinstance(expected, dict) and isinstance(actual, dict):
+        for key in sorted(set(expected) | set(actual)):
+            child_prefix = f"{prefix}.{key}" if prefix else str(key)
+            if key not in expected:
+                mismatches.append(f"{child_prefix}: unexpected key in current config")
+                continue
+            if key not in actual:
+                mismatches.append(f"{child_prefix}: missing from current config")
+                continue
+            mismatches.extend(_collect_config_mismatches(expected[key], actual[key], child_prefix))
+        return mismatches
+    if isinstance(expected, list) and isinstance(actual, list):
+        if len(expected) != len(actual):
+            mismatches.append(f"{prefix}: expected list length {len(expected)}, got {len(actual)}")
+            return mismatches
+        for i, (exp_item, act_item) in enumerate(zip(expected, actual)):
+            mismatches.extend(_collect_config_mismatches(exp_item, act_item, f"{prefix}[{i}]"))
+        return mismatches
+    if expected != actual:
+        mismatches.append(f"{prefix}: expected {expected!r}, got {actual!r}")
+    return mismatches
 
 class TimingCallback:
     def __init__(self, param_specs: Dict[str, GridSpec]) -> None:
@@ -123,11 +165,10 @@ class ObjectiveEvaluator:
         hetero_map: np.ndarray,
         aniso_map: np.ndarray,
         param_specs: Dict[str, GridSpec],
+        fixed_params: Dict[str, float],
         n_modes: int,
         dt: float,
         nt: int,
-        r: float,
-        gamma: float,
         ext_input: np.ndarray,
         cache_dir: Path,
         eval_dir: Path,
@@ -142,11 +183,10 @@ class ObjectiveEvaluator:
         self.aniso_map = aniso_map
         self.param_specs = param_specs
         self.param_names = list(param_specs.keys())
+        self.fixed_params = dict(fixed_params)
         self.n_modes = int(n_modes)
         self.dt = float(dt)
         self.nt = int(nt)
-        self.r = float(r)
-        self.gamma = float(gamma)
         self.ext_input = ext_input
         self.cache_dir = cache_dir
         self.eval_dir = eval_dir
@@ -163,8 +203,11 @@ class ObjectiveEvaluator:
         for i, name in enumerate(self.param_names):
             spec = self.param_specs[name]
             param_values[name] = _snap_to_grid(float(x[i]), spec.min, spec.max, spec.step)
-        
-        cache_key, cache_path = self._cache_key_and_path(param_values)
+
+        resolved_params = dict(self.fixed_params)
+        resolved_params.update(param_values)
+
+        cache_key, cache_path = self._cache_key_and_path(resolved_params)
 
         if cache_path.exists():
             try:
@@ -174,7 +217,7 @@ class ObjectiveEvaluator:
 
                 cached_meta = json.loads(str(cached["meta_json"]))
                 expected_meta = dict(self.meta_base)
-                expected_meta.update(param_values)
+                expected_meta.update(resolved_params)
                 expected_meta.update({"cache_key": cache_key})
 
                 # Validate cache metadata before reuse; mismatch means stale cache.
@@ -195,7 +238,7 @@ class ObjectiveEvaluator:
                             )
 
                 abs_rho = float(cached["abs_rho"])
-                json_data = dict(param_values)
+                json_data = dict(resolved_params)
                 json_data["cache_key"] = cache_key
                 json_data["abs_rho"] = abs_rho
                 _safe_write_json_once(self.eval_dir / f"{cache_key}.json", json_data)
@@ -206,29 +249,32 @@ class ObjectiveEvaluator:
         try:
             solver_kwargs = {"surf": self.mesh, "mask": self.medmask}
             
-            if "alpha" in param_values:
-                alpha = param_values.get("alpha", 0)
+            if "alpha" in resolved_params:
+                alpha = resolved_params.get("alpha", 0)
                 solver_kwargs["hetero"] = self.hetero_map if alpha != 0 else None
                 solver_kwargs["alpha"] = alpha if alpha != 0 else None
             
-            if "beta" in param_values:
-                beta = param_values.get("beta", 0)
+            if "beta" in resolved_params:
+                beta = resolved_params.get("beta", 0)
                 solver_kwargs["aniso_map"] = self.aniso_map if beta != 0 else None
                 solver_kwargs["beta"] = beta if beta != 0 else None
             
-            if "aniso_curv1" in param_values or "aniso_curv2" in param_values:
-                aniso_curv1 = param_values.get("aniso_curv1", 0)
-                aniso_curv2 = param_values.get("aniso_curv2", 0)
+            if "aniso_curv1" in resolved_params or "aniso_curv2" in resolved_params:
+                aniso_curv1 = resolved_params.get("aniso_curv1", 0)
+                aniso_curv2 = resolved_params.get("aniso_curv2", 0)
                 if aniso_curv1 != 0 or aniso_curv2 != 0:
                     solver_kwargs["aniso_curv"] = (aniso_curv1, aniso_curv2)
+
+            if "r" not in resolved_params or "gamma" not in resolved_params:
+                raise ValueError("Resolved parameters must include r and gamma")
             
             solver = EigenSolver(**solver_kwargs).solve(n_modes=self.n_modes)
             neural = solver.simulate_waves(
                 ext_input=self.ext_input,
                 nt=self.nt,
                 dt=self.dt,
-                r=self.r,
-                gamma=self.gamma,
+                r=float(resolved_params["r"]),
+                gamma=float(resolved_params["gamma"]),
             )
 
             neural_parc = reduce_by_labels(neural, self.parc_labels_masked, axis=1)
@@ -237,13 +283,13 @@ class ObjectiveEvaluator:
             rho = float(spearmanr(self.proxy_hierarchy, ttp_hierarchy).correlation)
 
             if not np.isfinite(rho):
-                param_str = ", ".join([f"{name}={val:.4f}" for name, val in param_values.items()])
+                param_str = ", ".join([f"{name}={val:.4f}" for name, val in resolved_params.items()])
                 print(f"  WARNING: Non-finite rho at {param_str}. Assigning large penalty.")
                 return 1e6
 
             abs_rho = float(abs(rho))
             meta = dict(self.meta_base)
-            meta.update(param_values)
+            meta.update(resolved_params)
             meta.update({"cache_key": cache_key})
             save_arrays = {
                 "rho": rho,
@@ -252,16 +298,16 @@ class ObjectiveEvaluator:
                 "ttp_hierarchy": np.asarray(ttp_hierarchy, dtype=np.float32),
                 "meta_json": json.dumps(meta, sort_keys=True),
             }
-            save_arrays.update(param_values)
+            save_arrays.update(resolved_params)
             _atomic_savez(cache_path, **save_arrays)
             
-            json_data = dict(param_values)
+            json_data = dict(resolved_params)
             json_data["cache_key"] = cache_key
             json_data["abs_rho"] = abs_rho
             _safe_write_json_once(self.eval_dir / f"{cache_key}.json", json_data)
             return -abs_rho
         except Exception as e:
-            param_str = ", ".join([f"{name}={val:.4f}" for name, val in param_values.items()])
+            param_str = ", ".join([f"{name}={val:.4f}" for name, val in resolved_params.items()])
             print(f"  ERROR at {param_str}: {type(e).__name__}: {e}")
             return 1e6
 
@@ -563,6 +609,12 @@ def create_best_video(
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Optimise TTP alpha/beta to maximise |Spearman rho|.")
     p.add_argument("--test", action="store_true", help="Run in test mode using folder 0 and _cache_test.")
+    p.add_argument(
+        "--id",
+        type=int,
+        default=None,
+        help="Optional run ID for intentional continuation. Non-test mode does not allow ID 0.",
+    )
     p.add_argument("--hetero_label", type=str, default=None, help="Heterogeneity map label.")
     p.add_argument("--aniso_label", type=str, default=None, help="Anisotropy map label")
     p.add_argument("--density", type=str, default="32k", help="Surface density for mesh and parcellation.")
@@ -571,6 +623,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--beta", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"), help="Beta optimization range: MIN MAX STEP")
     p.add_argument("--aniso_curv1", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"), help="Aniso_curv1 optimization range: MIN MAX STEP")
     p.add_argument("--aniso_curv2", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"), help="Aniso_curv2 optimization range: MIN MAX STEP")
+    p.add_argument("--r", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"), help="r optimization range: MIN MAX STEP")
+    p.add_argument("--gamma", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"), help="gamma optimization range: MIN MAX STEP")
     p.add_argument("--n_jobs", type=int, default=-1, help="Parallel workers for DE (-1 = all).")
     p.add_argument("--maxiter", type=int, default=50, help="DE max iterations.")
     p.add_argument("--popsize", type=int, default=16, help="DE population size multiplier.")
@@ -583,22 +637,38 @@ def main() -> None:
     t1 = time.time()
     args = parse_args()
 
+    if args.id is not None and int(args.id) < 0:
+        raise ValueError("--id must be >= 0")
+    if args.test and args.id is not None:
+        raise ValueError("--id cannot be used with --test")
+    if (not args.test) and args.id == 0:
+        raise ValueError("Run ID 0 is reserved for --test mode; use --id >= 1")
+
     results_dir = Path(PROJ_DIR) / "results" / "human" / "ttp"
+    results_dir.mkdir(parents=True, exist_ok=True)
     if args.test:
         run_id = 0
         run_dir = results_dir / "0"
         if run_dir.exists():
             shutil.rmtree(run_dir)
+        run_dir.mkdir(parents=True, exist_ok=False)
     else:
-        run_id = _next_run_id(results_dir)
-        run_dir = results_dir / str(run_id)
-        while True:
-            try:
-                run_dir.mkdir(parents=True, exist_ok=False)
-                break
-            except FileExistsError:
-                run_id = _next_run_id(results_dir)
-                run_dir = results_dir / str(run_id)
+        if args.id is None:
+            run_id = _next_non_test_run_id(results_dir)
+            run_dir = results_dir / str(run_id)
+            while True:
+                try:
+                    run_dir.mkdir(parents=True, exist_ok=False)
+                    break
+                except FileExistsError:
+                    run_id = _next_non_test_run_id(results_dir)
+                    run_dir = results_dir / str(run_id)
+        else:
+            run_id = int(args.id)
+            if run_id == 0:
+                raise ValueError("Run ID 0 is reserved for --test mode")
+            run_dir = results_dir / str(run_id)
+            run_dir.mkdir(parents=True, exist_ok=True)
 
     eval_dir = run_dir / "evals"
     eval_dir.mkdir(parents=True, exist_ok=True)
@@ -608,6 +678,14 @@ def main() -> None:
     # Build parameter specs dict with only the parameters provided
     param_specs = {}
     bounds = []
+    defaults = {
+        "alpha": None,
+        "beta": None,
+        "aniso_curv1": None,
+        "aniso_curv2": None,
+        "r": float(DEFAULT_R),
+        "gamma": float(DEFAULT_GAMMA),
+    }
     
     if args.alpha is not None:
         alpha_spec = _parse_grid3(tuple(args.alpha), "alpha")
@@ -640,17 +718,39 @@ def main() -> None:
         bounds.append((aniso_curv2_spec.min, aniso_curv2_spec.max))
     else:
         print("Not optimising aniso_curv2 (using default: None)")
+
+    if args.r is not None:
+        r_spec = _parse_grid3(tuple(args.r), "r")
+        print(f"Optimising with r in [{r_spec.min}, {r_spec.max}] step {r_spec.step}")
+        param_specs["r"] = r_spec
+        bounds.append((r_spec.min, r_spec.max))
+    else:
+        print(f"Not optimising r (using default: {DEFAULT_R})")
+
+    if args.gamma is not None:
+        gamma_spec = _parse_grid3(tuple(args.gamma), "gamma")
+        print(f"Optimising with gamma in [{gamma_spec.min}, {gamma_spec.max}] step {gamma_spec.step}")
+        param_specs["gamma"] = gamma_spec
+        bounds.append((gamma_spec.min, gamma_spec.max))
+    else:
+        print(f"Not optimising gamma (using default: {DEFAULT_GAMMA})")
     
     if not param_specs:
-        raise ValueError("At least one parameter must be provided for optimization (--alpha, --beta, --aniso_curv1, or --aniso_curv2)")
+        raise ValueError(
+            "At least one parameter must be provided for optimization (--alpha, --beta, --aniso_curv1, --aniso_curv2, --r, or --gamma)"
+        )
     
     print(f"\nTotal optimization dimensions: {len(param_specs)}")
 
     # Simulation constants (keep simple; edit here if needed)
     dt = 1e-4   # seconds
     nt = 1000
-    r = 28.9        # mm
-    gamma = 116     # seconds^-1
+    fixed_params = {
+        name: defaults[name]
+        for name in defaults
+        if name not in param_specs and defaults[name] is not None
+    }
+    active_parameter_names = list(param_specs.keys())
     stimulation_amplitude = 20.0
     stim_start = 10
     stim_stop = 20
@@ -688,6 +788,44 @@ def main() -> None:
     ext_input[v1_mask, stim_start:stim_stop] = float(stimulation_amplitude)
     ext_input = ext_input[medmask, :]
 
+    id_config = {
+        "schema_version": 1,
+        "objective_version": OBJECTIVE_VERSION,
+        "run_id": run_id,
+        "test_mode": bool(args.test),
+        "hetero_label": args.hetero_label,
+        "aniso_label": args.aniso_label,
+        "n_modes": int(args.n_modes),
+        "n_jobs": int(args.n_jobs),
+        "maxiter": int(args.maxiter),
+        "popsize": int(args.popsize),
+        "seed": int(args.seed),
+        "polish": bool(args.polish),
+        "dt": float(dt),
+        "nt": int(nt),
+        "stimulation_amplitude": float(stimulation_amplitude),
+        "stim_start": int(stim_start),
+        "stim_stop": int(stim_stop),
+        "density": args.density,
+        "defaults": defaults,
+        "active_parameter_names": active_parameter_names,
+        "fixed_params": fixed_params,
+    }
+
+    id_config_path = run_dir / "id_config.json"
+    if id_config_path.exists() and not args.test:
+        saved = json.loads(id_config_path.read_text(encoding="utf-8"))
+        mismatches = _collect_config_mismatches(
+            _normalize_config_for_id_check(saved),
+            _normalize_config_for_id_check(id_config),
+        )
+        if mismatches:
+            mismatch_msg = "\n  - " + "\n  - ".join(mismatches[:12])
+            raise ValueError(
+                f"Provided --id {run_id} has parameter mismatches against {id_config_path}:"
+                f"{mismatch_msg}"
+            )
+
     config = {
         "schema_version": 1,    # Increment if config structure changes in a non-backwards-compatible way
         "objective_version": OBJECTIVE_VERSION, # Increment if objective function changes in a non-backwards-compatible way
@@ -703,15 +841,22 @@ def main() -> None:
         "polish": bool(args.polish),
         "dt": float(dt),
         "nt": int(nt),
-        "r": float(r),
-        "gamma": float(gamma),
+        "r": float(fixed_params["r"]) if "r" in fixed_params else None,
+        "gamma": float(fixed_params["gamma"]) if "gamma" in fixed_params else None,
         "stimulation_amplitude": float(stimulation_amplitude),
         "stim_start": int(stim_start),
         "stim_stop": int(stim_stop),
         "density": args.density,
+        "defaults": defaults,
+        "active_parameter_names": active_parameter_names,
+        "fixed_params": fixed_params,
+        "id_config_file": str(id_config_path),
+        "config_file": str(run_dir / "config.json"),
     }
     for name, spec in param_specs.items():
         config[name] = asdict(spec)
+    config["optimization_parameters"] = {name: asdict(spec) for name, spec in param_specs.items()}
+    id_config_path.write_text(json.dumps(id_config, indent=2, sort_keys=True), encoding="utf-8")
     (run_dir / "config.json").write_text(json.dumps(config, indent=2, sort_keys=True), encoding="utf-8")
 
     meta_base = {
@@ -721,8 +866,8 @@ def main() -> None:
         "n_modes": int(args.n_modes),
         "dt": float(dt),
         "nt": int(nt),
-        "r": float(r),
-        "gamma": float(gamma),
+        "r": float(fixed_params["r"]) if "r" in fixed_params else None,
+        "gamma": float(fixed_params["gamma"]) if "gamma" in fixed_params else None,
         "stimulation_amplitude": float(stimulation_amplitude),
         "stim_start": int(stim_start),
         "stim_stop": int(stim_stop),
@@ -738,11 +883,10 @@ def main() -> None:
         hetero_map=hetero_map,
         aniso_map=aniso_map,
         param_specs=param_specs,
+        fixed_params=fixed_params,
         n_modes=int(args.n_modes),
         dt=dt,
         nt=nt,
-        r=r,
-        gamma=gamma,
         ext_input=ext_input,
         cache_dir=cache_dir,
         eval_dir=eval_dir,
@@ -753,7 +897,9 @@ def main() -> None:
 
     if is_single_point:
         print("Single-point mode: skipping differential_evolution and evaluating once.")
-        best_params = {name: spec.min for name, spec in param_specs.items()}
+        best_params = dict(fixed_params)
+        for name, spec in param_specs.items():
+            best_params[name] = spec.min
         x_fixed = np.array([best_params[name] for name in param_specs.keys()], dtype=float)
         fun = float(evaluator(x_fixed))
         de_result = {
@@ -781,7 +927,7 @@ def main() -> None:
             disp=True,
         )
 
-        best_params = {}
+        best_params = dict(fixed_params)
         for i, name in enumerate(param_specs.keys()):
             spec = param_specs[name]
             best_params[name] = _snap_to_grid(float(res.x[i]), spec.min, spec.max, spec.step)
@@ -875,8 +1021,8 @@ def main() -> None:
         n_modes=int(args.n_modes),
         dt=dt,
         nt=nt,
-        r=r,
-        gamma=gamma,
+        r=float(best_params.get("r", DEFAULT_R)),
+        gamma=float(best_params.get("gamma", DEFAULT_GAMMA)),
         ext_input=ext_input,
         run_dir=run_dir
     )
