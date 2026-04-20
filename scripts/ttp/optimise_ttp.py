@@ -93,6 +93,8 @@ def _normalize_config_for_id_check(config: Dict[str, Any]) -> Dict[str, Any]:
     normalized.pop("maxiter", None)
     normalized.pop("popsize", None)
     normalized.pop("n_jobs", None)
+    normalized.pop("pair_name", None)
+    normalized.pop("pair_dir", None)
     normalized.pop("hetero_label", None)
     normalized.pop("aniso_label", None)
     normalized.pop("optimization_parameters", None)
@@ -124,6 +126,16 @@ def _collect_config_mismatches(expected: Any, actual: Any, prefix: str = "") -> 
     if expected != actual:
         mismatches.append(f"{prefix}: expected {expected!r}, got {actual!r}")
     return mismatches
+
+
+def _validate_pair_component(label: str | None, arg_name: str) -> str:
+    token = str(label)
+    if token in {".", ".."}:
+        raise ValueError(f"--{arg_name} cannot be '.' or '..'")
+    path_obj = Path(token)
+    if path_obj.is_absolute() or len(path_obj.parts) != 1:
+        raise ValueError(f"--{arg_name} must be a single folder-safe name (no path separators)")
+    return token
 
 class TimingCallback:
     def __init__(self, param_specs: Dict[str, GridSpec]) -> None:
@@ -648,31 +660,38 @@ def main() -> None:
     results_dir.mkdir(parents=True, exist_ok=True)
     if args.test:
         run_id = 0
-        run_dir = results_dir / "0"
-        if run_dir.exists():
-            shutil.rmtree(run_dir)
-        run_dir.mkdir(parents=True, exist_ok=False)
+        run_parent = results_dir / "0"
+        if run_parent.exists():
+            shutil.rmtree(run_parent)
+        run_parent.mkdir(parents=True, exist_ok=False)
     else:
         if args.id is None:
             run_id = _next_non_test_run_id(results_dir)
-            run_dir = results_dir / str(run_id)
+            run_parent = results_dir / str(run_id)
             while True:
                 try:
-                    run_dir.mkdir(parents=True, exist_ok=False)
+                    run_parent.mkdir(parents=True, exist_ok=False)
                     break
                 except FileExistsError:
                     run_id = _next_non_test_run_id(results_dir)
-                    run_dir = results_dir / str(run_id)
+                    run_parent = results_dir / str(run_id)
         else:
             run_id = int(args.id)
             if run_id == 0:
                 raise ValueError("Run ID 0 is reserved for --test mode")
-            run_dir = results_dir / str(run_id)
-            run_dir.mkdir(parents=True, exist_ok=True)
+            run_parent = results_dir / str(run_id)
+            run_parent.mkdir(parents=True, exist_ok=True)
 
-    eval_dir = run_dir / "evals"
+    hetero_token = _validate_pair_component(args.hetero_label, "hetero_label")
+    aniso_token = _validate_pair_component(args.aniso_label, "aniso_label")
+    pair_name = f"hetero-{hetero_token}_aniso-{aniso_token}"
+    pair_dir = run_parent / pair_name
+    if not pair_dir.exists():
+        pair_dir.mkdir(parents=True, exist_ok=False)
+
+    eval_dir = pair_dir / "evals"
     eval_dir.mkdir(parents=True, exist_ok=True)
-    cache_dir = run_dir / "_cache"
+    cache_dir = pair_dir / "_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     # Build parameter specs dict with only the parameters provided
@@ -812,7 +831,7 @@ def main() -> None:
         "fixed_params": fixed_params,
     }
 
-    id_config_path = run_dir / "id_config.json"
+    id_config_path = run_parent / "id_config.json"
     if id_config_path.exists() and not args.test:
         saved = json.loads(id_config_path.read_text(encoding="utf-8"))
         mismatches = _collect_config_mismatches(
@@ -851,13 +870,15 @@ def main() -> None:
         "active_parameter_names": active_parameter_names,
         "fixed_params": fixed_params,
         "id_config_file": str(id_config_path),
-        "config_file": str(run_dir / "config.json"),
+        "pair_name": pair_name,
+        "pair_dir": str(pair_dir),
+        "config_file": str(pair_dir / "config.json"),
     }
     for name, spec in param_specs.items():
         config[name] = asdict(spec)
     config["optimization_parameters"] = {name: asdict(spec) for name, spec in param_specs.items()}
     id_config_path.write_text(json.dumps(id_config, indent=2, sort_keys=True), encoding="utf-8")
-    (run_dir / "config.json").write_text(json.dumps(config, indent=2, sort_keys=True), encoding="utf-8")
+    (pair_dir / "config.json").write_text(json.dumps(config, indent=2, sort_keys=True), encoding="utf-8")
 
     meta_base = {
         "objective_version": OBJECTIVE_VERSION,
@@ -960,9 +981,9 @@ def main() -> None:
     best["rho"] = float(cached["rho"])
     best["abs_rho"] = float(cached["abs_rho"])
     best["cache_key"] = best_key
-    (run_dir / "best.json").write_text(json.dumps(best, indent=2, sort_keys=True), encoding="utf-8")
+    (pair_dir / "best.json").write_text(json.dumps(best, indent=2, sort_keys=True), encoding="utf-8")
 
-    (run_dir / "de_result.json").write_text(
+    (pair_dir / "de_result.json").write_text(
         json.dumps(de_result, indent=2, sort_keys=True),
         encoding="utf-8",
     )
@@ -985,23 +1006,24 @@ def main() -> None:
             for key in row.keys():
                 if key not in fieldnames:
                     fieldnames.append(key)
-        with (run_dir / "manifest.csv").open("w", newline="", encoding="utf-8") as f:
+        with (pair_dir / "manifest.csv").open("w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=fieldnames)
             w.writeheader()
             w.writerows(rows)
 
     param_str = ", ".join([f"{name}={val:.2f}" for name, val in best_params.items()])
     print(f"\nBest |rho| = {best['abs_rho']:.4f} at {param_str}")
-    print(f"Run folder: {run_dir}")
+    print(f"Run parent folder (ID={run_id}): {run_parent}")
+    print(f"Pair folder: {pair_dir}")
     print(f"Total optimisation time: {(time.time() - t1)/60:.2f}min")
     
     # Generate landscape plot
-    plot_optimization_landscape(run_dir, save_path=run_dir / "landscape.png")
+    plot_optimization_landscape(pair_dir, save_path=pair_dir / "landscape.png")
     
     # Generate best model summary plot
     plot_best_summary(
         cache_path=best_cache_path,
-        run_dir=run_dir,
+        run_dir=pair_dir,
         proxy_hierarchy=proxy_hierarchy,
         vis_hierarchy_roi_labels=vis_hierarchy_roi_labels,
         parc_labels=parc_labels,
@@ -1024,7 +1046,7 @@ def main() -> None:
         r=float(best_params.get("r", DEFAULT_R)),
         gamma=float(best_params.get("gamma", DEFAULT_GAMMA)),
         ext_input=ext_input,
-        run_dir=run_dir
+        run_dir=pair_dir
     )
 
 
