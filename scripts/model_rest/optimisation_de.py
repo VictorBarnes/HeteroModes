@@ -525,13 +525,6 @@ def _collect_config_mismatches(expected: Any, actual: Any, prefix: str = "") -> 
         mismatches.append(f"{prefix}: expected {expected!r}, got {actual!r}")
     return mismatches
 
-
-def _resolved_label(aniso_label: Optional[str], hetero_label: Optional[str]) -> Optional[str]:
-    if aniso_label is None and hetero_label is not None:
-        return hetero_label
-    return aniso_label
-
-
 def _build_param_specs(args: argparse.Namespace) -> Tuple[Dict[str, GridSpec], Dict[str, Any], Dict[str, Any], str]:
     has_beta = args.beta is not None
     has_curv1 = args.aniso_curv1 is not None
@@ -1057,8 +1050,6 @@ def main() -> None:
         raise ValueError("--id cannot be used with --test")
     if (not args.test) and args.id == 0:
         raise ValueError("Run ID 0 is reserved for --test mode; use --id >= 1")
-
-    args.aniso_label = _resolved_label(args.aniso_label, args.hetero_label)
 
     if args.metrics is None or len(args.metrics) == 0:
         raise ValueError("At least one metric must be supplied via --metrics")
