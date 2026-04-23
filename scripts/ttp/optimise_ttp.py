@@ -100,6 +100,7 @@ def _normalize_config_for_id_check(config: Dict[str, Any]) -> Dict[str, Any]:
     normalized.pop("optimization_parameters", None)
     normalized.pop("id_config_file", None)
     normalized.pop("config_file", None)
+    normalized.pop("active_parameter_names", None)
     return normalized
 
 
@@ -827,7 +828,6 @@ def main() -> None:
         "stim_stop": int(stim_stop),
         "density": args.density,
         "defaults": defaults,
-        "active_parameter_names": active_parameter_names,
         "fixed_params": fixed_params,
     }
 
