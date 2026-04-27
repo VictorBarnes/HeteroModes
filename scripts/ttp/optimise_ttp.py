@@ -816,7 +816,6 @@ def main() -> None:
         "hetero_label": args.hetero_label,
         "aniso_label": args.aniso_label,
         "n_modes": int(args.n_modes),
-        "n_jobs": int(args.n_jobs),
         "maxiter": int(args.maxiter),
         "popsize": int(args.popsize),
         "seed": int(args.seed),

@@ -1139,11 +1139,8 @@ def main() -> None:
         "popsize": int(args.popsize),
         "seed": int(args.seed),
         "cpc_seed": int(args.cpc_seed),
-        "n_jobs": int(args.n_jobs),
         "polish": bool(args.polish),
-        "anisotropy_mode": aniso_mode,
         "defaults": defaults,
-        "active_parameter_names": free_param_names,
         "fixed_params": fixed_params,
     }
 
