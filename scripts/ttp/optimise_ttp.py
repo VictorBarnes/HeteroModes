@@ -638,6 +638,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--aniso_curv2", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"), help="Aniso_curv2 optimization range: MIN MAX STEP")
     p.add_argument("--r", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"), help="r optimization range: MIN MAX STEP")
     p.add_argument("--gamma", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"), help="gamma optimization range: MIN MAX STEP")
+    p.add_argument("--nt", type=int, default=1000, help="Number of simulation timesteps.")
     p.add_argument("--n_jobs", type=int, default=-1, help="Parallel workers for DE (-1 = all).")
     p.add_argument("--maxiter", type=int, default=50, help="DE max iterations.")
     p.add_argument("--popsize", type=int, default=16, help="DE population size multiplier.")
@@ -764,7 +765,7 @@ def main() -> None:
 
     # Simulation constants (keep simple; edit here if needed)
     dt = 1e-4   # seconds
-    nt = 1000
+    nt = args.nt
     fixed_params = {
         name: defaults[name]
         for name in defaults
