@@ -34,5 +34,9 @@
     "SAaxis": {
         "label": "SA axis",
         "file": "source-sydnor2021_desc-SAaxis_space-fsLR_den-4k_hemi-L.func.gii"
+    },
+    "curvature": {
+        "label": "Curvature",
+        "file": "source-barnes2026_desc-curvature_space-fsLR_den-4k_hemi-L.func.gii"
     }
 }
