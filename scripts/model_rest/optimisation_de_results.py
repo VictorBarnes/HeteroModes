@@ -44,9 +44,9 @@ def main() -> None:
 	beta = np.full((n, n), np.nan, dtype=float)
 	r = np.full((n, n), np.nan, dtype=float)
 	combined_metric = np.full((n, n), np.nan, dtype=float)
-	edge_fc_corr = np.full((n, n), np.nan, dtype=float)
-	node_fc_corr = np.full((n, n), np.nan, dtype=float)
-	cpc1_corr = np.full((n, n), np.nan, dtype=float)
+	r_edge = np.full((n, n), np.nan, dtype=float)
+	r_node = np.full((n, n), np.nan, dtype=float)
+	r_phase = np.full((n, n), np.nan, dtype=float)
 
 	missing: list[str] = []
 	for i, hetero_id in enumerate(map_ids):
@@ -62,9 +62,9 @@ def main() -> None:
 			beta[i, j] = _to_float(best.get("beta"))
 			r[i, j] = _to_float(best.get("r"))
 			combined_metric[i, j] = -_to_float(best.get("objective"))
-			edge_fc_corr[i, j] = _to_float(best.get("edge_fc_corr"))
-			node_fc_corr[i, j] = _to_float(best.get("node_fc_corr"))
-			cpc1_corr[i, j] = _to_float(best.get("cpc1_corr"))
+			r_edge[i, j] = _to_float(best.get("edge_fc_corr"))
+			r_node[i, j] = _to_float(best.get("node_fc_corr"))
+			r_phase[i, j] = _to_float(best.get("cpc1_corr"))
 
 	if missing:
 		# Keep output concise but visible during runs.
@@ -72,28 +72,39 @@ def main() -> None:
 		suffix = "" if len(missing) <= 10 else f"\n... (+{len(missing) - 10} more)"
 		print(f"Warning: missing {len(missing)} best.json files:\n{preview}{suffix}")
 
+	# Compute difference against homogeneous, isotropic baseline (first row and column).
+	r_edge_diff = r_edge - r_edge[0, 0]
+	r_node_diff = r_node - r_node[0, 0]
+	r_phase_diff = r_phase - r_phase[0, 0]
+	combined_diff = combined_metric - combined_metric[0, 0]
+
 	# Define best hetero and aniso maps based on combined metric
 	best_idx = np.unravel_index(np.nanargmax(combined_metric), combined_metric.shape)
 	best_hetero = map_ids[best_idx[0]]
 	best_aniso = map_ids[best_idx[1]]
 	print(f"Best combined metric: {combined_metric[best_idx]:.4f} (hetero: {best_hetero}, aniso: {best_aniso})")
 
-	fig, axs = plt.subplots(2, 3, figsize=(20, 12), constrained_layout=True)
+	fig, axs = plt.subplots(2, 4, figsize=(20, 9), constrained_layout=True)
 	
 	panels = [
-		(edge_fc_corr, "Edge FC corr", "Correlation", "viridis"),
-		(node_fc_corr, "Node FC corr", "Correlation", "viridis"),
-		(cpc1_corr, "CPC1 corr", "Correlation", "viridis"),
-		(combined_metric, "Combined metric", "Edge + Node", "viridis"),
-		(r, "r", "r", "viridis"),
-		(alpha, "alpha", "alpha", "coolwarm"),
-		(beta, "beta", "beta", "coolwarm"),
+		(r_edge_diff, r"$r_{\text{edge}}$", "Correlation", "RdBu_r"),
+		(r_node_diff, r"$r_{\text{node}}$", "Correlation", "RdBu_r"),
+		(r_phase_diff, r"$r_{\text{phase}}$", "Correlation", "RdBu_r"),
+		(combined_diff, "Combined metric", "Edge + Node", "RdBu_r"),
+		(r, r"$r$", "r", "viridis"),
+		(alpha, r"$\alpha$", "alpha", "coolwarm"),
+		(beta, r"$\beta$", "beta", "coolwarm"),
 	]
 
 	for ax, (mat, title, cbar_label, cmap) in zip(axs.ravel(), panels):
-		if cmap == "rocket":
-			cmap = sns.color_palette("rocket", as_cmap=True)
-		im = ax.imshow(mat, origin="upper", aspect="equal", cmap=cmap)
+		if cbar_label != "r":
+			vmin = -np.nanmax(np.abs(mat))
+			vmax = np.nanmax(np.abs(mat))
+		else:
+			vmin = np.nanmin(mat)
+			vmax = np.nanmax(mat)
+			
+		im = ax.imshow(mat, origin="upper", aspect="equal", cmap=cmap, vmin=vmin, vmax=vmax)
 		ax.set_title(title)
 		ax.set_xlabel("Anisotropy map")
 		ax.set_ylabel("Heterogeneity map")
