@@ -571,21 +571,50 @@ def _build_param_specs(args: argparse.Namespace) -> Tuple[Dict[str, GridSpec], D
 
     return specs, fixed_params, defaults, aniso_mode
 
+def _species_constants(
+    species: str,
+    n_subjs: int,
+    dataset: str,
+    cohort: Optional[str],
+) -> Tuple[int, float, float, str, int]:
 
-def _species_constants(species: str, n_subjs: int) -> Tuple[int, float, float, str, int]:
-    nt_emp_map = {"human": 1200, "macaque": 500, "marmoset": 510}
-    tr_map = {"human": 0.72, "macaque": 2.6, "marmoset": 2.0}
-    dt_model_map = {"human": 0.09, "macaque": 0.1, "marmoset": 0.1}
-    data_desc_map = {
-        "human": f"hcp-s1200_nsubj-{n_subjs}",
-        "macaque": f"macaque-awake_nsubj-{n_subjs}",
+    _CONSTANTS = {
+        ("human",    "hcp-s1200"): (1200, 0.72, 0.09),
+        ("human",    "hcp-ep"):    ( 820, 0.80, 0.10),
+        ("macaque",  "default"):   ( 500, 2.60, 0.10),
+        ("marmoset", "default"):   ( 510, 2.00, 0.10),
+    }
+
+    # Datasets that require a cohort label to construct data_desc
+    _COHORT_REQUIRED = {"hcp-ep"}
+
+    _DATA_DESC = {
+        "human": {
+            "hcp-s1200": f"hcp-s1200_nsubj-{n_subjs}",
+            "hcp-ep":    f"hcp-ep_{cohort}_run-1-2_nsubj-{n_subjs}",
+        },
+        "macaque":  f"macaque-awake_nsubj-{n_subjs}",
         "marmoset": f"mbm-v4_nsubj-{n_subjs}",
     }
 
-    nt_emp = nt_emp_map[species]
-    dt_emp = tr_map[species]
-    dt_model = dt_model_map[species]
-    data_desc = data_desc_map[species]
+    constants_key = (species, dataset if species == "human" else "default")
+    if constants_key not in _CONSTANTS:
+        raise ValueError(f"Unknown species/dataset combination: {species!r}, {dataset!r}")
+
+    # Validate cohort before attempting to use it
+    if dataset in _COHORT_REQUIRED and not cohort:
+        raise ValueError(f"--cohort is required for dataset {dataset!r}")
+
+    nt_emp, dt_emp, dt_model = _CONSTANTS[constants_key]
+
+    desc = _DATA_DESC[species]
+    if isinstance(desc, dict):
+        if dataset not in desc:
+            raise ValueError(f"Unknown dataset for species {species!r}: {dataset!r}")
+        data_desc = desc[dataset]
+    else:
+        data_desc = desc
+
     tsteady = 550
 
     return nt_emp, dt_emp, dt_model, data_desc, tsteady
@@ -618,7 +647,7 @@ def _setup_surface_and_masks(args: argparse.Namespace) -> Tuple[str, Optional[np
                 / "data"
                 / "empirical"
                 / args.species
-                / f"space-fsLR_den-{args.density}_hemi-L_desc-nomedialwall.func.gii"
+                / f"{args.dataset}_space-fsLR_den-{args.density}_hemi-L_desc-nomedialwall.func.gii"
             )
         ).darrays[0].data.astype(bool)
 
@@ -633,7 +662,11 @@ def _setup_surface_and_masks(args: argparse.Namespace) -> Tuple[str, Optional[np
     return surf, parc, medmask, space_desc
 
 
-def _load_maps(args: argparse.Namespace, medmask: np.ndarray) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+def _load_maps(
+    args: argparse.Namespace, 
+    medmask: np.ndarray
+    
+) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
     if args.hetero_label is None:
         hetero_map = None
     else:
@@ -1010,6 +1043,25 @@ def parse_args() -> argparse.Namespace:
         default="fit",
         help="Evaluation mode. Only fit is implemented in this version.",
     )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="hcp-s1200",
+        help="Empirical dataset label, e.g. 'hcp-s1200' or 'hcp-ep' (only human).",
+    )
+    parser.add_argument(
+        "--cohort",
+        type=str,
+        default=None,
+        help="Empirical human cohort label for hcp-ep dataset, e.g. 'hc', 'scz'",
+    )
+    parser.add_argument(
+        "--level",
+        type=str,
+        choices=["group", "individual"],
+        default="group",
+        help="Modelling level. Only 'group' is implemented; 'individual' is reserved.",
+    )
 
     parser.add_argument("--alpha", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"))
     parser.add_argument("--beta", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"))
@@ -1043,7 +1095,16 @@ def main() -> None:
 
     if args.evaluation != "fit":
         raise NotImplementedError("Only --evaluation fit is implemented in optimisation_de.py")
-
+    if args.level == "individual":
+        raise NotImplementedError(
+            "--level individual is not yet implemented. "
+            "Use the individual-level fitting script when available."
+        )
+    
+    if args.dataset == "hcp-ep":
+        if not args.cohort or args.cohort.lower() not in {"hc", "scz"}:
+            raise ValueError("--cohort (e.g. 'hc' or 'scz') is required when --dataset hcp-ep is used.")
+    
     if args.id is not None and int(args.id) < 0:
         raise ValueError("--id must be >= 0")
     if args.test and args.id is not None:
@@ -1066,7 +1127,11 @@ def main() -> None:
     aniso_token = _validate_pair_component(args.aniso_label, "aniso_label")
     pair_name = f"hetero-{hetero_token}-aniso-{aniso_token}"
 
-    results_dir = Path(PROJ_DIR) / "results" / args.species / "model_rest" / "de"
+    results_dir = (
+        Path(PROJ_DIR) / "results" / "model_rest" / args.species / args.dataset
+    )
+    if args.cohort is not None:
+        results_dir = results_dir / args.cohort
     results_dir.mkdir(parents=True, exist_ok=True)
 
     if args.test:
@@ -1105,7 +1170,9 @@ def main() -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
     eval_dir.mkdir(parents=True, exist_ok=True)
 
-    nt_emp, dt_emp, dt_model, data_desc, tsteady = _species_constants(args.species, args.n_subjs)
+    nt_emp, dt_emp, dt_model, data_desc, tsteady = _species_constants(
+        args.species, args.n_subjs, args.dataset, args.cohort
+    )
     surf, parc, medmask, space_desc = _setup_surface_and_masks(args)
     hetero_map, aniso_map = _load_maps(args, medmask)
 
@@ -1126,6 +1193,9 @@ def main() -> None:
         "run_id": int(run_id),
         "test_mode": bool(args.test),
         "species": args.species,
+        "dataset": args.dataset,
+        "cohort": args.cohort,
+        "level": args.level,
         "density": args.density,
         "evaluation": args.evaluation,
         "metrics": list(args.metrics),
@@ -1200,6 +1270,9 @@ def main() -> None:
             "run_hash": run_config["run_hash"],
             "cpc_seed": int(args.cpc_seed),
             "species": args.species,
+            "dataset": args.dataset,
+            "cohort": args.cohort,
+            "level": args.level,
             "density": args.density,
             "evaluation": args.evaluation,
             "metrics": list(args.metrics),

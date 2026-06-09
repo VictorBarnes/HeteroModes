@@ -38,5 +38,13 @@
     "curvature": {
         "label": "Curvature",
         "file": "source-barnes2026_desc-curvature_space-fsLR_den-4k_hemi-L.func.gii"
+    },
+    "hcpep-hc-myelinmap": {
+        "label": "HC myelinmap",
+        "file": "source-hcpep_desc-hc-myelinmap_space-fsLR_den-4k_hemi-L.func.gii"
+    },
+    "hcpep-scz-myelinmap": {
+        "label": "SCZ myelinmap",
+        "file": "source-hcpep_desc-scz-myelinmap_space-fsLR_den-4k_hemi-L.func.gii"
     }
 }
