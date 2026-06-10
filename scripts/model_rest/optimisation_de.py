@@ -591,7 +591,7 @@ def _species_constants(
     _DATA_DESC = {
         "human": {
             "hcp-s1200": f"hcp-s1200_nsubj-{n_subjs}",
-            "hcp-ep":    f"hcp-ep_{cohort}_run-1-2_nsubj-{n_subjs}",
+            "hcp-ep":    f"hcp-ep-{cohort}_run-1-2_nsubj-{n_subjs}",
         },
         "macaque":  f"macaque-awake_nsubj-{n_subjs}",
         "marmoset": f"mbm-v4_nsubj-{n_subjs}",
