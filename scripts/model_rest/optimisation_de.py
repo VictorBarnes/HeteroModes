@@ -1125,7 +1125,7 @@ def main() -> None:
 
     hetero_token = _validate_pair_component(args.hetero_label, "hetero_label")
     aniso_token = _validate_pair_component(args.aniso_label, "aniso_label")
-    pair_name = f"hetero-{hetero_token}-aniso-{aniso_token}"
+    pair_name = f"hetero-{hetero_token}_aniso-{aniso_token}"
 
     results_dir = (
         Path(PROJ_DIR) / "results" / "model_rest" / args.species / args.dataset
