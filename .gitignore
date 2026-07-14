@@ -52,6 +52,7 @@ scripts/_sandbox/
 scripts/_console.*
 scripts/preprocessing/
 scripts/data_generation/
+scripts/model_rest/optimisation_de_results.py
 
 # File types
 *.ipynb
