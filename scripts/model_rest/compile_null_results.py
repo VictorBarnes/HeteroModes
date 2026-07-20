@@ -7,8 +7,8 @@ from heteromodes.utils import get_project_root
 PROJ_DIR = get_project_root()
 
 # Parameters
-species = "marmoset"
-id = 3
+species = "macaque"
+id = 7
 evaluation = "fit"
 n_nulls = 500
 
@@ -31,7 +31,7 @@ for hmap_label in hetero_labels:
     print(f"\nProcessing {hmap_label}...")
     
     # Load model results
-    file = f"{PROJ_DIR}/results/{species}/model_rest/group/id-{id}/{evaluation}/{hmap_label}/best_model.h5"
+    file = f"{PROJ_DIR}/results/model_rest/{species}/id-{id}/{evaluation}/{hmap_label}/best_model.h5"
     
     try:
         with h5py.File(file, 'r') as f:
@@ -62,7 +62,7 @@ for hmap_label in hetero_labels:
     
     # Loop through null files
     for i in range(n_nulls):
-        file = f"{PROJ_DIR}/results/{species}/model_rest/group/id-{id}/{evaluation}/{hmap_label}/nulls/null-{i}/best_model.h5"
+        file = f"{PROJ_DIR}/results/model_rest/{species}/id-{id}/{evaluation}/{hmap_label}/nulls/null-{i}/best_model.h5"
         
         try:
             with h5py.File(file, 'r') as f:
@@ -186,7 +186,7 @@ print("\n" + "="*80)
 
 #%%
 # Save all results to h5 file
-output_file = f"{PROJ_DIR}/results/{species}/model_rest/group/id-{id}/{evaluation}/all_nulls_summary.h5"
+output_file = f"{PROJ_DIR}/results/model_rest/{species}/id-{id}/{evaluation}/all_nulls_summary.h5"
 
 print(f"\nSaving results to {output_file}")
 
