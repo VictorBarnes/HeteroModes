@@ -484,6 +484,51 @@ def _validate_pair_component(label: Optional[str], arg_name: str) -> str:
         raise ValueError(f"--{arg_name} must be a single folder-safe name (no path separators)")
     return token
 
+def _validate_levels(
+    surf_level: str, 
+    hmap_level: str,
+    fmri_level: str,
+    data_desc: str
+) -> str:
+    """
+    Validate that all individual-level arguments have the same subject ID, and return the subject ID or 'group'.
+    """
+    all_levels = {
+        "surf": surf_level,
+        "hmap": hmap_level,
+        "fmri": fmri_level
+    }
+    subj_ids = {name: val for name, val in all_levels.items() if val != "group"}
+    unique_ids = set(subj_ids.values())
+    if len(unique_ids) > 1:
+        raise ValueError(
+            f"All individual-level arguments must have the same subject ID. "
+            f"Found: {subj_ids}"
+        )
+    level = unique_ids.pop() if unique_ids else "group"
+
+    if level == "group":
+        return level
+    else:   # individual-level, validate against subject list
+        subj_list_path = (
+            Path(PROJ_DIR)
+            / "data"
+            / "empirical"
+            / "human"
+            / f"{data_desc}_desc-subjects.txt"   # one sub-ID per line
+        )
+        if not subj_list_path.exists():
+            raise FileNotFoundError(
+                f"Subject list not found: {subj_list_path}. "
+                "Cannot validate --subj_id."
+            )
+        valid_ids = {line.strip() for line in subj_list_path.read_text().splitlines() if line.strip()}
+        if level not in valid_ids:
+            raise ValueError(
+                f"--subj_id {level!r} is not a valid subject for data_desc={data_desc!r}. "
+                f"({len(valid_ids)} subjects in list.)"
+            )
+        return level
 
 def _normalize_config_for_id_check(config: Dict[str, Any]) -> Dict[str, Any]:
     normalized = dict(config)
@@ -571,7 +616,7 @@ def _build_param_specs(args: argparse.Namespace) -> Tuple[Dict[str, GridSpec], D
 
     return specs, fixed_params, defaults, aniso_mode
 
-def _species_constants(
+def _fetch_empirical_constants(
     species: str,
     n_subjs: int,
     dataset: str,
@@ -620,56 +665,72 @@ def _species_constants(
     return nt_emp, dt_emp, dt_model, data_desc, tsteady
 
 
-def _setup_surface_and_masks(args: argparse.Namespace) -> Tuple[str, Optional[np.ndarray], np.ndarray, str]:
-    parc = None
-    if args.parc is not None:
-        if args.density != "32k":
-            raise ValueError("Parcel-based models must be run at 32k density.")
-        if args.species != "human":
-            raise ValueError("Parcellation is only valid for human species.")
+def _setup_surface_and_masks(
+    args: argparse.Namespace,
+) -> Tuple[str, Optional[np.ndarray], np.ndarray, str]:
 
-        parc = nib.load(
+    is_individual = args.surf_level != "group"
+
+    if is_individual:
+        # Hard code HCP-EP directory for now
+        HCPEP_DIR = Path("/fs03/kg98/vbarnes/hcp-ep")
+
+        # Subject-specific surface registered to fsLR
+        surf = str(
+            HCPEP_DIR / f"sub-{args.surf_level}" / "MNINonLinear" / "Results"
+            / f"space-fsLR_den-{args.density}_hemi-L_desc-midthickness.surf.gii"
+        )
+        medmask = nib.load(
             str(
-                Path(PROJ_DIR)
-                / "data"
-                / "parcellations"
-                / f"parc-{args.parc}_space-fsLR_den-32k_hemi-L.label.gii"
+                HCPEP_DIR / f"sub-{args.surf_level}" / "MNINonLinear" / "Results"
+                / f"space-fsLR_den-{args.density}_hemi-L_desc-nomedialwall.func.gii"
             )
-        ).darrays[0].data.astype(int)
-
-        space_desc = f"space-fsLR_den-32k_parc-{args.parc}"
-        medmask = parc != 0
+        ).darrays[0].data.astype(bool)
     else:
-        space_desc = f"space-fsLR_den-{args.density}"
+        # existing group-level paths (unchanged)
+        surf = str(
+            Path(PROJ_DIR)
+            / "data" / "empirical" / args.species
+            / f"space-fsLR_den-{args.density}_hemi-L_desc-midthickness.surf.gii"
+        )
         medmask = nib.load(
             str(
                 Path(PROJ_DIR)
-                / "data"
-                / "empirical"
-                / args.species
+                / "data" / "empirical" / args.species
                 / f"{args.dataset}_space-fsLR_den-{args.density}_hemi-L_desc-nomedialwall.func.gii"
             )
         ).darrays[0].data.astype(bool)
 
-    surf = str(
-        Path(PROJ_DIR)
-        / "data"
-        / "empirical"
-        / args.species
-        / f"space-fsLR_den-{args.density}_hemi-L_desc-midthickness.surf.gii"
-    )
+    # parcellation logic is unchanged — parc is group-level only; raise if individual + parc
+    if args.parc is not None and is_individual:
+        raise ValueError("--parc is not supported with individual-level fitting.")
+    parc = None
 
+    space_desc = f"space-fsLR_den-{args.density}"
     return surf, parc, medmask, space_desc
 
 
 def _load_maps(
-    args: argparse.Namespace, 
-    medmask: np.ndarray
-    
+    args: argparse.Namespace,
 ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    is_individual = args.hmap_level != "group"
+
     if args.hetero_label is None:
         hetero_map = None
-    else:
+    elif is_individual:
+        # hard code hcpep directory for now
+        HCPEP_DIR = Path("/fs03/kg98/vbarnes/hcp-ep")
+        
+        hetero_map = nib.load(
+            str(
+                HCPEP_DIR
+                / f"sub-{args.hmap_level}"
+                / "MNINonLinear"
+                / "Results"
+                / f"space-fsLR_den-{args.density}_hemi-L_desc-{args.hetero_label}.func.gii"
+            )
+        ).darrays[0].data
+    elif args.hetero_label.startswith("null"):
         if args.hetero_label.startswith("null"):
             split = args.hetero_label.split("-")
             if len(split) != 3:
@@ -688,8 +749,10 @@ def _load_maps(
         else:
             hetero_map = load_hmap(args.hetero_label, species=args.species, density=args.density)
 
-        p_lower, p_upper = np.percentile(hetero_map[medmask], [2, 98])
-        hetero_map = np.clip(hetero_map, p_lower, p_upper)
+        # p_lower, p_upper = np.percentile(hetero_map[medmask], [2, 98])
+        # hetero_map = np.clip(hetero_map, p_lower, p_upper)
+    else:
+        hetero_map = load_hmap(args.hetero_label, species=args.species, density=args.density)
 
     if args.aniso_label is None:
         aniso_map = None
@@ -744,7 +807,7 @@ def _simulate_bold(
     solver.solve(n_modes=int(n_modes), fix_mode1=True, standardize=False, seed=365)
 
     # Reuse deterministic external inputs across evaluations via neuromodes cache.
-    ext_input_cache_dir = Path(PROJ_DIR) / "results" / "human" / "model_rest" / "_cache_ext_input"
+    ext_input_cache_dir = Path(PROJ_DIR) / "results" / "model_rest" / "_cache_ext_input"
     ext_input_cache_dir.mkdir(parents=True, exist_ok=True)
     os.environ["CACHE_DIR"] = str(ext_input_cache_dir)
 
@@ -790,10 +853,13 @@ def _load_empirical_fit_outputs(
     metrics: Sequence[str],
     data_desc: str,
     space_desc: str,
+    level: str,
     nt_emp: int,
     band_freq: Tuple[float, float],
 ) -> Dict[str, np.ndarray]:
     outputs: Dict[str, np.ndarray] = {}
+
+    is_individual = level != "group"
 
     if "edge_fc_corr" in metrics or "node_fc_corr" in metrics:
         fc_file = (
@@ -803,10 +869,20 @@ def _load_empirical_fit_outputs(
             / species
             / f"{data_desc}_desc-fc_{space_desc}_hemi-L_nt-{nt_emp}.h5"
         )
-        with h5py.File(fc_file, "r") as f:
-            outputs["fc"] = np.asarray(f["fc_group"], dtype=np.float32)
+        if is_individual:
+            with h5py.File(fc_file, "r") as f:
+                # Get subject-specific index
+                subj_ids = np.array(f["subj_ids"], dtype=str)
+                # Find the index of the requested subject
+                fc_index = np.where(subj_ids == level.removeprefix("sub-"))[0][0]
+                # Load only the specific subject's FC
+                outputs["fc"] = np.asarray(f[f"fc_indiv"][:, :, fc_index], dtype=np.float32)
+        else:   
+            with h5py.File(fc_file, "r") as f:
+                outputs["fc"] = np.asarray(f["fc_group"], dtype=np.float32)
 
     if "cpc1_corr" in metrics:
+        # TODO: individual level
         cpcs_file = (
             Path(PROJ_DIR)
             / "data"
@@ -899,6 +975,7 @@ def _plot_pairwise_landscape(
     *,
     run_dir: Path,
     free_param_names: Sequence[str],
+    metrics: Sequence[str],
 ) -> List[Path]:
     manifest_path = run_dir / "manifest.csv"
     if not manifest_path.exists():
@@ -919,21 +996,35 @@ def _plot_pairwise_landscape(
         print("No free optimization parameters; skipping landscape plot.")
         return []
 
-    objective = np.asarray([float(r["objective"]) for r in rows], dtype=float)
-    best_idx = int(np.argmin(objective))
+    metric_results = {metric: [float(r[metric]) for r in rows] for metric in metrics}
+    objective = np.asarray([float(r["objective"]) for r in rows], dtype=float) * -1.0
+    best_idx = int(np.argmax(objective))
+    
     saved_paths: List[Path] = []
 
     if len(free_param_names) == 1:
         p0 = free_param_names[0]
         x = np.asarray([float(r[p0]) for r in rows], dtype=float)
-        fig, ax = plt.subplots(1, 1, figsize=(7, 5), constrained_layout=True)
-        sc = ax.scatter(x, objective, c=objective, cmap="viridis_r", s=45, alpha=0.8, edgecolors="black", linewidth=0.4)
-        ax.plot([x[best_idx]], [objective[best_idx]], "r*", markersize=16, label=f"Best objective={objective[best_idx]:.4f}")
-        ax.set_xlabel(p0)
-        ax.set_ylabel("Objective")
-        ax.set_title("Landscape")
-        ax.legend(loc="best")
-        fig.colorbar(sc, ax=ax).set_label("Objective")
+        fig, axs = plt.subplots(1, len(metrics)+1, figsize=(7 * (len(metrics)+1), 5), constrained_layout=True)
+        # Plot landscape for each metric
+        for i, metric in enumerate(metrics):
+            ax = axs[i]
+            metric_vals = np.asarray(metric_results[metric], dtype=float)
+            sc = ax.scatter(x, metric_vals, c=metric_vals, cmap="viridis", s=45, alpha=0.8, edgecolors="black", linewidth=0.4)
+            ax.plot([x[best_idx]], [metric_vals[best_idx]], "r*", markersize=16, label=f"Best {metric}={metric_vals[best_idx]:.4f}")
+            ax.set_xlabel(p0)
+            ax.set_ylabel(metric)
+            ax.set_title(f"{metric} Landscape")
+            ax.legend(loc="best")
+            fig.colorbar(sc, ax=ax).set_label(metric)
+        # Plot landscape for objective
+        sc = axs[-1].scatter(x, objective, c=objective, cmap="viridis", s=45, alpha=0.8, edgecolors="black", linewidth=0.4)
+        axs[-1].plot([x[best_idx]], [objective[best_idx]], "r*", markersize=16, label=f"Best objective={objective[best_idx]:.4f}")
+        axs[-1].set_xlabel(p0)
+        axs[-1].set_ylabel("Objective")
+        axs[-1].set_title("Objective Landscape")
+        axs[-1].legend(loc="best")
+        fig.colorbar(sc, ax=axs[-1]).set_label("Objective")
         save_path = run_dir / f"landscape_{p0}.png"
         fig.savefig(save_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
@@ -946,23 +1037,44 @@ def _plot_pairwise_landscape(
             p2 = free_param_names[j]
             y = np.asarray([float(r[p2]) for r in rows], dtype=float)
 
-            fig, ax = plt.subplots(1, 1, figsize=(7, 5), constrained_layout=True)
-            sc = ax.scatter(
+            fig, axs = plt.subplots(1, len(metrics) + 1, figsize=(7 * (len(metrics) + 1), 5), constrained_layout=True)
+            # Plot landscape for each metric
+            for k, metric in enumerate(metrics):
+                ax = axs[k]
+                metric_vals = np.asarray(metric_results[metric], dtype=float)
+                sc = ax.scatter(
+                    x,
+                    y,
+                    c=metric_vals,
+                    cmap="viridis",
+                    s=40,
+                    alpha=0.8,
+                    edgecolors="black",
+                    linewidth=0.3,
+                )
+                ax.plot([x[best_idx]], [y[best_idx]], "r*", markersize=14, label=f"Best {metric}={metric_vals[best_idx]:.4f}")
+                ax.set_xlabel(p1)
+                ax.set_ylabel(p2)
+                ax.set_title(f"{metric} Landscape: {p1} vs {p2}")
+                ax.legend(loc="best")
+                fig.colorbar(sc, ax=ax).set_label(metric)
+            # Plot landscape for objective
+            sc = axs[-1].scatter(
                 x,
                 y,
                 c=objective,
-                cmap="viridis_r",
+                cmap="viridis",
                 s=40,
                 alpha=0.8,
                 edgecolors="black",
                 linewidth=0.3,
             )
-            ax.plot([x[best_idx]], [y[best_idx]], "r*", markersize=14, label=f"Best objective={objective[best_idx]:.4f}")
-            ax.set_xlabel(p1)
-            ax.set_ylabel(p2)
-            ax.set_title(f"Landscape: {p1} vs {p2}")
-            ax.legend(loc="best")
-            fig.colorbar(sc, ax=ax).set_label("Objective")
+            axs[-1].plot([x[best_idx]], [y[best_idx]], "r*", markersize=14, label=f"Best objective={objective[best_idx]:.4f}")
+            axs[-1].set_xlabel(p1)
+            axs[-1].set_ylabel(p2)
+            axs[-1].set_title(f"Objective Landscape: {p1} vs {p2}")
+            axs[-1].legend(loc="best")
+            fig.colorbar(sc, ax=axs[-1]).set_label("Objective")
 
             save_path = run_dir / f"landscape_{p1}-{p2}.png"
             fig.savefig(save_path, dpi=150, bbox_inches="tight")
@@ -1021,7 +1133,6 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--n_runs", type=int, default=10)
     parser.add_argument("--n_modes", type=int, default=500)
-    parser.add_argument("--n_subjs", type=int, default=255)
     parser.add_argument("--band_freq", type=float, nargs=2, default=[0.04, 0.07])
     parser.add_argument("--scaling", type=str, default="sigmoid")
     parser.add_argument("--parc", type=lambda x: None if x.lower() == "none" else x, default=None)
@@ -1055,12 +1166,36 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Empirical human cohort label for hcp-ep dataset, e.g. 'hc', 'scz'",
     )
+    parser.add_argument("--n_subjs", type=int, default=255)
     parser.add_argument(
-        "--level",
+        "--surf_level",
         type=str,
-        choices=["group", "individual"],
         default="group",
-        help="Modelling level. Only 'group' is implemented; 'individual' is reserved.",
+        help=(
+            "Surface level for modelling. Use 'group' for the group-average surface. "
+            "Pass a valid subject ID (e.g. '1001') to use an individual-specific surface. "
+            "Only implemented for HCP-EP dataset."
+        ),
+    )
+    parser.add_argument(
+        "--hmap_level",
+        type=str,
+        default="group",
+        help=(
+            "Heterogeneity map level for modelling. Use 'group' for the group-average map. "
+            "Pass a valid subject ID (e.g. '1001') to use an individual-specific map. "
+            "Only implemented for HCP-EP dataset."
+        ),
+    )
+    parser.add_argument(
+        "--fmri_level",
+        type=str,
+        default="group",
+        help=(
+            "fMRI level for modelling. Use 'group' for the group-average fMRI data. "
+            "Pass a valid subject ID (e.g. '1001') to use an individual-specific fMRI dataset. "
+            "Only implemented for HCP-EP dataset."
+        ),
     )
 
     parser.add_argument("--alpha", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"))
@@ -1095,11 +1230,8 @@ def main() -> None:
 
     if args.evaluation != "fit":
         raise NotImplementedError("Only --evaluation fit is implemented in optimisation_de.py")
-    if args.level == "individual":
-        raise NotImplementedError(
-            "--level individual is not yet implemented. "
-            "Use the individual-level fitting script when available."
-        )
+    if (args.surf_level != "group" or args.hmap_level != "group" or args.fmri_level != "group") and args.dataset != "hcp-ep":
+        raise NotImplementedError("Individual-level fitting is only implemented for --dataset hcp-ep at this time.")
     
     if args.dataset == "hcp-ep":
         if not args.cohort or args.cohort.lower() not in {"hc", "scz"}:
@@ -1133,6 +1265,15 @@ def main() -> None:
     if args.cohort is not None:
         results_dir = results_dir / args.cohort
     results_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Fetch empirical constants and construct data description
+    nt_emp, dt_emp, dt_model, data_desc, tsteady = _fetch_empirical_constants(
+        args.species, args.n_subjs, args.dataset, args.cohort
+    )
+
+    # Level validation helper
+    level = _validate_levels(args.surf_level, args.hmap_level, args.fmri_level, data_desc)
+    results_dir = results_dir / level
 
     if args.test:
         print("Running in test mode with fixed run ID 0. Existing contents of this folder will be deleted.")
@@ -1170,11 +1311,13 @@ def main() -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
     eval_dir.mkdir(parents=True, exist_ok=True)
 
-    nt_emp, dt_emp, dt_model, data_desc, tsteady = _species_constants(
-        args.species, args.n_subjs, args.dataset, args.cohort
-    )
+    # Load surface and masks, and load heterogeneity/anistropy maps if provided
     surf, parc, medmask, space_desc = _setup_surface_and_masks(args)
-    hetero_map, aniso_map = _load_maps(args, medmask)
+    hetero_map, aniso_map = _load_maps(args)
+    if hetero_map is not None:
+        hetero_map = hetero_map[medmask]
+    if aniso_map is not None:
+        aniso_map = aniso_map[medmask]
 
     print("Loading empirical fit outputs...")
     band_freq = (float(args.band_freq[0]), float(args.band_freq[1]))
@@ -1182,6 +1325,7 @@ def main() -> None:
         species=args.species,
         metrics=args.metrics,
         data_desc=data_desc,
+        level=args.fmri_level,
         space_desc=space_desc,
         nt_emp=nt_emp,
         band_freq=band_freq,
@@ -1195,13 +1339,15 @@ def main() -> None:
         "species": args.species,
         "dataset": args.dataset,
         "cohort": args.cohort,
-        "level": args.level,
         "density": args.density,
         "evaluation": args.evaluation,
         "metrics": list(args.metrics),
         "n_runs": int(args.n_runs),
         "n_modes": int(args.n_modes),
         "n_subjs": int(args.n_subjs),
+        "surf_level": args.surf_level,
+        "hmap_level": args.hmap_level,
+        "fmri_level": args.fmri_level,
         "band_freq": [float(v) for v in band_freq],
         "scaling": args.scaling,
         "parc": args.parc,
@@ -1272,7 +1418,9 @@ def main() -> None:
             "species": args.species,
             "dataset": args.dataset,
             "cohort": args.cohort,
-            "level": args.level,
+            "surf_level": args.surf_level,
+            "hmap_level": args.hmap_level,
+            "fmri_level": args.fmri_level,
             "density": args.density,
             "evaluation": args.evaluation,
             "metrics": list(args.metrics),
@@ -1415,7 +1563,11 @@ def main() -> None:
         if "node_fc_corr" in args.metrics or "cpc1_corr" in args.metrics:
             print("Skipping node/cpc brain maps because --parc was used (not vertex-level data).")
 
-    _ = _plot_pairwise_landscape(run_dir=pair_dir, free_param_names=free_param_names)
+    _ = _plot_pairwise_landscape(
+        run_dir=pair_dir, 
+        free_param_names=free_param_names,
+        metrics=args.metrics
+    )
 
     print(f"Run parent folder (ID={run_id}): {run_parent}")
     print(f"Pair folder: {pair_dir}")
