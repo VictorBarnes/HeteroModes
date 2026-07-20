@@ -341,10 +341,10 @@ if __name__ == "__main__":
     # Parse and normalize arguments
     args = parse_arguments()
     # Define ID directory (before hmap-specific subdirectories)
-    id_dir = f'{PROJ_DIR}/results/{args.species}/model_rest/group/id-{args.id}'
+    id_dir = f'{PROJ_DIR}/results/model_rest/{args.species}/id-{args.id}'
     # Save and check run configuration
     save_run_config(args, id_dir)
-    
+
     if args.hmap_label == "None":
         args.hmap_label = None
     if args.aniso_label == "None":
@@ -420,10 +420,14 @@ if __name__ == "__main__":
             args.hmap_label = split[1]
             null_id = int(split[2])
             
+            if args.parc is not None:
+                space_desc_null = f"space-fsLR_den-32k" # must be fslr and 32k
+            else:
+                space_desc_null = space_desc
             hmap = np.load(
-                f"{PROJ_DIR}/data/nulls/{args.species}/data-{args.hmap_label}_{space_desc}_hemi-L_"
+                f"{PROJ_DIR}/data/nulls/{args.species}/data-{args.hmap_label}_{space_desc_null}_hemi-L_"
                 f"nmodes-500_nnulls-1000_nulls_resample-True.npy"
-            )[null_id, :]
+            )[:, null_id]
 
             out_dir = (
                 f'{id_dir}/'
