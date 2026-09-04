@@ -16,12 +16,11 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import json
 import os
 import shutil
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -30,9 +29,21 @@ import matplotlib.pyplot as plt
 import nibabel as nib
 import numpy as np
 from brainspace.utils.parcellation import reduce_by_labels
-from scipy.optimize import differential_evolution
 from scipy.stats import zscore
 
+from heteromodes.optimisation import (
+    GridSpec,
+    ObjectiveEvaluator,
+    atomic_write_json,
+    build_manifest,
+    collect_config_mismatches,
+    hash_payload,
+    next_run_id,
+    normalize_config_for_id_check,
+    parse_grid3,
+    run_differential_evolution,
+    validate_path_component,
+)
 from heteromodes.restingstate import analyze_bold, calc_node_fc, evaluate_model
 from heteromodes.utils import get_project_root, load_hmap
 from neuromodes.eigen import EigenSolver
@@ -43,446 +54,17 @@ PROJ_DIR = get_project_root()
 
 OBJECTIVE_VERSION = "model_rest_de_fit_v1"
 
+# All default parameter values are None
 DEFAULT_ALPHA = None
 DEFAULT_BETA = None
 DEFAULT_ANISO_CURV1 = None
 DEFAULT_ANISO_CURV2 = None
-DEFAULT_R = None
-DEFAULT_GAMMA = None
+DEFAULT_R = 18.0
+DEFAULT_GAMMA = 116.0
 
 METRIC_CHOICES = ("edge_fc_corr", "node_fc_corr", "cpc1_corr")
 PARAM_ORDER = ("alpha", "beta", "aniso_curv1", "aniso_curv2", "r", "gamma")
 
-
-@dataclass(frozen=True)
-class GridSpec:
-    min: float
-    max: float
-    step: float
-
-
-@dataclass
-class ObjectiveEvaluator:
-    surf: str
-    medmask: np.ndarray
-    parc: Optional[np.ndarray]
-    hetero_map: Optional[np.ndarray]
-    aniso_map: Optional[np.ndarray]
-    emp_outputs: Dict[str, np.ndarray]
-    metrics: Sequence[str]
-    band_freq: Tuple[float, float]
-    scaling: str
-    n_modes: int
-    n_runs: int
-    nt_emp: int
-    dt_emp: float
-    dt_model: float
-    tsteady: int
-    param_specs: Dict[str, GridSpec]
-    fixed_params: Dict[str, Any]
-    cache_dir: Path
-    eval_dir: Path
-    meta_base: Dict[str, Any]
-    cache: Dict[str, float]
-    cpc_seed: Optional[int]
-
-    def _expected_objective_identity(self, params: Dict[str, Optional[float]], cache_key: str) -> Dict[str, Any]:
-        return {
-            "cache_key": cache_key,
-            "params_hash": _hash_key(params),
-            "run_hash": self.meta_base.get("run_hash"),
-            "objective_version": self.meta_base.get("objective_version"),
-        }
-
-    def _validate_objective_identity(
-        self,
-        record: Dict[str, Any],
-        expected: Dict[str, Any],
-        source_name: str,
-    ) -> None:
-        missing = [k for k in expected.keys() if k not in record]
-        if missing:
-            raise ValueError(f"{source_name} missing required objective identity keys: {missing}")
-
-        mismatches: List[str] = []
-        for k, v_expected in expected.items():
-            v_actual = record.get(k)
-            if v_actual != v_expected:
-                mismatches.append(f"{k}: expected {v_expected!r}, got {v_actual!r}")
-
-        if mismatches:
-            mismatch_msg = "\n  - " + "\n  - ".join(mismatches)
-            raise ValueError(f"{source_name} objective identity mismatch:{mismatch_msg}")
-
-    def _load_objective_from_json(self, path: Path) -> Dict[str, Any]:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        out = dict(payload)
-        out["score"] = float(payload["score"])
-        out["objective"] = float(payload["objective"])
-        for m in self.metrics:
-            if m in out:
-                out[m] = float(out[m])
-        return out
-
-    def _load_objective_from_npz(self, path: Path) -> Dict[str, Any]:
-        with np.load(path, allow_pickle=False) as cached:
-            out: Dict[str, Any] = {}
-            required_keys = {
-                "cache_key",
-                "params_hash",
-                "run_hash",
-                "objective_version",
-                "score",
-                "objective",
-                *self.metrics,
-            }
-            for key in sorted(required_keys):
-                if key not in cached.files:
-                    continue
-                val = cached[key]
-                if np.isscalar(val):
-                    out[key] = val.item()
-                elif isinstance(val, np.ndarray) and val.ndim == 0:
-                    out[key] = val.item()
-                else:
-                    out[key] = val
-
-        out["score"] = float(out["score"])
-        out["objective"] = float(out["objective"])
-        for m in self.metrics:
-            if m in out:
-                out[m] = float(out[m])
-        return out
-
-    def _assert_objective_records_agree(
-        self,
-        json_record: Dict[str, Any],
-        npz_record: Dict[str, Any],
-    ) -> None:
-        keys_to_match = [
-            "cache_key",
-            "params_hash",
-            "run_hash",
-            "objective_version",
-            "score",
-            "objective",
-        ] + list(self.metrics)
-
-        mismatches: List[str] = []
-        for k in keys_to_match:
-            if k not in json_record or k not in npz_record:
-                mismatches.append(f"{k}: missing in one of json/npz records")
-                continue
-
-            jv = json_record[k]
-            nv = npz_record[k]
-            if isinstance(jv, (float, int)) and isinstance(nv, (float, int)):
-                if not np.isclose(float(jv), float(nv), rtol=0.0, atol=1e-12):
-                    mismatches.append(f"{k}: json={float(jv)!r}, npz={float(nv)!r}")
-            else:
-                if jv != nv:
-                    mismatches.append(f"{k}: json={jv!r}, npz={nv!r}")
-
-        if mismatches:
-            mismatch_msg = "\n  - " + "\n  - ".join(mismatches)
-            raise ValueError(f"Objective cache disagreement between JSON and NPZ:{mismatch_msg}")
-
-    def _load_cached_objective_strict(
-        self,
-        *,
-        params: Dict[str, Optional[float]],
-        cache_key: str,
-        cache_path: Path,
-        eval_json_path: Path,
-    ) -> Dict[str, Any]:
-        has_npz = cache_path.exists()
-        has_json = eval_json_path.exists()
-
-        if has_npz != has_json:
-            raise ValueError(
-                "Objective cache is incomplete for "
-                f"{cache_key}: npz_exists={has_npz}, json_exists={has_json}. "
-                "Both objective artifacts are required."
-            )
-        if not has_npz:
-            raise FileNotFoundError(f"Objective cache artifacts not found for {cache_key}")
-
-        expected = self._expected_objective_identity(params, cache_key)
-        json_record = self._load_objective_from_json(eval_json_path)
-        npz_record = self._load_objective_from_npz(cache_path)
-
-        self._validate_objective_identity(json_record, expected, f"{eval_json_path}")
-        self._validate_objective_identity(npz_record, expected, f"{cache_path}")
-        self._assert_objective_records_agree(json_record, npz_record)
-
-        metric_vals = {m: float(json_record[m]) for m in self.metrics if m in json_record}
-        return {
-            "cache_key": cache_key,
-            "objective": float(json_record["objective"]),
-            "score": float(json_record["score"]),
-            "metrics": metric_vals,
-        }
-
-    def _compute_model_outputs(self, params: Dict[str, Optional[float]]) -> Dict[str, np.ndarray]:
-        bold_data = _simulate_bold(
-            surf=self.surf,
-            medmask=self.medmask,
-            parc=self.parc,
-            hetero_map=self.hetero_map,
-            aniso_map=self.aniso_map,
-            alpha=params.get("alpha"),
-            beta=params.get("beta"),
-            aniso_curv1=params.get("aniso_curv1"),
-            aniso_curv2=params.get("aniso_curv2"),
-            r=params.get("r"),
-            gamma=params.get("gamma"),
-            scaling=self.scaling,
-            n_modes=self.n_modes,
-            n_runs=self.n_runs,
-            nt_emp=self.nt_emp,
-            dt_emp=self.dt_emp,
-            dt_model=self.dt_model,
-            tsteady=self.tsteady,
-        )
-
-        return analyze_bold(
-            bold_data,
-            dt_emp=self.dt_emp,
-            band_freq=self.band_freq,
-            metrics=list(self.metrics),
-            cpc_seed=self.cpc_seed,
-        )
-
-    def _resolve_params(self, x: Sequence[float]) -> Dict[str, Optional[float]]:
-        params: Dict[str, Optional[float]] = {name: None for name in PARAM_ORDER}
-        params.update(self.fixed_params)
-        for i, name in enumerate(self.param_specs.keys()):
-            spec = self.param_specs[name]
-            params[name] = _snap_to_grid(float(x[i]), spec.min, spec.max, spec.step)
-        return params
-
-    def _cache_key_and_path(self, params: Dict[str, Optional[float]]) -> Tuple[str, Path]:
-        meta = dict(self.meta_base)
-        meta.update(params)
-        key = _hash_key(meta)
-        return key, self.cache_dir / f"eval_{key}.npz"
-
-    def evaluate_params(
-        self,
-        params: Dict[str, Optional[float]],
-        *,
-        return_model_outputs: bool = False,
-    ) -> Dict[str, Any]:
-        cache_key, cache_path = self._cache_key_and_path(params)
-        model_cache_path = self.cache_dir / f"eval_{cache_key}_model_outputs.npz"
-        eval_json_path = self.eval_dir / f"{cache_key}.json"
-
-        if cache_path.exists() or eval_json_path.exists():
-            out = self._load_cached_objective_strict(
-                params=params,
-                cache_key=cache_key,
-                cache_path=cache_path,
-                eval_json_path=eval_json_path,
-            )
-            if return_model_outputs:
-                if model_cache_path.exists():
-                    with np.load(model_cache_path, allow_pickle=False) as model_cached:
-                        out["model_outputs"] = {k: model_cached[k] for k in model_cached.files}
-                else:
-                    model_outputs = self._compute_model_outputs(params)
-                    model_payload = {
-                        k: np.asarray(v)
-                        for k, v in model_outputs.items()
-                        if isinstance(v, np.ndarray)
-                    }
-                    if model_payload:
-                        _atomic_savez(model_cache_path, **model_payload)
-                    out["model_outputs"] = model_outputs
-            return out
-
-        model_outputs = self._compute_model_outputs(params)
-        metric_vals = evaluate_model(model_outputs, self.emp_outputs, metrics=list(self.metrics))
-        metric_vals = {k: float(v) for k, v in metric_vals.items()}
-
-        score = float(sum(metric_vals[m] for m in self.metrics if m in metric_vals))
-        objective = float(-score)
-        if not np.isfinite(objective):
-            objective = 1e6
-
-        payload: Dict[str, Any] = {
-            **self.meta_base,
-            **{k: v for k, v in params.items() if v is not None},
-            **metric_vals,
-            "cache_key": cache_key,
-            "params_hash": _hash_key(params),
-            "objective": objective,
-            "score": score,
-        }
-        npz_created = _safe_write_npz_once(cache_path, **payload)
-        if not npz_created:
-            raise ValueError(
-                f"Objective cache NPZ already exists for {cache_key}; objective caches are immutable and cannot be overwritten."
-            )
-        if return_model_outputs:
-            model_payload = {
-                k: np.asarray(v)
-                for k, v in model_outputs.items()
-                if isinstance(v, np.ndarray)
-            }
-            if model_payload:
-                _atomic_savez(model_cache_path, **model_payload)
-
-        breadcrumb = {
-            **self.meta_base,
-            **params,
-            "cache_key": cache_key,
-            "params_hash": _hash_key(params),
-            "objective": objective,
-            "score": score,
-            **metric_vals,
-        }
-        json_created = _safe_write_json_once(eval_json_path, breadcrumb)
-        if not json_created:
-            raise ValueError(
-                f"Objective cache JSON already exists for {cache_key}; objective caches are immutable and cannot be overwritten."
-            )
-
-        # Strictly re-load objective artifacts to verify consistency before returning.
-        _ = self._load_cached_objective_strict(
-            params=params,
-            cache_key=cache_key,
-            cache_path=cache_path,
-            eval_json_path=eval_json_path,
-        )
-
-        out = {
-            "cache_key": cache_key,
-            "objective": objective,
-            "score": score,
-            "metrics": metric_vals,
-        }
-        if return_model_outputs:
-            out["model_outputs"] = model_outputs
-        return out
-
-    def __call__(self, x: np.ndarray) -> float:
-        params = self._resolve_params(x)
-        cache_key, _ = self._cache_key_and_path(params)
-
-        if cache_key in self.cache:
-            return self.cache[cache_key]
-
-        try:
-            result = self.evaluate_params(params, return_model_outputs=False)
-            objective = float(result["objective"])
-            self.cache[cache_key] = objective
-            return objective
-        except Exception as exc:
-            param_str = ", ".join([f"{k}={v}" for k, v in params.items() if v is not None])
-            print(f"  ERROR at {param_str}: {type(exc).__name__}: {exc}")
-            return 1e6
-
-
-class TimingCallback:
-    def __init__(self, param_specs: Dict[str, GridSpec]) -> None:
-        self.param_specs = param_specs
-        self.param_names = list(param_specs.keys())
-        self.iteration_times: List[float] = []
-
-    def __call__(self, xk: np.ndarray, convergence: float) -> None:
-        self.iteration_times.append(time.time())
-        param_vals = {}
-        for i, name in enumerate(self.param_names):
-            spec = self.param_specs[name]
-            param_vals[name] = _snap_to_grid(float(xk[i]), spec.min, spec.max, spec.step)
-
-        param_str = ", ".join([f"{name}={val:.4g}" for name, val in param_vals.items()]) or "no free params"
-        if len(self.iteration_times) > 1:
-            elapsed = self.iteration_times[-1] - self.iteration_times[-2]
-            print(f"  Iteration {len(self.iteration_times)}: {elapsed/60:.3f}min | {param_str}, convergence={convergence:.4f}")
-        else:
-            print(f"  Iteration 1 (initial): {param_str}, convergence={convergence:.4f}")
-
-
-def _hash_key(payload: Dict[str, Any]) -> str:
-    data = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
-    return hashlib.sha1(data).hexdigest()[:16]
-
-
-def _snap_to_grid(x: float, min_val: float, max_val: float, step: float) -> float:
-    if step <= 0:
-        raise ValueError("step must be > 0")
-    k = round((x - min_val) / step)
-    snapped = min_val + k * step
-    return float(np.clip(snapped, min_val, max_val))
-
-
-def _atomic_savez(path: Path, **arrays: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.stem}.{os.getpid()}.tmp{path.suffix}")
-    np.savez_compressed(tmp, **arrays)
-    os.replace(tmp, path)
-
-
-def _safe_write_json_once(path: Path, payload: Dict[str, Any]) -> bool:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with path.open("x", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2, sort_keys=True)
-        return True
-    except FileExistsError:
-        return False
-
-
-def _safe_write_npz_once(path: Path, **arrays: Any) -> bool:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.stem}.{os.getpid()}.tmp{path.suffix}")
-    np.savez_compressed(tmp, **arrays)
-    try:
-        os.link(tmp, path)
-        return True
-    except FileExistsError:
-        return False
-    finally:
-        if tmp.exists():
-            tmp.unlink()
-
-
-def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.stem}.{os.getpid()}.tmp{path.suffix}")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
-
-
-def _parse_grid3(values: Tuple[float, float, float], name: str) -> GridSpec:
-    min_val, max_val, step = [float(v) for v in values]
-    if max_val < min_val:
-        min_val, max_val = max_val, min_val
-    if step <= 0:
-        raise ValueError(f"{name} step must be > 0")
-    return GridSpec(min=min_val, max=max_val, step=step)
-
-
-def _next_non_test_run_id(results_dir: Path) -> int:
-    run_ids: List[int] = []
-    if results_dir.exists():
-        for child in results_dir.iterdir():
-            if child.is_dir() and child.name.isdigit():
-                run_id = int(child.name)
-                if run_id > 0:
-                    run_ids.append(run_id)
-    return (max(run_ids) + 1) if run_ids else 1
-
-
-def _validate_pair_component(label: Optional[str], arg_name: str) -> str:
-    token = str(label)
-    if token in {".", ".."}:
-        raise ValueError(f"--{arg_name} cannot be '.' or '..'")
-    path_obj = Path(token)
-    if path_obj.is_absolute() or len(path_obj.parts) != 1:
-        raise ValueError(f"--{arg_name} must be a single folder-safe name (no path separators)")
-    return token
 
 def _validate_levels(
     surf_level: str, 
@@ -528,49 +110,12 @@ def _validate_levels(
                 f"--subj_id {level!r} is not a valid subject for data_desc={data_desc!r}. "
                 f"({len(valid_ids)} subjects in list.)"
             )
-        return level
+        return f"sub-{level}"
 
-def _normalize_config_for_id_check(config: Dict[str, Any]) -> Dict[str, Any]:
-    normalized = dict(config)
-    normalized.pop("run_hash", None)
-    normalized.pop("maxiter", None)
-    normalized.pop("popsize", None)
-    normalized.pop("n_jobs", None)
-    normalized.pop("pair_name", None)
-    normalized.pop("pair_dir", None)
-    normalized.pop("hetero_label", None)
-    normalized.pop("aniso_label", None)
-    normalized.pop("optimization_parameters", None)
-    normalized.pop("id_config_file", None)
-    normalized.pop("config_file", None)
-    return normalized
+def _build_param_specs(
+    args: argparse.Namespace
+) -> Tuple[Dict[str, GridSpec], Dict[str, Any], Dict[str, Any], str]:
 
-
-def _collect_config_mismatches(expected: Any, actual: Any, prefix: str = "") -> List[str]:
-    mismatches: List[str] = []
-    if isinstance(expected, dict) and isinstance(actual, dict):
-        for key in sorted(set(expected) | set(actual)):
-            child_prefix = f"{prefix}.{key}" if prefix else str(key)
-            if key not in expected:
-                mismatches.append(f"{child_prefix}: unexpected key in current config")
-                continue
-            if key not in actual:
-                mismatches.append(f"{child_prefix}: missing from current config")
-                continue
-            mismatches.extend(_collect_config_mismatches(expected[key], actual[key], child_prefix))
-        return mismatches
-    if isinstance(expected, list) and isinstance(actual, list):
-        if len(expected) != len(actual):
-            mismatches.append(f"{prefix}: expected list length {len(expected)}, got {len(actual)}")
-            return mismatches
-        for i, (exp_item, act_item) in enumerate(zip(expected, actual)):
-            mismatches.extend(_collect_config_mismatches(exp_item, act_item, f"{prefix}[{i}]"))
-        return mismatches
-    if expected != actual:
-        mismatches.append(f"{prefix}: expected {expected!r}, got {actual!r}")
-    return mismatches
-
-def _build_param_specs(args: argparse.Namespace) -> Tuple[Dict[str, GridSpec], Dict[str, Any], Dict[str, Any], str]:
     has_beta = args.beta is not None
     has_curv1 = args.aniso_curv1 is not None
     has_curv2 = args.aniso_curv2 is not None
@@ -606,7 +151,7 @@ def _build_param_specs(args: argparse.Namespace) -> Tuple[Dict[str, GridSpec], D
     for name in active_param_names:
         values = getattr(args, name)
         if values is not None:
-            specs[name] = _parse_grid3(tuple(values), name)
+            specs[name] = parse_grid3(tuple(values), name)
 
     fixed_params = {
         name: defaults[name]
@@ -731,23 +276,20 @@ def _load_maps(
             )
         ).darrays[0].data
     elif args.hetero_label.startswith("null"):
-        if args.hetero_label.startswith("null"):
-            split = args.hetero_label.split("-")
-            if len(split) != 3:
-                raise ValueError("Null map format must be null-{hmap_label}-{null_id}")
-            hmap_label = split[1]
-            null_id = int(split[2])
-            hetero_map = np.load(
-                str(
-                    Path(PROJ_DIR)
-                    / "data"
-                    / "nulls"
-                    / args.species
-                    / f"data-{hmap_label}_space-fsLR_den-{args.density}_hemi-L_nmodes-500_nnulls-1000_nulls_resample-True.npy"
-                )
-            )[null_id, :]
-        else:
-            hetero_map = load_hmap(args.hetero_label, species=args.species, density=args.density)
+        split = args.hetero_label.split("-")
+        if len(split) != 3:
+            raise ValueError("Null map format must be null-{hmap_label}-{null_id}")
+        hmap_label = split[1]
+        null_id = int(split[2])
+        hetero_map = np.load(
+            str(
+                Path(PROJ_DIR)
+                / "data"
+                / "nulls"
+                / args.species
+                / f"data-{hmap_label}_space-fsLR_den-{args.density}_hemi-L_nmodes-500_nnulls-1000_nulls_resample-True.npy"
+            )
+        )[null_id, :]
 
         # p_lower, p_upper = np.percentile(hetero_map[medmask], [2, 98])
         # hetero_map = np.clip(hetero_map, p_lower, p_upper)
@@ -775,6 +317,7 @@ def _simulate_bold(
     aniso_curv2: Optional[float],
     r: Optional[float],
     gamma: Optional[float],
+    noise_seed: Optional[int],
     scaling: str,
     n_modes: int,
     n_runs: int,
@@ -806,11 +349,6 @@ def _simulate_bold(
     solver = EigenSolver(**solver_kwargs)
     solver.solve(n_modes=int(n_modes), fix_mode1=True, standardize=False, seed=365)
 
-    # Reuse deterministic external inputs across evaluations via neuromodes cache.
-    ext_input_cache_dir = Path(PROJ_DIR) / "results" / "model_rest" / "_cache_ext_input"
-    ext_input_cache_dir.mkdir(parents=True, exist_ok=True)
-    os.environ["CACHE_DIR"] = str(ext_input_cache_dir)
-
     downsample_factor = int(dt_emp / dt_model)
     nt_model = int(nt_emp * downsample_factor) + int(tsteady)
 
@@ -824,7 +362,7 @@ def _simulate_bold(
         sim_kwargs: Dict[str, Any] = {
             "dt": dt_model,
             "nt": nt_model,
-            "seed": i,
+            "seed": noise_seed + i,
             "cache_input": True,
             "bold_out": True,
             "decomp_method": "project",
@@ -1084,45 +622,14 @@ def _plot_pairwise_landscape(
     return saved_paths
 
 
-def _build_manifest(eval_dir: Path, save_path: Path) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    for p in sorted(eval_dir.glob("*.json")):
-        try:
-            rows.append(json.loads(p.read_text(encoding="utf-8")))
-        except Exception:
-            continue
-
-    rows = sorted(rows, key=lambda d: float(d.get("objective", np.inf)))
-
-    if not rows:
-        return []
-
-    fieldnames = ["cache_key", "objective", "score"] + list(PARAM_ORDER)
-    for m in METRIC_CHOICES:
-        if m not in fieldnames:
-            fieldnames.append(m)
-
-    for row in rows:
-        for key in row.keys():
-            if key not in fieldnames:
-                fieldnames.append(key)
-
-    with save_path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-
-    return rows
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Optimize resting-state model parameters with differential evolution.")
-    parser.add_argument("--test", action="store_true", help="Run in test mode using folder 0.")
     parser.add_argument(
         "--id",
         type=int,
         default=None,
-        help="Optional run ID for intentional continuation. Non-test mode does not allow ID 0.",
+        help="Optional run ID for intentional continuation. If not given, the next available run ID will be used. Use "
+             "0 for a test run (results will always get overwritten on rerun).",
     )
 
     parser.add_argument("--species", type=str, choices=["human", "macaque", "marmoset"], default="human")
@@ -1204,10 +711,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--aniso_curv2", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"))
     parser.add_argument("--r", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"))
     parser.add_argument("--gamma", type=float, nargs=3, default=None, metavar=("MIN", "MAX", "STEP"))
+    parser.add_argument("--noise_seed", type=int, default=0, help="Seed for noise generation in BOLD simulation.")
 
     parser.add_argument("--maxiter", type=int, default=50, help="Maximum differential-evolution iterations.")
     parser.add_argument("--popsize", type=int, default=16, help="Population size multiplier for differential evolution.")
-    parser.add_argument("--seed", type=int, default=365, help="Seed for differential evolution initialization.")
+    parser.add_argument("--de_seed", type=int, default=365, help="Seed for differential evolution initialization.")
     parser.add_argument(
         "--cpc_seed",
         type=int,
@@ -1239,10 +747,6 @@ def main() -> None:
     
     if args.id is not None and int(args.id) < 0:
         raise ValueError("--id must be >= 0")
-    if args.test and args.id is not None:
-        raise ValueError("--id cannot be used with --test")
-    if (not args.test) and args.id == 0:
-        raise ValueError("Run ID 0 is reserved for --test mode; use --id >= 1")
 
     if args.metrics is None or len(args.metrics) == 0:
         raise ValueError("At least one metric must be supplied via --metrics")
@@ -1255,8 +759,8 @@ def main() -> None:
     if not free_param_names:
         print("No free optimization parameters provided; evaluating the fixed default model only.")
 
-    hetero_token = _validate_pair_component(args.hetero_label, "hetero_label")
-    aniso_token = _validate_pair_component(args.aniso_label, "aniso_label")
+    hetero_token = validate_path_component(args.hetero_label, "hetero_label")
+    aniso_token = validate_path_component(args.aniso_label, "aniso_label")
     pair_name = f"hetero-{hetero_token}_aniso-{aniso_token}"
 
     results_dir = (
@@ -1275,40 +779,34 @@ def main() -> None:
     level = _validate_levels(args.surf_level, args.hmap_level, args.fmri_level, data_desc)
     results_dir = results_dir / level
 
-    if args.test:
-        print("Running in test mode with fixed run ID 0. Existing contents of this folder will be deleted.")
+    if args.id == 0:
+        print("Using run ID 0 (scratch/test slot). Existing contents of this folder will be deleted.")
         run_id = 0
-        run_parent = results_dir / "0"
+        run_parent = results_dir / "id-0"
         if run_parent.exists():
             shutil.rmtree(run_parent)
         run_parent.mkdir(parents=True, exist_ok=False)
+    elif args.id is None:
+        run_id = next_run_id(results_dir)
+        run_parent = results_dir / f"id-{run_id}"
+        while True:
+            try:
+                run_parent.mkdir(parents=True, exist_ok=False)
+                break
+            except FileExistsError:
+                run_id = next_run_id(results_dir)
+                run_parent = results_dir / f"id-{run_id}"
     else:
-        if args.id is None:
-            run_id = _next_non_test_run_id(results_dir)
-            run_parent = results_dir / str(run_id)
-            while True:
-                try:
-                    run_parent.mkdir(parents=True, exist_ok=False)
-                    break
-                except FileExistsError:
-                    run_id = _next_non_test_run_id(results_dir)
-                    run_parent = results_dir / str(run_id)
-        else:
-            run_id = int(args.id)
-            if run_id == 0:
-                raise ValueError("Run ID 0 is reserved for --test mode")
-            run_parent = results_dir / str(run_id)
-            run_parent.mkdir(parents=True, exist_ok=True)
-
-        print(f"Using run ID {run_id} with parent folder {run_parent}")
+        run_id = int(args.id)
+        run_parent = results_dir / f"id-{run_id}"
+        run_parent.mkdir(parents=True, exist_ok=True)
+    print(f"Using run ID {run_id} with parent folder {run_parent}")
 
     pair_dir = run_parent / pair_name
     if not pair_dir.exists():
         pair_dir.mkdir(parents=True, exist_ok=False)
 
-    cache_dir = pair_dir / "_cache"
     eval_dir = pair_dir / "evals"
-    cache_dir.mkdir(parents=True, exist_ok=True)
     eval_dir.mkdir(parents=True, exist_ok=True)
 
     # Load surface and masks, and load heterogeneity/anistropy maps if provided
@@ -1335,7 +833,6 @@ def main() -> None:
         "schema_version": 1,
         "objective_version": OBJECTIVE_VERSION,
         "run_id": int(run_id),
-        "test_mode": bool(args.test),
         "species": args.species,
         "dataset": args.dataset,
         "cohort": args.cohort,
@@ -1349,11 +846,12 @@ def main() -> None:
         "hmap_level": args.hmap_level,
         "fmri_level": args.fmri_level,
         "band_freq": [float(v) for v in band_freq],
+        "noise_seed": int(args.noise_seed),
         "scaling": args.scaling,
         "parc": args.parc,
         "maxiter": int(args.maxiter),
         "popsize": int(args.popsize),
-        "seed": int(args.seed),
+        "de_seed": int(args.de_seed),
         "cpc_seed": int(args.cpc_seed),
         "polish": bool(args.polish),
         "defaults": defaults,
@@ -1361,11 +859,11 @@ def main() -> None:
     }
 
     id_config_path = run_parent / "id_config.json"
-    if id_config_path.exists() and not args.test:
+    if id_config_path.exists() and args.id != 0:
         saved = json.loads(id_config_path.read_text(encoding="utf-8"))
-        mismatches = _collect_config_mismatches(
-            _normalize_config_for_id_check(saved),
-            _normalize_config_for_id_check(id_config),
+        mismatches = collect_config_mismatches(
+            normalize_config_for_id_check(saved),
+            normalize_config_for_id_check(id_config),
         )
         if mismatches:
             mismatch_msg = "\n  - " + "\n  - ".join(mismatches[:12])
@@ -1384,113 +882,53 @@ def main() -> None:
         "id_config_file": str(id_config_path),
         "config_file": str(pair_dir / "config.json"),
     }
-    run_config["run_hash"] = _hash_key(run_config)
+    run_config["run_hash"] = hash_payload(run_config)
 
-    _atomic_write_json(id_config_path, id_config)
-    _atomic_write_json(pair_dir / "config.json", run_config)
+    atomic_write_json(id_config_path, id_config)
+    atomic_write_json(pair_dir / "config.json", run_config)
     (pair_dir / "run_hash.txt").write_text(f"{run_config['run_hash']}\n", encoding="utf-8")
 
-    print("Starting optimization with differential evolution...")
+    ext_input_cache_dir = Path(PROJ_DIR) / "results" / "model_rest" / "_cache_ext_input"
+    ext_input_cache_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["CACHE_DIR"] = str(ext_input_cache_dir)
+
+    def model_callback(params: Dict[str, Any]) -> Dict[str, np.ndarray]:
+        bold_data = _simulate_bold(
+            surf=surf, medmask=medmask, parc=parc, hetero_map=hetero_map,
+            aniso_map=aniso_map, alpha=params.get("alpha"), beta=params.get("beta"),
+            aniso_curv1=params.get("aniso_curv1"), aniso_curv2=params.get("aniso_curv2"),
+            r=params.get("r"), gamma=params.get("gamma"), noise_seed=args.noise_seed,
+            scaling=args.scaling, n_modes=int(args.n_modes), n_runs=int(args.n_runs),
+            nt_emp=int(nt_emp), dt_emp=float(dt_emp), dt_model=float(dt_model),
+            tsteady=int(tsteady),
+        )
+        return analyze_bold(
+            bold_data, dt_emp=float(dt_emp), band_freq=band_freq,
+            metrics=list(args.metrics), cpc_seed=int(args.cpc_seed),
+        )
+
+    def score_callback(model_outputs: Dict[str, np.ndarray]) -> Dict[str, float]:
+        return evaluate_model(model_outputs, emp_outputs, metrics=list(args.metrics))
+
     evaluator = ObjectiveEvaluator(
-        surf=surf,
-        medmask=medmask,
-        parc=parc,
-        hetero_map=hetero_map,
-        aniso_map=aniso_map,
-        emp_outputs=emp_outputs,
+        model_callback=model_callback,
+        score_callback=score_callback,
         metrics=args.metrics,
-        band_freq=band_freq,
-        scaling=args.scaling,
-        n_modes=int(args.n_modes),
-        n_runs=int(args.n_runs),
-        nt_emp=int(nt_emp),
-        dt_emp=float(dt_emp),
-        dt_model=float(dt_model),
-        tsteady=int(tsteady),
         param_specs=param_specs,
-        fixed_params=fixed_params,
-        cache_dir=cache_dir,
+        fixed_params={**defaults, **fixed_params},
         eval_dir=eval_dir,
-        meta_base={
-            "objective_version": OBJECTIVE_VERSION,
-            "run_hash": run_config["run_hash"],
-            "cpc_seed": int(args.cpc_seed),
-            "species": args.species,
-            "dataset": args.dataset,
-            "cohort": args.cohort,
-            "surf_level": args.surf_level,
-            "hmap_level": args.hmap_level,
-            "fmri_level": args.fmri_level,
-            "density": args.density,
-            "evaluation": args.evaluation,
-            "metrics": list(args.metrics),
-            "n_runs": int(args.n_runs),
-            "n_modes": int(args.n_modes),
-            "n_subjs": int(args.n_subjs),
-            "band_freq": [float(v) for v in band_freq],
-            "scaling": args.scaling,
-            "parc": args.parc,
-            "hetero_label": args.hetero_label,
-            "aniso_label": args.aniso_label,
-            "anisotropy_mode": aniso_mode,
-        },
-        cache={},
-        cpc_seed=int(args.cpc_seed),
+        config=run_config,
+        cache={}, save_model_outputs=bool(args.save),
     )
 
-    free_bounds = [(spec.min, spec.max) for spec in param_specs.values()]
-    single_point_de_result: Optional[Dict[str, Any]] = None
-    single_point_best_eval: Optional[Dict[str, Any]] = None
-    if free_bounds:
-        is_single_point = all(spec.min == spec.max for spec in param_specs.values())
-        if is_single_point:
-            print("Single-point mode: skipping differential_evolution and evaluating once.")
-            best_params = {name: None for name in PARAM_ORDER}
-            best_params.update(fixed_params)
-            for name, spec in param_specs.items():
-                best_params[name] = spec.min
+    print("Starting optimization with differential evolution...")
+    best_params, de_result = run_differential_evolution(
+        evaluator, maxiter=int(args.maxiter), popsize=int(args.popsize),
+        seed=int(args.de_seed), workers=int(args.n_jobs), polish=bool(args.polish), disp=True,
+    )
+    best_params = {**{name: None for name in PARAM_ORDER}, **best_params}
 
-            x_fixed = np.array([best_params[name] for name in param_specs.keys()], dtype=float)
-            single_point_best_eval = evaluator.evaluate_params(best_params, return_model_outputs=True)
-            fun = float(single_point_best_eval["objective"])
-            evaluator.cache[single_point_best_eval["cache_key"]] = fun
-            single_point_de_result = {
-                "x": [float(v) for v in x_fixed],
-                "fun": fun,
-                "nfev": 1,
-                "nit": 0,
-                "success": True,
-                "message": "Single-point evaluation (all bounds fixed).",
-            }
-            result = None
-        else:
-            timing_callback = TimingCallback(param_specs)
-            result = differential_evolution(
-                evaluator,
-                bounds=free_bounds,
-                seed=int(args.seed),
-                maxiter=int(args.maxiter),
-                popsize=int(args.popsize),
-                polish=bool(args.polish),
-                workers=int(args.n_jobs),
-                updating="deferred" if int(args.n_jobs) != 1 else "immediate",
-                callback=timing_callback,
-                disp=True,
-            )
-            best_params = {name: None for name in PARAM_ORDER}
-            best_params.update(fixed_params)
-            for i, name in enumerate(param_specs.keys()):
-                spec = param_specs[name]
-                best_params[name] = _snap_to_grid(float(result.x[i]), spec.min, spec.max, spec.step)
-    else:
-        result = None
-        best_params = {name: None for name in PARAM_ORDER}
-        best_params.update(fixed_params)
-
-    if single_point_best_eval is not None:
-        best_eval = single_point_best_eval
-    else:
-        best_eval = evaluator.evaluate_params(best_params, return_model_outputs=True)
+    best_eval = evaluator.evaluate_params(best_params, return_model_outputs=True)
     best_metrics = dict(best_eval["metrics"])
     best_objective = float(best_eval["objective"])
     best_score = float(best_eval["score"])
@@ -1505,20 +943,14 @@ def main() -> None:
     }
     (pair_dir / "best.json").write_text(json.dumps(best_json, indent=2, sort_keys=True), encoding="utf-8")
 
-    if single_point_de_result is not None:
-        de_result = single_point_de_result
-    else:
-        de_result = {
-            "x": [float(v) for v in result.x] if result is not None else [],
-            "fun": float(result.fun) if result is not None else best_objective,
-            "nfev": int(result.nfev) if result is not None else 1,
-            "nit": int(result.nit) if result is not None else 0,
-            "success": bool(result.success) if result is not None else True,
-            "message": str(result.message) if result is not None else "evaluated fixed default parameters",
-        }
     (pair_dir / "de_result.json").write_text(json.dumps(de_result, indent=2, sort_keys=True), encoding="utf-8")
 
-    rows = _build_manifest(eval_dir, pair_dir / "manifest.csv")
+    rows = build_manifest(
+        eval_dir,
+        pair_dir / "manifest.csv",
+        parameter_names=PARAM_ORDER,
+        metric_names=METRIC_CHOICES,
+    )
     if rows:
         print(f"Saved manifest with {len(rows)} rows")
 

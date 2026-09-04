@@ -36,8 +36,8 @@ for cohort in cohorts:
         cache_key = best["cache_key"]
 
         # Load FC from cache
-        cache_dir = f"{RESULTS_DIR}/{cohort}/{ID}/hetero-{hmap}_aniso-None/_cache"
-        cache_file = f"{cache_dir}/eval_{cache_key}_model_outputs.npz"
+        eval_dir = f"{RESULTS_DIR}/{cohort}/{ID}/hetero-{hmap}_aniso-None/evals"
+        cache_file = f"{eval_dir}/{cache_key}_model_outputs.npz"
 
         fc_model = np.load(cache_file)["fc"]
         node_fc_acc[(cohort, hmap_label)] = np.array(
