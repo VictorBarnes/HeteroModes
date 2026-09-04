@@ -373,7 +373,7 @@ def _simulate_bold(
         if gamma is not None:
             sim_kwargs["gamma"] = float(gamma)
 
-        bold_i = solver.simulate_waves(**sim_kwargs).astype(np.float32)
+        bold_i = solver.sim_nft_waves(**sim_kwargs).astype(np.float32)
         bold_i = bold_i[:, tsteady:]
         bold_i = bold_i[:, ::downsample_factor]
 

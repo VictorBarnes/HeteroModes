@@ -282,7 +282,7 @@ class ObjectiveEvaluator:
                 raise ValueError("Resolved parameters must include r and gamma")
             
             solver = EigenSolver(**solver_kwargs).solve(n_modes=self.n_modes)
-            neural = solver.simulate_waves(
+            neural = solver.sim_nft_waves(
                 ext_input=self.ext_input,
                 nt=self.nt,
                 dt=self.dt,
@@ -590,7 +590,7 @@ def create_best_video(
     solver = EigenSolver(**solver_kwargs).solve(n_modes=n_modes)
     
     # Run simulation
-    neural = solver.simulate_waves(
+    neural = solver.sim_nft_waves(
         ext_input=ext_input,
         nt=nt,
         dt=dt,

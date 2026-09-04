@@ -76,7 +76,7 @@ solver = EigenSolver(
     beta=beta
 ).solve(n_modes=n_modes, seed=365)
 print(f"Finished running wave model in {(time.time() - t1)/3600:.2f} hours.")
-neural = solver.simulate_waves(
+neural = solver.sim_nft_waves(
     ext_input=ext_input,
     nt=nt,
     dt=dt,

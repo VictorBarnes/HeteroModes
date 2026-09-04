@@ -18,7 +18,7 @@ dependencies = [
     "scipy>=1.13.1",
     "tqdm>=4.67.1",
     "ipykernel>=7.1.0",
-    "neuromodes @ git+https://github.com/VictorBarnes/neuromodes.git@feature/anisotropy",
+    "neuromodes",
 ]
 
 [project.optional-dependencies]
@@ -50,3 +50,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["heteromodes"]
+
+[tool.uv.sources]
+neuromodes = { git = "https://github.com/NSBLab/neuromodes.git", rev = "dev" }
